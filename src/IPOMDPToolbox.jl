@@ -16,11 +16,15 @@ export
     DiscreteInteractiveUpdater,
     
     ReductionSolver,
-    ReductionPolicy
+    ReductionPolicy,
+
+    IBPISolver,
+    IBPIPolicy
 
     include("interactivebelief.jl")
     include("gpomdp.jl")
     include("reductionsolver.jl")
     include("ipomdpstoolbox.jl")
     include("functions.jl")
+    include("ibpisolver.jl")
 end
