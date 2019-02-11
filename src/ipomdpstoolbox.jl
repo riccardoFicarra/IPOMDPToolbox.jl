@@ -14,6 +14,12 @@ struct pomdpModel{S,A,W} <: IPOMDPs.Model{A,W}
     depth::Int64
 end
 
+
+global debug = [false]
+macro deb(str)
+    :( debug[] && println($(esc(str))) )
+end
+
 """
     Wrapper for reresenting the model of a IPOMDP frame
     uses ReductionSolver in order to solve the IPOMDP
