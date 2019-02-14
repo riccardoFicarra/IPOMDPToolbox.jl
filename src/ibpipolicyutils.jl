@@ -8,12 +8,15 @@ IBPIPolicyUtils:
 Structure used for policy nodes.
 ActionDist specifies the probability of executing the action at the corresponding index in actions
 Edges stores the possible edges given action and observations obtained after executing the action.
+outer key is the action -> inner key is the observation -> for each observation get the list of all possible edges
 Right now the (any) operator for observation is not implemented, we just have entries for all possible values
 receives as parameters all possible actions and all possible observations
 """
 abstract type AbstractEdge
 #used to implement reciprocally nested structs until it gets fixed
 end
+"""
+"""
 struct Node{A, W, E <: AbstractEdge}
 	actions::Vector{A}
 	actionDist::Vector{Float64}
@@ -31,7 +34,7 @@ struct Edge{A, W} <: AbstractEdge
 end
 
 function Node(actions::Vector{A}, observations::Vector{W}) where {A, W}
-    return actions::Vector{A}, zeros(Float64, length(actions)), Dict{A, Dict{W, Vector{Edge}}}(), Vector{Float64}()
+    return Node(actions::Vector{A}, zeros(Float64, length(actions)), Dict{A, Dict{W, Vector{Edge}}}(), Vector{Float64}())
 end
 
 #Node(actions::Vector{A}, observations::Vector{W})= Node(actions::Vector{A}, zeros(Float64, length(actions)), Dict{A, Dict{W, Vector{Edge}}}(), Vector{Float64}())
@@ -46,12 +49,14 @@ function InitialNode(actions::Vector{A}, observations::Vector{W}) where {A, W}
 			obsdict[obs] = [Edge(n, 1.0)]
 		end
 		n.edges[n.actions[randindex]] = obsdict
+		return n
 end
 
-struct Controller{A, W}
+struct Controller{A, W} where {A, W}
 	nodes::Array{Node{A, W, Edge}}
 end
 
-struct IBPIPolicy{A, W}
-	controllers:Array{Controller{A, W}}
+struct IBPIPolicy{A, W} where {A, W}
+	#temporary, find a way to store multiple controllers for frames and other agents
+	controllers:Vector{Controller{A, W}}
 end
