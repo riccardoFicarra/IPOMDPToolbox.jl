@@ -9,6 +9,7 @@ Structure used for policy nodes.
 ActionDist specifies the probability of executing the action at the corresponding index in actions
 Edges stores the possible edges given action and observations obtained after executing the action.
 outer key is the action -> inner key is the observation -> for each observation get the list of all possible edges
+Actions only contains actions with probability >
 Right now the (any) operator for observation is not implemented, we just have entries for all possible values
 receives as parameters all possible actions and all possible observations
 """
@@ -37,9 +38,6 @@ function Node(actions::Vector{A}, observations::Vector{W}) where {A, W}
     return Node(actions::Vector{A}, zeros(Float64, length(actions)), Dict{A, Dict{W, Vector{Edge}}}(), Vector{Float64}())
 end
 
-#Node(actions::Vector{A}, observations::Vector{W})= Node(actions::Vector{A}, zeros(Float64, length(actions)), Dict{A, Dict{W, Vector{Edge}}}(), Vector{Float64}())
-
-
 function InitialNode(actions::Vector{A}, observations::Vector{W}) where {A, W}
 		n = Node(actions, observations)
 		randindex = rand(1:length(actions))
@@ -52,11 +50,13 @@ function InitialNode(actions::Vector{A}, observations::Vector{W}) where {A, W}
 		return n
 end
 
-struct Controller{A, W} where {A, W}
-	nodes::Array{Node{A, W, Edge}}
+struct Controller{A, W}
+	nodes::Vector{Node{A, W, Edge}}
 end
 
-struct IBPIPolicy{A, W} where {A, W}
+Controller(actions, observations) = Controller([InitialNode(actions, observations)])
+
+struct IBPIPolicy{A, W}
 	#temporary, find a way to store multiple controllers for frames and other agents
-	controllers:Vector{Controller{A, W}}
+	controllers::Vector{Controller{A, W}}
 end
