@@ -13,7 +13,10 @@ struct pomdpModel{S,A,W} <: IPOMDPs.Model{A,W}
     policy::POMDPPolicy
     depth::Int64
 end
-
+"""
+Snippet to have debug utility. Use @deb(String) to print debug info
+Modulename.debug[] = true to enable, or just debug[] = true if you are in the module
+"""
 global debug = [false]
 macro deb(str)
     :( debug[] && println($(esc(str))) )
@@ -116,6 +119,3 @@ function IPOMDPs.actionP(model::pomdpModel{S,A,W}, a::A) where {S,A,W}
         return 0.0
     end
 end
-
-
-
