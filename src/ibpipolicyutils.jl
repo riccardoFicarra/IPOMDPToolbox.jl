@@ -25,6 +25,7 @@ Actions only contains actions with probability >
 Right now the (any) operator for observation is not implemented, we just have entries for all possible values
 receives as parameters all possible actions and all possible observations
 """
+
 mutable struct Node{A, W, E <: AbstractEdge}
 	actions::Vector{A}
 	actionDist::Vector{Float64}
@@ -64,15 +65,24 @@ end
 	returns action::A
 """
 function getAction(node::Node{A, W, Edge}) where {A, W}
-	return chooseWithProbability(node.actions, node.actionDist)
+	action = chooseWithProbability(node.actions, node.actionDist)
+	@deb("Chosen action $action")
+	return action
 end
 """
 	given node, action and observation returns the next node
+	maps the whole array of edges to get edge prob (O(n)), then calls chooseWithProbability O(n)
 """
 function getNextNode(node::Node{A, W, Edge}, action::A, observation::W) where {A, W}
+	if !haskey(node.edges, action)
+		error("Action has probability 0!")
+	end
 	edges = node.edges[action][observation]
-	edgeProbability = edges.map(edge -> edge.probability)
-	return chooseWithProbability(edges, edgeProbability).next
+	edgeProbability = map(edge -> edge.probability, edges)
+	next = chooseWithProbability(edges, edgeProbability).next
+	@deb("Chosen $next as next node")
+	return next
+
 end
 """
 Given an item vector and a probability vector (item probability at the same index as the item)
