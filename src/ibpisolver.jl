@@ -4,13 +4,22 @@ ibpisolver.jl:
 - Author: fiki9
 - Date: 2019-02-11
 =#
+include("ibpipolicyutils.jl")
 
 struct IBPISolver
     # Here should go some settings
     timeout::Float64
 end
 
-include("ibpipolicyutils.jl")
+struct IBPIPolicy{A, W}
+    #temporary, find a way to store multiple controllers for frames and other agents
+    controllers::Vector{Controller{A, W}}
+end
+
+struct BPIPolicy{A, W}
+    controller::Controller{A, W}
+end
+
 
 """
     Return the policy type used by the solver. Since ReductionSolver is an online solver, the policy doesn't really exist.
@@ -39,4 +48,3 @@ function IPOMDPs.action(policy::IBPIPolicy{S,A,W}, b::DiscreteInteractiveBelief{
 
     return :none
 end
-

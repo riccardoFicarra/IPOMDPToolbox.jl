@@ -120,14 +120,5 @@ module IBPIPolicyUtils
 	"""
 	Controller(actions, observations) = Controller([InitialNode(actions, observations)], 2)
 
-	struct IBPIPolicy{A, W}
-		#temporary, find a way to store multiple controllers for frames and other agents
-		controllers::Vector{Controller{A, W}}
-	end
-
-	struct BPIPolicy{A, W}
-		controller::Controller{A, W}
-	end
-
 
 end
