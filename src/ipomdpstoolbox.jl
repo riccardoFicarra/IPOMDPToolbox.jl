@@ -2,7 +2,7 @@
     Wrapper for representing the model of a POMDP frame
     Uses SARSOP in order to solve the POMDP
 """
-struct pomdpModel{S,A,W} <: IPOMDPs.Model{A,W}
+struct pomdpModel{S,A,W,P} <: IPOMDPs.Model{A,W,P}
     history::DiscreteBelief
 
     # Immutable part of the structure! This is commo to all the models of the same frame!
@@ -10,7 +10,7 @@ struct pomdpModel{S,A,W} <: IPOMDPs.Model{A,W}
 
     # Data
     updater::DiscreteUpdater
-    policy::POMDPPolicy
+    policy::P
     depth::Int64
 end
 """
@@ -26,11 +26,11 @@ end
     Wrapper for reresenting the model of a IPOMDP frame
     uses ReductionSolver in order to solve the IPOMDP
 """
-struct ipomdpModel{S,A,W} <: IPOMDPs.Model{A,W}
+struct ipomdpModel{S,A,W,P} <: IPOMDPs.Model{A,W,P}
 	history::DiscreteInteractiveBelief
 	frame::IPOMDP{S,A,W}
     updater::DiscreteInteractiveUpdater
-    policy::ReductionPolicy
+    policy::P
     depth::Int64
 end
 
@@ -40,7 +40,7 @@ end
     Model(pomdp::POMDP)
     Model(ipomdp::IPOMDP)
 """
-function IPOMDPs.Model(model;depth)
+function IPOMDPs.Model(model;depth,solver)
     return IPOMDPs.Model(model)
 end
 
@@ -118,26 +118,4 @@ function IPOMDPs.actionP(model::pomdpModel{S,A,W}, a::A) where {S,A,W}
     else
         return 0.0
     end
-end
-
-
-#Start of I-BPI
-struct pomdpModel{S,A,W} <: IPOMDPs.Model{A,W}
-    history::DiscreteBelief
-
-    # Immutable part of the structure! This is commo to all the models of the same frame!
-    frame::POMDP{S,A,W}
-
-    # Data
-    updater::DiscreteUpdater
-    policy::BPIPolicy
-    depth::Int64
-end
-
-struct ipomdpModel{S,A,W} <: IPOMDPs.Model{A,W}
-	history::DiscreteInteractiveBelief
-	frame::IPOMDP{S,A,W}
-    updater::DiscreteInteractiveUpdater
-    policy::IBPIPolicy
-    depth::Int64
 end
