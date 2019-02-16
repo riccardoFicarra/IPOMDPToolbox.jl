@@ -22,7 +22,7 @@ ibpisolver.jl:
     function BPIPolicy(pomdp::POMDP)
         actions = POMDPs.actions(pomdp)
         observations = POMDPs.observations(pomdp)
-        BPIPolicy(Controller(actions, observations, POMDPs.states(pomdp)))
+        BPIPolicy(Controller(actions, observations, POMDPs.n_states(pomdp)))
     end
 
     function IPOMDPs.Model(pomdp::POMDP;depth=0, solvertype = :IBPI)
