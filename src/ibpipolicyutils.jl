@@ -33,7 +33,7 @@ IBPIPolicyUtils:
 		actions::Vector{A}
 		actionDist::Vector{Float64}
 		edges::Dict{A, Dict{W, Vector{E}}}
-		alpha::Vector{Float64}
+		value::Vector{Float64}
 		incomingEdges::Vector{E}
 	end
 
@@ -52,7 +52,7 @@ IBPIPolicyUtils:
 		Get a node with a random action chosen and with all observation edges
 		pointing back to itself
 	"""
-	function InitialNode(actions::Vector{A}, observations::Vector{W}) where {A, W}
+	function InitialNode(actions::Vector{A}, observations::Vector{W}, value_len::Int64) where {A, W}
 			n = Node(1, actions, observations)
 			randindex = rand(1:length(actions))
 			n.actionDist[randindex] = 1.0
@@ -63,6 +63,8 @@ IBPIPolicyUtils:
 				obsdict[obs] = [edge]
 			end
 			n.edges[n.actions[randindex]] = obsdict
+			#FIXME what do i initialize this at
+			n.value = ones(Float64, value_len)
 			return n
 	end
 	"""
@@ -118,7 +120,10 @@ IBPIPolicyUtils:
 	"""
 	Initialize a controller with the initial node, start id counter from 2
 	"""
-	Controller(actions, observations) = Controller([InitialNode(actions, observations)], 2)
-
-
+	Controller(actions, observations, value_len) = Controller([InitialNode(actions, observations, value_len)], 2)
+	"""
+	This function creates a new node and connects it to the other FSC.
+	"""
+	function addNode(controller::Controller, incomingEdges::Vector{Edge}, outgoingEdges::Vector{Edge})
+	end
 #end

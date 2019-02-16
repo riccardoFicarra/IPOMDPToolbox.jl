@@ -4,63 +4,67 @@ ibpisolver.jl:
 - Author: fiki9
 - Date: 2019-02-11
 =#
-include("ibpipolicyutils.jl")
-struct IBPISolver
-    # Here should go some settings
-    timeout::Float64
-end
-
-struct IBPIPolicy{A, W}
-    #temporary, find a way to store multiple controllers for frames and other agents
-    controllers::Vector{Controller{A, W}}
-end
-
-struct BPIPolicy{A, W}
-    controller::Controller{A, W}
-end
-
-BPIPolicy(actions, observations) = BPIPolicy(Controller(actions, observations))
-
-function IPOMDPs.Model(pomdp::POMDP;depth=0, solvertype = :IBPI)
-    # Timeout
-    t = 10.0
-    for i = 1:depth
-        t = t/10
+    include("ibpipolicyutils.jl")
+    struct IBPISolver
+        # Here should go some settings
+        timeout::Float64
     end
-    name = hash(pomdp)
-    policy = BPIPolicy(pomdp.actions, pomdp.observations)
-    solver = BPISolver(t)
-    belief = IPOMDPs.initialize_belief(updater, POMDPs.initialstate_distribution(pomdp))
 
-    return pomdpModel(belief, pomdp, depth)
-end
-#=
-function IPOMDPs.Model(ipomdp::IPOMDP;depth=0)
-    t = 10.0
-    for i = 1:depth
-        t = t/10
+    struct IBPIPolicy{A, W}
+        #temporary, find a way to store multiple controllers for frames and other agents
+        controllers::Vector{Controller{A, W}}
     end
-    solver = ReductionSolver(t)
-    updater = DiscreteInteractiveUpdater(ipomdp)
-    policy = IPOMDPs.solve(solver, ipomdp)
-    belief = IPOMDPs.initialize_belief(updater; depth=depth)
 
-    return ipomdpModel(belief, ipomdp, updater, policy, depth)
-end
-=#
-"""
-    Return the policy type used by the solver. Since ReductionSolver is an online solver, the policy doesn't really exist.
-    It is used as a container to maintain data through time
-    solve(solver::ReductionSolver, ipomdp::IPOMDP{S,A,W})
-Return:
-    ReductionPolicy{S,A,W}
-"""
-function IPOMDPs.solve(solver::IBPISolver, ipomdp::IPOMDP{S,A,W}) where {S,A,W}
-    # Create the folder used by the action function
-    try
-    mkdir("./tmp")
-    catch
-    # Already present
+    struct BPIPolicy{A, W}
+        controller::Controller{A, W}
     end
-    return IBPIPolicy(ipomdp, solver.timeout)
-end
+
+    function BPIPolicy(pomdp::POMDP)
+        actions = POMDPs.actions(pomdp)
+        observations = POMDPs.observations(pomdp)
+        BPIPolicy(Controller(actions, observations, POMDPs.states(pomdp)))
+    end
+
+    function IPOMDPs.Model(pomdp::POMDP;depth=0, solvertype = :IBPI)
+        # Timeout
+        t = 10.0
+        for i = 1:depth
+            t = t/10
+        end
+        name = hash(pomdp)
+        policy = BPIPolicy(pomdp)
+        solver = IBPISolver(t)
+        belief = BeliefUpdaters.uniform_belief(pomdp)
+
+        return pomdpModel(belief, pomdp, depth)
+    end
+    #=
+    function IPOMDPs.Model(ipomdp::IPOMDP;depth=0)
+        t = 10.0
+        for i = 1:depth
+            t = t/10
+        end
+        solver = ReductionSolver(t)
+        updater = DiscreteInteractiveUpdater(ipomdp)
+        policy = IPOMDPs.solve(solver, ipomdp)
+        belief = IPOMDPs.initialize_belief(updater; depth=depth)
+
+        return ipomdpModel(belief, ipomdp, updater, policy, depth)
+    end
+    =#
+    """
+        Return the policy type used by the solver. Since ReductionSolver is an online solver, the policy doesn't really exist.
+        It is used as a container to maintain data through time
+        solve(solver::ReductionSolver, ipomdp::IPOMDP{S,A,W})
+    Return:
+        ReductionPolicy{S,A,W}
+    """
+    function IPOMDPs.solve(solver::IBPISolver, ipomdp::IPOMDP{S,A,W}) where {S,A,W}
+        # Create the folder used by the action function
+        try
+        mkdir("./tmp")
+        catch
+        # Already present
+        end
+        return IBPIPolicy(ipomdp, solver.timeout)
+    end
