@@ -39,12 +39,7 @@ function IPOMDPs.solve(solver::IBPISolver, ipomdp::IPOMDP{S,A,W}) where {S,A,W}
     return IBPIPolicy(ipomdp, solver.timeout)
 end
 
-"""
-    Uses the policy to compute the best action.
-    action(policy::ReductionPolicy{S,A,W}, b::DiscreteInteractiveBelief{S,A,W})
-Return:
-    action::A
-"""
+
 function IPOMDPs.action(policy::IBPIPolicy{S,A,W}, b::DiscreteInteractiveBelief{S,A,W}) where {S,A,W}
 
     return :none
