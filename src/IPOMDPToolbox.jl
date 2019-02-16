@@ -9,17 +9,20 @@ import Base: (==)
 export
     pomdpModel,
     ipomdpModel,
-    
+
     printPOMDP,
 
     DiscreteInteractiveBelief,
     DiscreteInteractiveUpdater,
-    
+
     ReductionSolver,
     ReductionPolicy,
 
     IBPISolver,
-    IBPIPolicy
+    IBPIPolicy,
+
+    #temporary
+    BPIPolicy
 
     include("interactivebelief.jl")
     include("gpomdp.jl")

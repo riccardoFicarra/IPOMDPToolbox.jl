@@ -4,7 +4,7 @@ IBPIPolicyUtils:
 - Author: fiki9
 - Date: 2019-02-11
 =#
-module IBPIPolicyUtils
+#module IBPIPolicyUtils
 	"""
 	Snippet to have debug utility. Use @deb(String) to print debug info
 	Modulename.debug[] = true to enable, or just debug[] = true if you are in the module
@@ -121,4 +121,4 @@ module IBPIPolicyUtils
 	Controller(actions, observations) = Controller([InitialNode(actions, observations)], 2)
 
 
-end
+#end

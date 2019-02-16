@@ -119,3 +119,25 @@ function IPOMDPs.actionP(model::pomdpModel{S,A,W}, a::A) where {S,A,W}
         return 0.0
     end
 end
+
+
+#Start of I-BPI
+struct pomdpModel{S,A,W} <: IPOMDPs.Model{A,W}
+    history::DiscreteBelief
+
+    # Immutable part of the structure! This is commo to all the models of the same frame!
+    frame::POMDP{S,A,W}
+
+    # Data
+    updater::DiscreteUpdater
+    policy::BPIPolicy
+    depth::Int64
+end
+
+struct ipomdpModel{S,A,W} <: IPOMDPs.Model{A,W}
+	history::DiscreteInteractiveBelief
+	frame::IPOMDP{S,A,W}
+    updater::DiscreteInteractiveUpdater
+    policy::IBPIPolicy
+    depth::Int64
+end

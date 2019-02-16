@@ -5,7 +5,6 @@ ibpisolver.jl:
 - Date: 2019-02-11
 =#
 include("ibpipolicyutils.jl")
-
 struct IBPISolver
     # Here should go some settings
     timeout::Float64
