@@ -38,9 +38,3 @@ function IPOMDPs.solve(solver::IBPISolver, ipomdp::IPOMDP{S,A,W}) where {S,A,W}
     end
     return IBPIPolicy(ipomdp, solver.timeout)
 end
-
-
-function IPOMDPs.action(policy::IBPIPolicy{S,A,W}, b::DiscreteInteractiveBelief{S,A,W}) where {S,A,W}
-
-    return :none
-end
