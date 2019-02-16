@@ -19,6 +19,8 @@ struct BPIPolicy{A, W}
     controller::Controller{A, W}
 end
 
+BPIPolicy(actions, observations) = BPIPolicy(Controller(actions, observations))
+
 
 """
     Return the policy type used by the solver. Since ReductionSolver is an online solver, the policy doesn't really exist.
