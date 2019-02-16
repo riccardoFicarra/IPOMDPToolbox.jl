@@ -34,6 +34,7 @@ function IPOMDPs.Model(pomdp::POMDP;depth=0, solvertype = :IBPI)
 
     return pomdpModel(belief, pomdp, depth)
 end
+#=
 function IPOMDPs.Model(ipomdp::IPOMDP;depth=0)
     t = 10.0
     for i = 1:depth
@@ -46,6 +47,7 @@ function IPOMDPs.Model(ipomdp::IPOMDP;depth=0)
 
     return ipomdpModel(belief, ipomdp, updater, policy, depth)
 end
+=#
 """
     Return the policy type used by the solver. Since ReductionSolver is an online solver, the policy doesn't really exist.
     It is used as a container to maintain data through time
