@@ -21,7 +21,31 @@ end
 
 BPIPolicy(actions, observations) = BPIPolicy(Controller(actions, observations))
 
+function IPOMDPs.Model(pomdp::POMDP;depth=0, solvertype = :IBPI)
+    # Timeout
+    t = 10.0
+    for i = 1:depth
+        t = t/10
+    end
+    name = hash(pomdp)
+    policy = BPIPolicy(pomdp.actions, pomdp.observations)
+    solver = BPISolver(t)
+    belief = IPOMDPs.initialize_belief(updater, POMDPs.initialstate_distribution(pomdp))
 
+    return pomdpModel(belief, pomdp, depth)
+end
+function IPOMDPs.Model(ipomdp::IPOMDP;depth=0)
+    t = 10.0
+    for i = 1:depth
+        t = t/10
+    end
+    solver = ReductionSolver(t)
+    updater = DiscreteInteractiveUpdater(ipomdp)
+    policy = IPOMDPs.solve(solver, ipomdp)
+    belief = IPOMDPs.initialize_belief(updater; depth=depth)
+
+    return ipomdpModel(belief, ipomdp, updater, policy, depth)
+end
 """
     Return the policy type used by the solver. Since ReductionSolver is an online solver, the policy doesn't really exist.
     It is used as a container to maintain data through time
