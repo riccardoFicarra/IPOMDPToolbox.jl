@@ -114,3 +114,18 @@ next = IBPIPolicyUtils.getNextNode(node, IBPIPolicyUtils.getAction(node), :o1)
 =#
 pomdp = normalTiger()
 p = BPIPolicy(pomdp)
+
+struct pomdpModel{S,A,W,P} <: IPOMDPs.Model{A,W,P}
+    history::DiscreteBelief
+
+    # Immutable part of the structure! This is commo to all the models of the same frame!
+    frame::POMDP{S,A,W}
+
+    # Data
+    updater::DiscreteUpdater
+    policy::P
+    depth::Int64
+end
+
+pm = IPOMDPs.Model(pomdp, depth=0, solvertype=:IBPI)
+full_backup!(p.controller, pm)

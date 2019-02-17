@@ -112,18 +112,36 @@ IBPIPolicyUtils:
 		end
 		error("Out of bounds in item array while choosing items")
 	end
-
+	#no need for an ID counter, just use length(nodes)
 	struct Controller{A, W}
 		nodes::Vector{Node{A, W, Edge}}
-		idcounter::Int64
 	end
 	"""
 	Initialize a controller with the initial node, start id counter from 2
 	"""
-	Controller(actions, observations, value_len) = Controller([InitialNode(actions, observations, value_len)], 2)
+	Controller(actions, observations, value_len) = Controller([InitialNode(actions, observations, value_len)])
 	"""
-	This function creates a new node and connects it to the other FSC.
+	Perform a full backup operation according to Pourpart and Boutilier's paper on Bounded finite state controllers
 	"""
-	function addNode(controller::Controller, incomingEdges::Vector{Edge}, outgoingEdges::Vector{Edge})
+	function full_backup!(controller::Controller, pomdpmodel::pomdpModel)
+		chosen_a = POMDPs.actions(pomdp)[1]
+		Rba = 0
+		max_value_n_index = 1
+		max_value = 0
+		for ni in 1:length(controller.nodes)
+			node = controller.nodes[ni]
+			#Value given node and belief state
+			vnb = 0
+			for s in 1:length(node.value)
+				vnb+= node.value[s]*pomdpmodel.history.b[s]
+			end
+			if vnb > max_value
+				@deb("Max value node: $max_value_n_index with value $vnb")
+				max_value = vnb
+				max_value_n_index = ni
+			end
+		end
+		@deb("Max value node: $max_value_n_index")
 	end
+
 #end
