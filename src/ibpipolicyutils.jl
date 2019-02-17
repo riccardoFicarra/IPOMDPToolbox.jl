@@ -149,15 +149,15 @@ IBPIPolicyUtils:
 		@deb("Max value node: $max_value_n_index")
 	end
 
-	function evaluation(controller::IPOMDPToolbox.Controller, pomdpmodel::pomdpModel)
+	function evaluation(controller::Controller, pomdpmodel::pomdpModel)
 			#solve V(n,s) = R(s, a(n)) + gamma*sumz(P(s'|s,a(n))Pr(z|s',a(n))V(beta(n,z), s'))
 			#R(s,a(n)) is the reward function
+			pomdp = pomdpmodel.frame
 			nodes = controller.nodes
 			nodes_len = length(controller.nodes)
-			states = POMDPs.states(pomdpModel.frame)
-			n_states = POMDPs.n_states(pomdpModel.frame)
-			pomdp = pomdpmodel.frame
-			v = Matrix{Float64}(nodes_len, 0)
+			states = POMDPs.states(pomdp)
+			n_states = POMDPs.n_states(pomdp)
+			v = Matrix{Float64}(undef, 0, nodes_len)
 			#this system has to be solved for each node, each is size n_states
 			for i in 1:nodes_len
 				#A is the coefficient matrix
@@ -178,9 +178,9 @@ IBPIPolicyUtils:
 						end
 					end
 				end
-				v = cat(dims = 1,v, transpose(a \ transpose(b)))
+				v = cat(dims = 2,v, a \ transpose(b))
 			end
-			for i in 1:size(v, 1)
-				nodes[i].value = copy(v[i, :])
+			for i in 1:size(v, 2)
+				nodes[i].value = copy(v[:, i])
 			end
 	end
