@@ -124,8 +124,6 @@ IBPIPolicyUtils:
 	Perform a full backup operation according to Pourpart and Boutilier's paper on Bounded finite state controllers
 	"""
 	function full_backup!(controller::Controller, pomdpmodel::pomdpModel)
-		chosen_a = POMDPs.actions(pomdp)[1]
-		Rba = 0
 		max_value_n_index = 1
 		max_value = 0
 		for ni in 1:length(controller.nodes)

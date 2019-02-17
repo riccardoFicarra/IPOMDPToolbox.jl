@@ -37,7 +37,7 @@ ibpisolver.jl:
         updater = BeliefUpdaters.DiscreteUpdater(pomdp)
         belief = BeliefUpdaters.uniform_belief(pomdp)
 
-        return pomdpModel(belief, pomdp,updater, policy, depth)
+        return pomdpModel(belief, pomdp, updater, policy, depth)
     end
     #=
     function IPOMDPs.Model(ipomdp::IPOMDP;depth=0)
