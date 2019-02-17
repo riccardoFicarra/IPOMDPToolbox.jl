@@ -1,4 +1,4 @@
-# ] add POMDPs IPOMDPs BeliefUpdaters
+#No longer needed now that code is callable from test.jl
 using POMDPs
 using POMDPModelTools
 using IPOMDPs

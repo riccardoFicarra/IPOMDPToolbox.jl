@@ -30,8 +30,7 @@ IBPIPolicyUtils:
 
 	mutable struct Node{A, W, E <: AbstractEdge}
 		id::Int64
-		actions::Vector{A}
-		actionDist::Vector{Float64}
+		actionProb::Dict{A, Float64}
 		edges::Dict{A, Dict{W, Vector{E}}}
 		value::Vector{Float64}
 		incomingEdges::Vector{E}
@@ -46,16 +45,20 @@ IBPIPolicyUtils:
 	end
 
 	function Node(id::Int64,actions::Vector{A}, observations::Vector{W}) where {A, W}
-	    return Node(id::Int64, actions::Vector{A}, zeros(Float64, length(actions)), Dict{A, Dict{W, Vector{Edge}}}(), Vector{Float64}(), Vector{Edge}())
+		actionProb = Dict{A, Float64}()
+		for i in 1:length(actions)
+			actionProb[actions[i]] = 1/length(actions)
+		end
+		return Node(id::Int64, actionProb::Dict{A, Float64}, Dict{A, Dict{W, Vector{Edge}}}(), Vector{Float64}(), Vector{Edge}())
 	end
 	"""
+		Receives vectors of all possible actions and observations, plus number of states
 		Get a node with a random action chosen and with all observation edges
 		pointing back to itself
 	"""
 	function InitialNode(actions::Vector{A}, observations::Vector{W}, value_len::Int64) where {A, W}
-			n = Node(1, actions, observations)
 			randindex = rand(1:length(actions))
-			n.actionDist[randindex] = 1.0
+			n = Node(1, [actions[randindex]], observations)
 			obsdict = Dict{W, Vector{Edge}}()
 			for obs in observations
 				edge = Edge(n, 1.0)
@@ -75,6 +78,13 @@ IBPIPolicyUtils:
 		action = chooseWithProbability(node.actions, node.actionDist)
 		@deb("Chosen action $action")
 		return action
+	end
+	"""
+		Get a vector of actions with probability != 0
+		TODO: transform the two arrays in a dict, only keep possible actions
+	"""
+	function getPossibleActions(node::Node{A, W, Edge}) where {A, W}
+		return keys(node.actions)
 	end
 	"""
 		given node, action and observation returns the next node
@@ -122,6 +132,7 @@ IBPIPolicyUtils:
 	Controller(actions, observations, value_len) = Controller([InitialNode(actions, observations, value_len)])
 	"""
 	Perform a full backup operation according to Pourpart and Boutilier's paper on Bounded finite state controllers
+	TODO: make this thing actually do a backup
 	"""
 	function full_backup!(controller::Controller, pomdpmodel::pomdpModel)
 		max_value_n_index = 1
@@ -140,6 +151,29 @@ IBPIPolicyUtils:
 			end
 		end
 		@deb("Max value node: $max_value_n_index")
+	end
+
+	function evaluation(controller::IPOMDPToolbox.Controller, pomdpmodel::pomdpModel)
+			#solve V(n,s) = R(s, a(n)) + gamma*sumz(P(s'|s,a(n))Pr(z|s',a(n))V(beta(n,z), s'))
+			#R(s,a(n)) is the reward function
+			nodes = controller.nodes
+			nodes_len = length(controller.nodes)
+			states = POMDPs.states(pomdpModel.frame)
+			n_states = POMDPs.n_states(pomdpModel.frame)
+
+			v = Vector{Float64}(nodes_len)
+			#this system has to be solved for each node, each is size n_states
+			for i in 1:nodes_len
+				#A is the coefficient matrix
+				#b is the constant term vector
+				A = Matrix{Float64}(n_states, 0)
+				b = Vector{Float64}(n_states)
+				actions = getPossibleActions(nodes[i])
+				for s in 1:n_states
+					for a in 1:length(actions)
+					b[i] = POMDPs.reward(pomdpModel, state, getAction(nodes[i]))
+				end
+			end
 	end
 
 #end
