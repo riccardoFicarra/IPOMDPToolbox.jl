@@ -156,7 +156,7 @@ IBPIPolicyUtils:
 			nodes_len = length(controller.nodes)
 			states = POMDPs.states(pomdpModel.frame)
 			n_states = POMDPs.n_states(pomdpModel.frame)
-			pomdp = pomdpModel.frame
+			pomdp = pomdpmodel.frame
 			v = Matrix{Float64}(nodes_len, 0)
 			#this system has to be solved for each node, each is size n_states
 			for i in 1:nodes_len
@@ -164,7 +164,6 @@ IBPIPolicyUtils:
 				#b is the constant term vector
 				node = nodes[i]
 				A = zeros(n_states, n_states)
-				A = A.+POMDPs.discount(pomdp)
 				b = zeros(1,n_states)
 				actions = getPossibleActions(nodes[i])
 				for s in 1:n_states
@@ -174,9 +173,7 @@ IBPIPolicyUtils:
 						possible_obs = keys(node.edges[a])  #only consider observations possible from current node/action combo
 						for obs in possible_obs
 							for s_prime in s_primes
-								A[s, s_prime]+= POMDPModelTools.pdf(POMDPs.transition(pomdp,s,a), s_prime) #P(s'|s, a)
-								*POMDPModelTools.pdf(POMDPs.observation(pomdp, s_prime, a), obs) #P(z| s', a)
-								*nodes.edges[a][o].prob*node.actionProb[a] #CHECK THAT THIS IS THE RIGHT VALUE (page 5 of BPI paper)
+								A[s, s_prime]+= POMDPs.discount(pomdp)*POMDPModelTools.pdf(POMDPs.transition(pomdp,s,a), s_prime)*POMDPModelTools.pdf(POMDPs.observation(pomdp, s_prime, a), obs) * nodes.edges[a][obs].prob*node.actionProb[a] #CHECK THAT THIS IS THE RIGHT VALUE (page 5 of BPI paper)
 							end
 						end
 					end
