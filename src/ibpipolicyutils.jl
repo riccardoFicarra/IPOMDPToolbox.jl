@@ -4,7 +4,6 @@ IBPIPolicyUtils:
 - Author: fiki9
 - Date: 2019-02-11
 =#
-#module IBPIPolicyUtils
 	"""
 	Snippet to have debug utility. Use @deb(String) to print debug info
 	Modulename.debug[] = true to enable, or just debug[] = true if you are in the module
@@ -75,7 +74,7 @@ IBPIPolicyUtils:
 		returns action::A
 	"""
 	function getAction(node::Node{A, W, Edge}) where {A, W}
-		action = chooseWithProbability(node.actions, node.actionDist)
+		action = chooseWithProbability(node.actionsProb)
 		@deb("Chosen action $action")
 		return action
 	end
@@ -107,20 +106,17 @@ IBPIPolicyUtils:
 	probability must sum to 1. Items and probability must have the same length
 	O(n)
 	"""
-	function chooseWithProbability(items::Vector, probability::Vector{Float64})
+	function chooseWithProbability(items::Dict)
 		randn = rand() #number in [0, 1)
 		@deb(randn)
-		if length(items) != length(probability)
-			error("Length of item vector is different from length of probability vector")
-		end
-		for i in 1:length(items)
-			if randn <= probability[i]
-				return items[i]
+		for i in keys(items)
+			if randn <= items[i]
+				return i
 			else
-				randn-= probability[i]
+				randn-= items[i]
 			end
 		end
-		error("Out of bounds in item array while choosing items")
+		error("Out of dict bounds while choosing items")
 	end
 	#no need for an ID counter, just use length(nodes)
 	struct Controller{A, W}
@@ -160,20 +156,34 @@ IBPIPolicyUtils:
 			nodes_len = length(controller.nodes)
 			states = POMDPs.states(pomdpModel.frame)
 			n_states = POMDPs.n_states(pomdpModel.frame)
-
-			v = Vector{Float64}(nodes_len)
+			pomdp = pomdpModel.frame
+			v = Matrix{Float64}(nodes_len, 0)
 			#this system has to be solved for each node, each is size n_states
 			for i in 1:nodes_len
 				#A is the coefficient matrix
 				#b is the constant term vector
-				A = Matrix{Float64}(n_states, 0)
-				b = Vector{Float64}(n_states)
+				node = nodes[i]
+				A = zeros(n_states, n_states)
+				A = A.+POMDPs.discount(pomdp)
+				b = zeros(1,n_states)
 				actions = getPossibleActions(nodes[i])
 				for s in 1:n_states
-					for a in 1:length(actions)
-					b[i] = POMDPs.reward(pomdpModel, state, getAction(nodes[i]))
+					for a in actions
+						b[s] += POMDPs.reward(pomdp, s, a)*node.actionProb[a]
+						s_primes = POMDPs.transition(pomdp,s,a).vals
+						possible_obs = keys(node.edges[a])  #only consider observations possible from current node/action combo
+						for obs in possible_obs
+							for s_prime in s_primes
+								A[s, s_prime]+= POMDPModelTools.pdf(POMDPs.transition(pomdp,s,a), s_prime) #P(s'|s, a)
+								*POMDPModelTools.pdf(POMDPs.observation(pomdp, s_prime, a), obs) #P(z| s', a)
+								*nodes.edges[a][o].prob*node.actionProb[a] #CHECK THAT THIS IS THE RIGHT VALUE (page 5 of BPI paper)
+							end
+						end
+					end
 				end
+				v = cat(dims = 1,v, transpose(a \ transpose(b)))
+			end
+			for i in 1:size(v, 1)
+				nodes[i].value = copy(v[i, :])
 			end
 	end
-
-#end
