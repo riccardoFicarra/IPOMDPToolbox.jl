@@ -83,7 +83,7 @@ IBPIPolicyUtils:
 		TODO: transform the two arrays in a dict, only keep possible actions
 	"""
 	function getPossibleActions(node::Node{A, W, Edge}) where {A, W}
-		return keys(node.actions)
+		return keys(node.actionProb)
 	end
 	"""
 		given node, action and observation returns the next node
