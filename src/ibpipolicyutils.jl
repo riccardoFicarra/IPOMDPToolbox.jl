@@ -64,7 +64,7 @@ IBPIPolicyUtils:
 				push!(n.incomingEdges, edge)
 				obsdict[obs] = [edge]
 			end
-			n.edges[n.actions[randindex]] = obsdict
+			n.edges[actions[randindex]] = obsdict
 			#FIXME what do i initialize this at
 			n.value = ones(Float64, value_len)
 			return n
