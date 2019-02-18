@@ -192,7 +192,7 @@ IBPIPolicyUtils:
 								p_s_prime =POMDPModelTools.pdf(POMDPs.transition(pomdp,s,a), s_prime)*node.actionProb[a]
 								p_z = POMDPModelTools.pdf(POMDPs.observation(pomdp, s_prime, a), obs)*node.actionProb[a]
 								for edge in node.edges[a][obs]
-									if !haskey(controller.nodeIndex[edge.next.id]
+									if !haskey(controller.nodeIndex[edge.next.id])
 										error("Node not present in nodeIndex")
 									end
 									nz_index = controller.nodeIndex[edge.next.id]
