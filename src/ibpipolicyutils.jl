@@ -165,14 +165,16 @@ IBPIPolicyUtils:
 				A = zeros(n_states, n_states)
 				b = zeros(1,n_states)
 				actions = getPossibleActions(nodes[i])
-				for s in 1:n_states
+				for s_index in 1:n_states
+					s = POMDPs.states(pomdp)[s_index]
 					for a in actions
-						b[s] += POMDPs.reward(pomdp, s, a)*node.actionProb[a]
+						b[s_index] += POMDPs.reward(pomdp, , a)*node.actionProb[a]
 						s_primes = POMDPs.transition(pomdp,s,a).vals
 						possible_obs = keys(node.edges[a])  #only consider observations possible from current node/action combo
 						for obs in possible_obs
-							for s_prime in s_primes
-								A[s, s_prime]+= POMDPs.discount(pomdp)*POMDPModelTools.pdf(POMDPs.transition(pomdp,s,a), s_prime)*POMDPModelTools.pdf(POMDPs.observation(pomdp, s_prime, a), obs) * nodes.edges[a][obs].prob*node.actionProb[a] #CHECK THAT THIS IS THE RIGHT VALUE (page 5 of BPI paper)
+							for s_prime_index in 1:length(s_primes)
+								s_prime = s_primes[s_prime_index]
+								A[s_index, s_prime]+= POMDPs.discount(pomdp)*POMDPModelTools.pdf(POMDPs.transition(pomdp,s,a), s_prime)*POMDPModelTools.pdf(POMDPs.observation(pomdp, s_prime, a), obs) * nodes.edges[a][obs].prob*node.actionProb[a] #CHECK THAT THIS IS THE RIGHT VALUE (page 5 of BPI paper)
 							end
 						end
 					end
