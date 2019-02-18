@@ -1,3 +1,10 @@
+# @Author: Ficarra Riccardo
+# @Date:   02-04-2019
+# @Last modified by:   Ficarra Riccardo
+# @Last modified time: 02-18-2019
+
+
+
 [[Arpack]]
 deps = ["BinaryProvider", "Libdl", "LinearAlgebra", "Random", "SparseArrays", "Test"]
 git-tree-sha1 = "1ce1ce9984683f0b6a587d5bdbc688ecb480096f"
@@ -56,6 +63,7 @@ uuid = "31c24e10-a181-5473-b8eb-7969acd0382f"
 version = "0.16.4"
 
 [[IPOMDPs]]
+deps = ["LinearAlgebra"]
 git-tree-sha1 = "e794817850f8515b07e07c53d238c27c4964bcf0"
 repo-rev = "master"
 repo-url = "IPOMDPs"
