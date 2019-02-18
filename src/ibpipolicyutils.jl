@@ -18,7 +18,6 @@ IBPIPolicyUtils:
 	receives as parameters all possible actions and all possible observations
 	Each node has an unique identifier, the ids of deleted nodes are not reused: possible cause for overflow?
 	"""
-
 	mutable struct Node{A, W, E <: AbstractEdge}
 		id::Int64
 		actionProb::Dict{A, Float64}
@@ -128,6 +127,7 @@ IBPIPolicyUtils:
 		error("Out of dict bounds while choosing items")
 	end
 	#no need for an ID counter, just use length(nodes)
+	#Todo add a hashmap of id -> node to have O(1) on access from id
 	struct Controller{A, W}
 		nodes::Vector{Node{A, W, Edge}}
 	end
@@ -197,9 +197,10 @@ IBPIPolicyUtils:
 					end
 				end
 			end
+			res = A \ b
 			#copy respective value functions in nodes
 			for n_index in 1:n_nodes
-				nodes[n_index].value = copy(A[(n_index-1)*n_states+1 : n_index*n_states])
+				nodes[n_index].value = copy(res[(n_index-1)*n_states+1 : n_index*n_states])
 				@deb("Value of node $(nodes[n_index].id)[1] = $(nodes[n_index].value[1])")
 			end
 	end
