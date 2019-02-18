@@ -127,14 +127,18 @@ IBPIPolicyUtils:
 		error("Out of dict bounds while choosing items")
 	end
 	#no need for an ID counter, just use length(nodes)
-	#Todo add a hashmap of id -> node to have O(1) on access from id
+	#Todo add a hashmap of id -> node index to have O(1) on access from id
 	struct Controller{A, W}
 		nodes::Vector{Node{A, W, Edge}}
+		nodeIndex::Dict{Int64, Int64}
 	end
 	"""
 	Initialize a controller with the initial node, start id counter from 2
 	"""
-	Controller(actions, observations, value_len) = Controller([InitialNode(actions, observations, value_len)])
+	function Controller(actions, observations, value_len)
+		newNode = InitialNode(actions, observations, value_len)
+		Controller([newNode], Dict(1 => 1))
+	end
 	"""
 	Perform a full backup operation according to Pourpart and Boutilier's paper on Bounded finite state controllers
 	TODO: make this thing actually do a backup
@@ -188,7 +192,10 @@ IBPIPolicyUtils:
 								p_s_prime =POMDPModelTools.pdf(POMDPs.transition(pomdp,s,a), s_prime)*node.actionProb[a]
 								p_z = POMDPModelTools.pdf(POMDPs.observation(pomdp, s_prime, a), obs)*node.actionProb[a]
 								for edge in node.edges[a][obs]
-									nz_index = searchsortedfirst(nodes, edge.next, by= node -> node.id)
+									if !haskey(controller.nodeIndex[edge.next.id]
+										error("Node not present in nodeIndex")
+									end
+									nz_index = controller.nodeIndex[edge.next.id]
 									c_a_nz = edge.probability*node.actionProb[a] #CHECK THAT THIS IS THE RIGHT VALUE (page 5 of BPI paper)
 									A[composite_index(n_index,n_states, s_index), composite_index(nz_index,n_states, s_prime_index)]+= POMDPs.discount(pomdp)*p_s_prime*p_z*c_a_nz
 								end
@@ -197,6 +204,8 @@ IBPIPolicyUtils:
 					end
 				end
 			end
+			@deb("A = $A")
+			@deb("b = $b")
 			res = A \ b
 			#copy respective value functions in nodes
 			for n_index in 1:n_nodes
