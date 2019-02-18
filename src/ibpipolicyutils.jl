@@ -140,7 +140,7 @@ IBPIPolicyUtils:
 		@deb("Max value node: $max_value_n_index")
 	end
 
-	function evaluation(controller::Controller, pomdpmodel::pomdpModel)
+	function evaluation!(controller::Controller, pomdpmodel::pomdpModel)
 			#solve V(n,s) = R(s, a(n)) + gamma*sumz(P(s'|s,a(n))Pr(z|s',a(n))V(beta(n,z), s'))
 			#R(s,a(n)) is the reward function
 			pomdp = pomdpmodel.frame
@@ -148,10 +148,11 @@ IBPIPolicyUtils:
 			nodes_len = length(controller.nodes)
 			states = POMDPs.states(pomdp)
 			n_states = POMDPs.n_states(pomdp)
-			v = Matrix{Float64}(undef, 0, nodes_len)
-			#this system has to be solved for each node, each is size n_states
+			#this system has to be solved for each node, each is size n_states*n_nodes
 			A = zeros(n_states*nodes_len, n_states*nodes_len)
 			b = zeros(n_states*nodes_len)
+
+			#compute coefficients for sum(a)[R(s|a)*P(a|n)+gamma*sum(z, s')[P(s'|s,a)*P(a|n)*P(z|s',a)*P(a|n)*P(n'|z)*V(nz, s')]]
 			for n_index in 1:nodes_len
 				#A is the coefficient matrix
 				#b is the constant term vector
@@ -160,7 +161,7 @@ IBPIPolicyUtils:
 				for s_index in 1:n_states
 					s = POMDPs.states(pomdp)[s_index]
 					for a in actions
-						b[composite_index(i,n_states, s_index)] += POMDPs.reward(pomdp, s, a)*node.actionProb[a]
+						b[composite_index(n_index,n_states, s_index)] += POMDPs.reward(pomdp, s, a)*node.actionProb[a]
 						s_primes = POMDPs.transition(pomdp,s,a).vals
 						possible_obs = keys(node.edges[a])  #only consider observations possible from current node/action combo
 						for obs in possible_obs
@@ -171,7 +172,7 @@ IBPIPolicyUtils:
 								for nz in node.edges[a][obs]
 									nz_index = searchsorted(nodes, nz, by= node -> node.id)
 									c_a_nz = nz.prob*node.actionProb[a] #CHECK THAT THIS IS THE RIGHT VALUE (page 5 of BPI paper)
-									A[composite_index(i,n_states, s_index), composite_index(nz,n_states, s_prime_index)]+= POMDPs.discount(pomdp)*p_s_prime*p_z*c_a_nz
+									A[composite_index(n_index,n_states, s_index), composite_index(nz_index,n_states, s_prime_index)]+= POMDPs.discount(pomdp)*p_s_prime*p_z*c_a_nz
 								end
 							end
 						end
@@ -181,6 +182,7 @@ IBPIPolicyUtils:
 			#copy respective value functions in nodes
 			for n_index in 1:n_nodes
 				nodes[n_index].value = copy(A[(n_index-1)*n_states+1 : n_index*n_states])
+				@deb("Value of node $(nodes[n_index].id)[1] = $(nodes[n_index].value[1])")
 			end
 	end
 function composite_index(primary::Int64, secondary_len::Int64, secondary::Int64)
