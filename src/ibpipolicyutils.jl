@@ -119,7 +119,7 @@ IBPIPolicyUtils:
 		randn = rand() #number in [0, 1)
 		@deb(randn)
 		for edge in edges
-			if randn <= edges.probability
+			if randn <= edge.probability
 				return edge.next
 			else
 				randn-= edge.probability
