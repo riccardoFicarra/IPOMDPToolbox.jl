@@ -94,16 +94,15 @@ IBPIPolicyUtils:
 			error("Action has probability 0!")
 		end
 		edges = node.edges[action][observation]
-		edgeProbability = map(edge -> edge.probability, edges)
-		next = chooseWithProbability(edges, edgeProbability).next
+		next = chooseWithProbability(edges).next
 		@deb("Chosen $(next.id) as next node")
 		return next
 
 	end
 	"""
-	Given an item vector and a probability vector (item probability at the same index as the item)
+	Given a dictionary in the form item => probability
 	Pick a random item based on the probability.
-	probability must sum to 1. Items and probability must have the same length
+	probability must sum to 1.
 	O(n)
 	"""
 	function chooseWithProbability(items::Dict)
