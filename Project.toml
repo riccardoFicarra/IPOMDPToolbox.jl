@@ -1,6 +1,13 @@
+# @Author: Ficarra Riccardo
+# @Date:   02-04-2019
+# @Last modified by:   Ficarra Riccardo
+# @Last modified time: 02-18-2019
+
+
+
 name = "IPOMDPToolbox"
 uuid = "4bc94e48-c29f-11e8-07ee-0ffc18eb0ae4"
-authors = ["Iacopo Olivo <iacopo.olivo@gmail.com>"]
+authors = ["Iacopo Olivo <iacopo.olivo@gmail.com>", "Riccardo Ficarra <riccardo.ficarra95@gmail.com>"]
 version = "0.1.0"
 
 [deps]
