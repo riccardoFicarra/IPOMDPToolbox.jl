@@ -4,14 +4,6 @@ IBPIPolicyUtils:
 - Author: fiki9
 - Date: 2019-02-11
 =#
-	"""
-	Snippet to have debug utility. Use @deb(String) to print debug info
-	Modulename.debug[] = true to enable, or just debug[] = true if you are in the module
-	"""
-	global debug = [false]
-	macro deb(str)
-	    :( debug[] && println($(esc(str))) )
-	end
 
 	abstract type AbstractEdge
 	#used to implement reciprocally nested structs until it gets fixed
@@ -168,7 +160,7 @@ IBPIPolicyUtils:
 				for s_index in 1:n_states
 					s = POMDPs.states(pomdp)[s_index]
 					for a in actions
-						b[s_index] += POMDPs.reward(pomdp, , a)*node.actionProb[a]
+						b[s_index] += POMDPs.reward(pomdp, s, a)*node.actionProb[a]
 						s_primes = POMDPs.transition(pomdp,s,a).vals
 						possible_obs = keys(node.edges[a])  #only consider observations possible from current node/action combo
 						for obs in possible_obs
@@ -179,9 +171,10 @@ IBPIPolicyUtils:
 						end
 					end
 				end
-				v = cat(dims = 2,v, a \ transpose(b))
+				v = hcat(v, a \ transpose(b))
 			end
 			for i in 1:size(v, 2)
 				nodes[i].value = copy(v[:, i])
 			end
+		end
 	end
