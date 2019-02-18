@@ -140,7 +140,7 @@ IBPIPolicyUtils:
 		@deb("Max value node: $max_value_n_index")
 	end
 
-	function evaluation!(controller::Controller, pomdpmodel::pomdpModel)
+	function evaluate!(controller::Controller, pomdpmodel::pomdpModel)
 			#solve V(n,s) = R(s, a(n)) + gamma*sumz(P(s'|s,a(n))Pr(z|s',a(n))V(beta(n,z), s'))
 			#R(s,a(n)) is the reward function
 			pomdp = pomdpmodel.frame
@@ -169,9 +169,9 @@ IBPIPolicyUtils:
 								s_prime = s_primes[s_prime_index]
 								p_s_prime =POMDPModelTools.pdf(POMDPs.transition(pomdp,s,a), s_prime)*node.actionProb[a]
 								p_z = POMDPModelTools.pdf(POMDPs.observation(pomdp, s_prime, a), obs)*node.actionProb[a]
-								for nz in node.edges[a][obs]
-									nz_index = searchsorted(nodes, nz, by= node -> node.id)
-									c_a_nz = nz.prob*node.actionProb[a] #CHECK THAT THIS IS THE RIGHT VALUE (page 5 of BPI paper)
+								for edge in node.edges[a][obs]
+									nz_index = searchsorted(nodes, edge.next, by= node -> node.id)
+									c_a_nz = edge.prob*node.actionProb[a] #CHECK THAT THIS IS THE RIGHT VALUE (page 5 of BPI paper)
 									A[composite_index(n_index,n_states, s_index), composite_index(nz_index,n_states, s_prime_index)]+= POMDPs.discount(pomdp)*p_s_prime*p_z*c_a_nz
 								end
 							end
