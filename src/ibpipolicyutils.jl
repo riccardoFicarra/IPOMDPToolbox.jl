@@ -166,7 +166,7 @@ IBPIPolicyUtils:
 						for obs in possible_obs
 							for s_prime_index in 1:length(s_primes)
 								s_prime = s_primes[s_prime_index]
-								A[s_index, s_prime]+= POMDPs.discount(pomdp)*POMDPModelTools.pdf(POMDPs.transition(pomdp,s,a), s_prime)*POMDPModelTools.pdf(POMDPs.observation(pomdp, s_prime, a), obs) * nodes.edges[a][obs].prob*node.actionProb[a] #CHECK THAT THIS IS THE RIGHT VALUE (page 5 of BPI paper)
+								A[s_index, s_prime_index]+= POMDPs.discount(pomdp)*POMDPModelTools.pdf(POMDPs.transition(pomdp,s,a), s_prime)*POMDPModelTools.pdf(POMDPs.observation(pomdp, s_prime, a), obs) * nodes.edges[a][obs].prob*node.actionProb[a] #CHECK THAT THIS IS THE RIGHT VALUE (page 5 of BPI paper)
 							end
 						end
 					end
