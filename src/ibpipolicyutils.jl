@@ -86,7 +86,7 @@ IBPIPolicyUtils:
 			error("Action has probability 0!")
 		end
 		edges = node.edges[action][observation]
-		next = chooseWithProbability(edges).next
+		next = chooseWithProbability(edges, map(edges, edge -> edge.probability)).next
 		@deb("Chosen $(next.id) as next node")
 		return next
 
@@ -105,6 +105,24 @@ IBPIPolicyUtils:
 				return i
 			else
 				randn-= items[i]
+			end
+		end
+		error("Out of dict bounds while choosing items")
+	end
+	"""
+	Given an array of edges
+	Pick a random edge based on the probability.
+	probability must sum to 1.
+	O(n)
+	"""
+	function chooseWithProbability(edges::Vector{Edge})
+		randn = rand() #number in [0, 1)
+		@deb(randn)
+		for edge in edges
+			if randn <= edges.probability
+				return edge.next
+			else
+				randn-= edge.probability
 			end
 		end
 		error("Out of dict bounds while choosing items")
@@ -171,7 +189,7 @@ IBPIPolicyUtils:
 								p_z = POMDPModelTools.pdf(POMDPs.observation(pomdp, s_prime, a), obs)*node.actionProb[a]
 								for edge in node.edges[a][obs]
 									nz_index = searchsorted(nodes, edge.next, by= node -> node.id)
-									c_a_nz = edge.prob*node.actionProb[a] #CHECK THAT THIS IS THE RIGHT VALUE (page 5 of BPI paper)
+									c_a_nz = edge.probability*node.actionProb[a] #CHECK THAT THIS IS THE RIGHT VALUE (page 5 of BPI paper)
 									A[composite_index(n_index,n_states, s_index), composite_index(nz_index,n_states, s_prime_index)]+= POMDPs.discount(pomdp)*p_s_prime*p_z*c_a_nz
 								end
 							end
