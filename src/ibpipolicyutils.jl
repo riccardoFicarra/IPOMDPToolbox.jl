@@ -176,5 +176,4 @@ IBPIPolicyUtils:
 			for i in 1:size(v, 2)
 				nodes[i].value = copy(v[:, i])
 			end
-		end
 	end
