@@ -168,7 +168,7 @@ IBPIPolicyUtils:
 								s_prime = s_primes[s_prime_index]
 								p_s_prime =POMDPModelTools.pdf(POMDPs.transition(pomdp,s,a), s_prime)
 								p_z = POMDPModelTools.pdf(POMDPs.observation(pomdp, s_prime, a), obs)
-								c_a_nz = nodes.edges[a][obs].prob*node.actionProb[a] #CHECK THAT THIS IS THE RIGHT VALUE (page 5 of BPI paper)
+								c_a_nz = node.edges[a][obs].prob*node.actionProb[a] #CHECK THAT THIS IS THE RIGHT VALUE (page 5 of BPI paper)
 								A[s_index, s_prime_index]+= POMDPs.discount(pomdp)*p_s_prime*p_z*c_a_nz
 							end
 						end
