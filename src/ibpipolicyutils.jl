@@ -163,15 +163,15 @@ IBPIPolicyUtils:
 			#R(s,a(n)) is the reward function
 			pomdp = pomdpmodel.frame
 			nodes = controller.nodes
-			nodes_len = length(controller.nodes)
+			n_nodes = length(controller.nodes)
 			states = POMDPs.states(pomdp)
 			n_states = POMDPs.n_states(pomdp)
 			#this system has to be solved for each node, each is size n_states*n_nodes
-			A = zeros(n_states*nodes_len, n_states*nodes_len)
-			b = zeros(n_states*nodes_len)
+			A = zeros(n_states*n_nodes, n_states*n_nodes)
+			b = zeros(n_states*n_nodes)
 
 			#compute coefficients for sum(a)[R(s|a)*P(a|n)+gamma*sum(z, s')[P(s'|s,a)*P(a|n)*P(z|s',a)*P(a|n)*P(n'|z)*V(nz, s')]]
-			for n_index in 1:nodes_len
+			for n_index in 1:n_nodes
 				#A is the coefficient matrix
 				#b is the constant term vector
 				node = nodes[n_index]
