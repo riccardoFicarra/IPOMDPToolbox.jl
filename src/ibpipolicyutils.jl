@@ -120,7 +120,7 @@ IBPIPolicyUtils:
 		@deb(randn)
 		for edge in edges
 			if randn <= edge.probability
-				return edge.next
+				return edge
 			else
 				randn-= edge.probability
 			end
