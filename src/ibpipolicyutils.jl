@@ -4,6 +4,7 @@ IBPIPolicyUtils:
 - Author: fiki9
 - Date: 2019-02-11
 =#
+	using LinearAlgebra
 
 	abstract type AbstractEdge
 	#used to implement reciprocally nested structs until it gets fixed
@@ -16,7 +17,7 @@ IBPIPolicyUtils:
 	Actions only contains actions with probability >
 	Right now the (any) operator for observation is not implemented, we just have entries for all possible values
 	receives as parameters all possible actions and all possible observations
-	Each node has an unique identifier, the ids of deleted nodes are not reused: possible cause for overflow?
+	Each node has an unique identifier, the ids of deleted nodes are reused and continuous (1:n_nodes)
 	"""
 	mutable struct Node{A, W, E <: AbstractEdge}
 		id::Int64
@@ -129,17 +130,16 @@ IBPIPolicyUtils:
 	#no need for an ID counter, just use length(nodes)
 	#Todo add a hashmap of id -> node index to have O(1) on access from id
 	struct Controller{A, W}
-		nodes::Vector{Node{A, W, Edge}}
-		nodeIndex::Dict{Int64, Int64}
+		nodes::Dict{Int64, Node{A, W, Edge}}
 	end
 	"""
 	Initialize a controller with the initial node, start id counter from 2
 	"""
 	function Controller(actions, observations, value_len)
 		newNode = InitialNode(actions, observations, value_len)
-		Controller([newNode], Dict(1 => 1))
+		Controller( Dict(1 => newNode))
 	end
-	"""
+	#="""
 	Perform a full backup operation according to Pourpart and Boutilier's paper on Bounded finite state controllers
 	TODO: make this thing actually do a backup
 	"""
@@ -161,43 +161,43 @@ IBPIPolicyUtils:
 		end
 		@deb("Max value node: $max_value_n_index")
 	end
-
+=#
 	function evaluate!(controller::Controller, pomdpmodel::pomdpModel)
 			#solve V(n,s) = R(s, a(n)) + gamma*sumz(P(s'|s,a(n))Pr(z|s',a(n))V(beta(n,z), s'))
 			#R(s,a(n)) is the reward function
 			pomdp = pomdpmodel.frame
 			nodes = controller.nodes
-			n_nodes = length(controller.nodes)
+			n_nodes = length(keys(controller.nodes))
 			states = POMDPs.states(pomdp)
 			n_states = POMDPs.n_states(pomdp)
 			#this system has to be solved for each node, each is size n_states*n_nodes
 			A = zeros(n_states*n_nodes, n_states*n_nodes)
 			b = zeros(n_states*n_nodes)
 
-			#compute coefficients for sum(a)[R(s|a)*P(a|n)+gamma*sum(z, s')[P(s'|s,a)*P(a|n)*P(z|s',a)*P(a|n)*P(n'|z)*V(nz, s')]]
-			for n_index in 1:n_nodes
+			#compute coefficients for sum(a)[R(s|a)*P(a|n)+gamma*sum(z, n')[P(s'|s,a)*P(z|s',a)*P(a|n)*P(n'|z)*V(nz, s')]]
+			for (n_id, node) in nodes
 				#A is the coefficient matrix
 				#b is the constant term vector
-				node = nodes[n_index]
 				actions = getPossibleActions(node)
 				for s_index in 1:n_states
 					s = POMDPs.states(pomdp)[s_index]
 					for a in actions
-						b[composite_index(n_index,n_states, s_index)] += POMDPs.reward(pomdp, s, a)*node.actionProb[a]
+						b[composite_index(n_id,n_states, s_index)] += POMDPs.reward(pomdp, s, a)*node.actionProb[a]
 						s_primes = POMDPs.transition(pomdp,s,a).vals
 						possible_obs = keys(node.edges[a])  #only consider observations possible from current node/action combo
 						for obs in possible_obs
 							for s_prime_index in 1:length(s_primes)
 								s_prime = s_primes[s_prime_index]
-								p_s_prime =POMDPModelTools.pdf(POMDPs.transition(pomdp,s,a), s_prime)*node.actionProb[a]
-								p_z = POMDPModelTools.pdf(POMDPs.observation(pomdp, s_prime, a), obs)*node.actionProb[a]
+								p_s_prime =POMDPModelTools.pdf(POMDPs.transition(pomdp,s,a), s_prime)
+								p_a_n = node.actionProb[a]
+								p_z = POMDPModelTools.pdf(POMDPs.observation(pomdp, s_prime, a), obs)
 								for edge in node.edges[a][obs]
-									if !haskey(controller.nodeIndex[edge.next.id])
-										error("Node not present in nodeIndex")
+									if !haskey(controller.nodes,edge.next.id)
+										error("Node not present in nodes")
 									end
-									nz_index = controller.nodeIndex[edge.next.id]
+									nz_index = edge.next.id
 									c_a_nz = edge.probability*node.actionProb[a] #CHECK THAT THIS IS THE RIGHT VALUE (page 5 of BPI paper)
-									A[composite_index(n_index,n_states, s_index), composite_index(nz_index,n_states, s_prime_index)]+= POMDPs.discount(pomdp)*p_s_prime*p_z*c_a_nz
+									A[composite_index(n_id,n_states, s_index), composite_index(nz_index,n_states, s_prime_index)]+= POMDPs.discount(pomdp)*p_s_prime*p_z*p_a_n*c_a_nz
 								end
 							end
 						end
@@ -206,11 +206,13 @@ IBPIPolicyUtils:
 			end
 			@deb("A = $A")
 			@deb("b = $b")
-			res = A \ b
+			#maybe put this in coefficient computation instead of doing matrix operations for faster comp?
+			I = Diagonal(ones(Float64,size(A,1), size(A,2) ))
+			res = (I- A) \ b
 			#copy respective value functions in nodes
-			for n_index in 1:n_nodes
-				nodes[n_index].value = copy(res[(n_index-1)*n_states+1 : n_index*n_states])
-				@deb("Value of node $(nodes[n_index].id)[1] = $(nodes[n_index].value[1])")
+			for (node_id, node) in nodes
+				node.value = copy(res[(n_id-1)*n_states+1 : n_id*n_states])
+				@deb("Value of node $n_id[1] = $(nodes[n_id].value[1])")
 			end
 	end
 function composite_index(primary::Int64, secondary_len::Int64, secondary::Int64)
