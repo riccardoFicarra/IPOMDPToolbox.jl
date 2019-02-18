@@ -150,33 +150,39 @@ IBPIPolicyUtils:
 			n_states = POMDPs.n_states(pomdp)
 			v = Matrix{Float64}(undef, 0, nodes_len)
 			#this system has to be solved for each node, each is size n_states
-			for i in 1:nodes_len
+			A = zeros(n_states*nodes_len, n_states*nodes_len)
+			b = zeros(n_states*nodes_len)
+			for n_index in 1:nodes_len
 				#A is the coefficient matrix
 				#b is the constant term vector
-				node = nodes[i]
-				A = zeros(n_states, n_states)
-				b = zeros(1,n_states)
-				actions = getPossibleActions(nodes[i])
+				node = nodes[n_index]
+				actions = getPossibleActions(node)
 				for s_index in 1:n_states
 					s = POMDPs.states(pomdp)[s_index]
 					for a in actions
-						b[s_index] += POMDPs.reward(pomdp, s, a)*node.actionProb[a]
+						b[composite_index(i,n_states, s_index)] += POMDPs.reward(pomdp, s, a)*node.actionProb[a]
 						s_primes = POMDPs.transition(pomdp,s,a).vals
 						possible_obs = keys(node.edges[a])  #only consider observations possible from current node/action combo
 						for obs in possible_obs
 							for s_prime_index in 1:length(s_primes)
 								s_prime = s_primes[s_prime_index]
-								p_s_prime =POMDPModelTools.pdf(POMDPs.transition(pomdp,s,a), s_prime)
-								p_z = POMDPModelTools.pdf(POMDPs.observation(pomdp, s_prime, a), obs)
-								c_a_nz = node.edges[a][obs].prob*node.actionProb[a] #CHECK THAT THIS IS THE RIGHT VALUE (page 5 of BPI paper)
-								A[s_index, s_prime_index]+= POMDPs.discount(pomdp)*p_s_prime*p_z*c_a_nz
+								p_s_prime =POMDPModelTools.pdf(POMDPs.transition(pomdp,s,a), s_prime)*node.actionProb[a]
+								p_z = POMDPModelTools.pdf(POMDPs.observation(pomdp, s_prime, a), obs)*node.actionProb[a]
+								for nz in node.edges[a][obs]
+									nz_index = searchsorted(nodes, nz, by= node -> node.id)
+									c_a_nz = nz.prob*node.actionProb[a] #CHECK THAT THIS IS THE RIGHT VALUE (page 5 of BPI paper)
+									A[composite_index(i,n_states, s_index), composite_index(nz,n_states, s_prime_index)]+= POMDPs.discount(pomdp)*p_s_prime*p_z*c_a_nz
+								end
 							end
 						end
 					end
 				end
-				v = hcat(v, a \ transpose(b))
 			end
-			for i in 1:size(v, 2)
-				nodes[i].value = copy(v[:, i])
+			#copy respective value functions in nodes
+			for n_index in 1:n_nodes
+				nodes[n_index].value = copy(A[(n_index-1)*n_states+1 : n_index*n_states])
 			end
 	end
+function composite_index(primary::Int64, secondary_len::Int64, secondary::Int64)
+	return (primary-1)*secondary_len+secondary
+end
