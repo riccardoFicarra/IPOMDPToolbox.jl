@@ -188,7 +188,7 @@ IBPIPolicyUtils:
 								p_s_prime =POMDPModelTools.pdf(POMDPs.transition(pomdp,s,a), s_prime)*node.actionProb[a]
 								p_z = POMDPModelTools.pdf(POMDPs.observation(pomdp, s_prime, a), obs)*node.actionProb[a]
 								for edge in node.edges[a][obs]
-									nz_index = searchsorted(nodes, edge.next, by= node -> node.id)
+									nz_index = searchsortedfirst(nodes, edge.next, by= node -> node.id)
 									c_a_nz = edge.probability*node.actionProb[a] #CHECK THAT THIS IS THE RIGHT VALUE (page 5 of BPI paper)
 									A[composite_index(n_index,n_states, s_index), composite_index(nz_index,n_states, s_prime_index)]+= POMDPs.discount(pomdp)*p_s_prime*p_z*c_a_nz
 								end
