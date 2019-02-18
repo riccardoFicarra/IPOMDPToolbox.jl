@@ -66,7 +66,7 @@ IBPIPolicyUtils:
 		returns action::A
 	"""
 	function getAction(node::Node{A, W, Edge}) where {A, W}
-		action = chooseWithProbability(node.actionsProb)
+		action = chooseWithProbability(node.actionProb)
 		@deb("Chosen action $action")
 		return action
 	end
