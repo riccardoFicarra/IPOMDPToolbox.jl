@@ -86,7 +86,7 @@ IBPIPolicyUtils:
 			error("Action has probability 0!")
 		end
 		edges = node.edges[action][observation]
-		next = chooseWithProbability(edges, map(edges, edge -> edge.probability)).next
+		next = chooseWithProbability(edges).next
 		@deb("Chosen $(next.id) as next node")
 		return next
 
