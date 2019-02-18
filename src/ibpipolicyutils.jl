@@ -210,7 +210,7 @@ IBPIPolicyUtils:
 			I = Diagonal(ones(Float64,size(A,1), size(A,2) ))
 			res = (I- A) \ b
 			#copy respective value functions in nodes
-			for (node_id, node) in nodes
+			for (n_id, node) in nodes
 				node.value = copy(res[(n_id-1)*n_states+1 : n_id*n_states])
 				@deb("Value of node $n_id[1] = $(nodes[n_id].value[1])")
 			end
