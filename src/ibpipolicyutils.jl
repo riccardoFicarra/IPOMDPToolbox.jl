@@ -54,7 +54,7 @@ IBPIPolicyUtils:
 				end
 			end
 		end
-		print("Value vector = $(node.value)")
+		println("Value vector = $(node.value)")
 	end
 	"""
 		Receives vectors of all possible actions and observations, plus number of states
