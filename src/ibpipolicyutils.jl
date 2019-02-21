@@ -162,7 +162,7 @@ IBPIPolicyUtils:
 		@deb("Max value node: $max_value_n_index")
 	end
 =#
-	function evaluate!(controller::Controller, pomdpmodel::pomdpModel)
+	function evaluate!(controller::Controller{A,W}, pomdpmodel::pomdpModel) where {A, W}
 			#solve V(n,s) = R(s, a(n)) + gamma*sumz(P(s'|s,a(n))Pr(z|s',a(n))V(beta(n,z), s'))
 			#R(s,a(n)) is the reward function
 			pomdp = pomdpmodel.frame
@@ -170,19 +170,19 @@ IBPIPolicyUtils:
 			n_nodes = length(keys(controller.nodes))
 			states = POMDPs.states(pomdp)
 			n_states = POMDPs.n_states(pomdp)
-			#this system has to be solved for each node, each is size n_states*n_nodes
 			A = zeros(n_states*n_nodes, n_states*n_nodes)
 			b = zeros(n_states*n_nodes)
 
 			#compute coefficients for sum(a)[R(s|a)*P(a|n)+gamma*sum(z, n')[P(s'|s,a)*P(z|s',a)*P(a|n)*P(n'|z)*V(nz, s')]]
 			for (n_id, node) in nodes
-				#A is the coefficient matrix
+				#A is the coefficient matrix (form x1 = a2x2+...+anxn+b)
 				#b is the constant term vector
+				#variables are all pairs of n,s
 				actions = getPossibleActions(node)
 				for s_index in 1:n_states
 					s = POMDPs.states(pomdp)[s_index]
 					for a in actions
-						b[composite_index(n_id,n_states, s_index)] += POMDPs.reward(pomdp, s, a)*node.actionProb[a]
+						b[composite_index([n_id, s_index],[n_nodes, n_states])] += POMDPs.reward(pomdp, s, a)*node.actionProb[a]
 						s_primes = POMDPs.transition(pomdp,s,a).vals
 						possible_obs = keys(node.edges[a])  #only consider observations possible from current node/action combo
 						for obs in possible_obs
@@ -197,7 +197,7 @@ IBPIPolicyUtils:
 									end
 									nz_index = edge.next.id
 									c_a_nz = edge.probability*node.actionProb[a] #CHECK THAT THIS IS THE RIGHT VALUE (page 5 of BPI paper)
-									A[composite_index(n_id,n_states, s_index), composite_index(nz_index,n_states, s_prime_index)]+= POMDPs.discount(pomdp)*p_s_prime*p_z*p_a_n*c_a_nz
+									A[composite_index([n_id, s_index],[n_nodes, n_states]), composite_index([nz_index, s_prime_index],[n_nodes,n_states])]+= POMDPs.discount(pomdp)*p_s_prime*p_z*p_a_n*c_a_nz
 								end
 							end
 						end
@@ -212,9 +212,118 @@ IBPIPolicyUtils:
 			#copy respective value functions in nodes
 			for (n_id, node) in nodes
 				node.value = copy(res[(n_id-1)*n_states+1 : n_id*n_states])
-				@deb("Value of node $n_id[1] = $(nodes[n_id].value[1])")
+				@deb("Value vector of node $n_id = $(nodes[n_id].value)")
 			end
 	end
-function composite_index(primary::Int64, secondary_len::Int64, secondary::Int64)
-	return (primary-1)*secondary_len+secondary
+	"""
+	Given multiple indexes of a multidimensional matrix with dimension specified by lengths return the index in the corresponding 1D vector
+	lengths[1] is actually never used, but it is there for consistency (can actually be set to any number)
+	"""
+function composite_index(dimension::Vector{Int64}, lengths::Vector{Int64})
+	#return (primary-1)*secondary_len+secondary
+	if length(dimension) != length(lengths)
+		error("Dimension and lengths vector have different length!")
+	end
+	for d in 1:length(dimension)
+		if dimension[d] > lengths[d]
+			error("Dimension cannot be greater than dimension length")
+		end
+	end
+	index = 0
+	for i in 1:length(dimension)
+		index= index*lengths[i]+(dimension[i]-1)
+	end
+	return index+1
+end
+
+function partial_backup!(controller::Controller{A, W}, pomdpmodel::pomdpModel) where {A, W}
+	#this time the matrix form is a1x1+...+anxn = b1
+	#sum(a,s)[sum(nz)[canz*[R(s,a)+gamma*sum(s')p(s'|s, a)p(z|s', a)v(nz,s')]] -eps = V(n,s)
+	#number of variables is |A||Z||N|+1 (canz and eps)
+	pomdp = pomdpmodel.frame
+	nodes = controller.nodes
+	n_nodes = length(keys(controller.nodes))
+	states = POMDPs.states(pomdp)
+	n_states = POMDPs.n_states(pomdp)
+	actions = POMDPs.actions(pomdp)
+	n_actions = POMDPs.n_actions(pomdp)
+	observations = POMDPs.observations(pomdp)
+	n_observations = POMDPs.n_observations(pomdp)
+	dim = n_nodes*n_actions*n_observations+1
+	changed = false
+	for (n_id, node) in nodes
+		max_res = zeros(dim)
+		for s_index in 1:n_states
+			s = states[s_index]
+			M = zeros(dim, dim)
+			b = fill(node.value[s_index], dim)
+			for a_index in 1:n_actions
+				action = actions[a_index]
+				r_s_a = POMDPs.reward(pomdp, s, action)
+				s_primes = POMDPs.transition(pomdp,s,action).vals
+				for obs_index in 1:n_observations
+					obs = observations[obs_index]
+					#array of edges given observation
+					for s_prime in s_primes
+						for (nz_id, nz) in nodes
+							comp_eq_index = composite_index([a_index, obs_index, n_id], [n_actions,n_observations, n_nodes])
+							comp_var_index = composite_index([a_index, obs_index, nz_id], [n_actions,n_observations, n_nodes])
+							p_s_prime =POMDPModelTools.pdf(POMDPs.transition(pomdp,s,action), s_prime)
+							p_z = POMDPModelTools.pdf(POMDPs.observation(pomdp, s_prime, action), obs)
+							v_nz_sp = nz.value[POMDPs.stateindex(pomdp, s_prime)]
+							@deb("obs = $obs, nz = $(nz_id), action = $action, , state = $s, s_prime = $s_prime: indexes $comp_eq_index $comp_var_index")
+							M[comp_eq_index,comp_var_index] += r_s_a+POMDPs.discount(pomdp)*p_s_prime*p_z*v_nz_sp
+						end
+					end
+				end
+			end
+			#set all of the eps coefficients to -1 except for last eq
+			M[1:end-1,end] = -1*ones(dim-1)
+			#this equation means that sum of all c(a,n,z) = 1
+			M[end,1:end-1] = ones(dim-1)
+			b[end] = 1
+			#display(M)
+			#display(b)
+			res = M \ b
+			#display(res)
+			#keep result vector for state with max eps (= res[end])
+			if res[end] > max_res[end]
+				max_res = res
+			end
+		end
+		#display(max_res)
+		if max_res[end] > 0
+			changed = true
+			@deb("Good so far")
+			new_edges = Dict{A, Dict{W, Vector{Edge}}}()
+			new_actions = Dict{A, Float64}()
+			@deb("New structures created")
+			for action_index in 1:n_actions
+				ca = 0
+				new_obs = Dict{W, Vector{Edge}}()
+				for obs_index in 1:n_observations
+					new_edge_vec = Vector{Edge}()
+					for (nz_id, nz) in nodes
+						index = composite_index([action_index, obs_index, nz_id], [n_actions,n_observations, n_nodes])
+						prob = max_res[index]
+						if prob != 0
+							push!(new_edge_vec, Edge(nz, prob))
+							ca+=prob
+						end
+					end
+					if length(new_edge_vec) != 0
+						new_obs[observations[obs_index]] = new_edge_vec
+					end
+				end
+				if length(keys(new_obs)) != 0
+					new_edges[actions[action_index]] = new_obs
+					new_actions[actions[action_index]] = ca
+				end
+			end
+			node.edges = new_edges
+			node.actionProb = new_actions
+		end
+	end
+
+
 end
