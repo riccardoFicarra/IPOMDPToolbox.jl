@@ -5,6 +5,8 @@ IBPIPolicyUtils:
 - Date: 2019-02-11
 =#
 	using LinearAlgebra
+	using JuMP
+	using GLPK
 
 	abstract type AbstractEdge
 	#used to implement reciprocally nested structs until it gets fixed
@@ -32,7 +34,7 @@ IBPIPolicyUtils:
 	"""
 	struct Edge{A, W} <: AbstractEdge
 		next::Node{A, W, Edge}
-		probability::Float64
+		prob::Float64
 	end
 
 	function Node(id::Int64,actions::Vector{A}, observations::Vector{W}) where {A, W}
@@ -41,6 +43,18 @@ IBPIPolicyUtils:
 			actionProb[actions[i]] = 1/length(actions)
 		end
 		return Node(id::Int64, actionProb::Dict{A, Float64}, Dict{A, Dict{W, Vector{Edge}}}(), Vector{Float64}(), Vector{Edge}())
+	end
+
+	function printNode(node::Node)
+		for (a, prob) in node.actionProb
+			obs = node.edges[a]
+			for (obs, edges) in obs
+				for edge in edges
+					println("a=$a, $prob, $obs -> $(edge.next.id), $(edge.prob)")
+				end
+			end
+		end
+		print("Value vector = $(node.value)")
 	end
 	"""
 		Receives vectors of all possible actions and observations, plus number of states
@@ -111,18 +125,18 @@ IBPIPolicyUtils:
 	end
 	"""
 	Given an array of edges
-	Pick a random edge based on the probability.
-	probability must sum to 1.
+	Pick a random edge based on the prob.
+	prob must sum to 1.
 	O(n)
 	"""
 	function chooseWithProbability(edges::Vector{Edge})
 		randn = rand() #number in [0, 1)
 		@deb(randn)
 		for edge in edges
-			if randn <= edge.probability
+			if randn <= edge.prob
 				return edge
 			else
-				randn-= edge.probability
+				randn-= edge.prob
 			end
 		end
 		error("Out of dict bounds while choosing items")
@@ -196,7 +210,7 @@ IBPIPolicyUtils:
 										error("Node not present in nodes")
 									end
 									nz_index = edge.next.id
-									c_a_nz = edge.probability*node.actionProb[a] #CHECK THAT THIS IS THE RIGHT VALUE (page 5 of BPI paper)
+									c_a_nz = edge.prob*node.actionProb[a] #CHECK THAT THIS IS THE RIGHT VALUE (page 5 of BPI paper)
 									A[composite_index([n_id, s_index],[n_nodes, n_states]), composite_index([nz_index, s_prime_index],[n_nodes,n_states])]+= POMDPs.discount(pomdp)*p_s_prime*p_z*p_a_n*c_a_nz
 								end
 							end
@@ -249,14 +263,19 @@ function partial_backup!(controller::Controller{A, W}, pomdpmodel::pomdpModel) w
 	n_actions = POMDPs.n_actions(pomdp)
 	observations = POMDPs.observations(pomdp)
 	n_observations = POMDPs.n_observations(pomdp)
-	dim = n_nodes*n_actions*n_observations+1
+	#dim = n_nodes*n_actions*n_observations
 	changed = false
 	for (n_id, node) in nodes
-		max_res = zeros(dim)
+		lpmodel = JuMP.Model(with_optimizer(GLPK.Optimizer))
+		#define variables for LP. c(a, n, z)
+		@variable(lpmodel, c[a=1:n_actions, z=1:n_observations, n=1:n_nodes] >= 0)
+		#e to maximize
+		@variable(lpmodel, e)
+		@objective(lpmodel, Max, e)
+		#define constraints
 		for s_index in 1:n_states
 			s = states[s_index]
-			M = zeros(dim, dim)
-			b = fill(node.value[s_index], dim)
+			M = zeros(n_actions, n_observations, n_nodes)
 			for a_index in 1:n_actions
 				action = actions[a_index]
 				r_s_a = POMDPs.reward(pomdp, s, action)
@@ -266,47 +285,43 @@ function partial_backup!(controller::Controller{A, W}, pomdpmodel::pomdpModel) w
 					#array of edges given observation
 					for s_prime in s_primes
 						for (nz_id, nz) in nodes
-							comp_eq_index = composite_index([a_index, obs_index, n_id], [n_actions,n_observations, n_nodes])
-							comp_var_index = composite_index([a_index, obs_index, nz_id], [n_actions,n_observations, n_nodes])
+							#comp_eq_index = composite_index([a_index, obs_index, n_id], [n_actions,n_observations, n_nodes])
+							#comp_var_index = composite_index([a_index, obs_index, nz_id], [n_actions,n_observations, n_nodes])
 							p_s_prime =POMDPModelTools.pdf(POMDPs.transition(pomdp,s,action), s_prime)
 							p_z = POMDPModelTools.pdf(POMDPs.observation(pomdp, s_prime, action), obs)
 							v_nz_sp = nz.value[POMDPs.stateindex(pomdp, s_prime)]
-							@deb("obs = $obs, nz = $(nz_id), action = $action, , state = $s, s_prime = $s_prime: indexes $comp_eq_index $comp_var_index")
-							M[comp_eq_index,comp_var_index] += r_s_a+POMDPs.discount(pomdp)*p_s_prime*p_z*v_nz_sp
+							#@deb("obs = $obs, nz = $(nz_id), action = $action, , state = $s, s_prime = $s_prime")
+							M[a_index, obs_index, nz_id] += r_s_a+POMDPs.discount(pomdp)*p_s_prime*p_z*v_nz_sp
 						end
 					end
 				end
 			end
-			#set all of the eps coefficients to -1 except for last eq
-			M[1:end-1,end] = -1*ones(dim-1)
-			#this equation means that sum of all c(a,n,z) = 1
-			M[end,1:end-1] = ones(dim-1)
-			b[end] = 1
-			#display(M)
-			#display(b)
-			res = M \ b
-			#display(res)
-			#keep result vector for state with max eps (= res[end])
-			if res[end] > max_res[end]
-				max_res = res
-			end
+			@constraint(lpmodel, [s_index],  e - M.*c .<= -1*node.value[s_index])
 		end
-		#display(max_res)
-		if max_res[end] > 0
+		@expression(lpmodel, sumc, sum(sum(sum(c[a,z,n] for n in 1:n_nodes) for z in 1:n_observations) for a in 1:n_actions))
+		@constraint(lpmodel, con_sum,  sumc == 1)
+		#print(lpmodel)
+		optimize!(lpmodel)
+
+
+		if JuMP.value(e) >= 0
 			changed = true
-			@deb("Good so far")
+			#@deb("Good so far")
 			new_edges = Dict{A, Dict{W, Vector{Edge}}}()
 			new_actions = Dict{A, Float64}()
-			@deb("New structures created")
+			#@deb("New structures created")
 			for action_index in 1:n_actions
 				ca = 0
 				new_obs = Dict{W, Vector{Edge}}()
 				for obs_index in 1:n_observations
 					new_edge_vec = Vector{Edge}()
 					for (nz_id, nz) in nodes
-						index = composite_index([action_index, obs_index, nz_id], [n_actions,n_observations, n_nodes])
-						prob = max_res[index]
+						prob = JuMP.value(c[action_index, obs_index, nz_id])
+						if prob < 0 || prob > 1
+							error("Probability outside of bounds")
+						end
 						if prob != 0
+							@deb("New edge: $(action_index), $(obs_index) -> $nz_id, $prob")
 							push!(new_edge_vec, Edge(nz, prob))
 							ca+=prob
 						end
@@ -316,6 +331,12 @@ function partial_backup!(controller::Controller{A, W}, pomdpmodel::pomdpModel) w
 					end
 				end
 				if length(keys(new_obs)) != 0
+					#re-normalize c(a,n,z)
+					for (obs, vec) in new_obs
+						for i in 1:length(vec)
+							vec[i] = Edge(vec[i].next, vec[i].prob/ca)
+						end
+					end
 					new_edges[actions[action_index]] = new_obs
 					new_actions[actions[action_index]] = ca
 				end
@@ -324,6 +345,4 @@ function partial_backup!(controller::Controller{A, W}, pomdpmodel::pomdpModel) w
 			node.actionProb = new_actions
 		end
 	end
-
-
 end
