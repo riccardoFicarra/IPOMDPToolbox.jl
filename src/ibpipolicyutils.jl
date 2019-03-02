@@ -241,6 +241,7 @@ IBPIPolicyUtils:
 	"""
 	function filterNodes(nodeSet::Set{Node})
 		@deb("Called filterNodes")
+
 		return nodeSet
 	end
 	"""
@@ -300,6 +301,9 @@ IBPIPolicyUtils:
 		res = deepcopy(a)
 		#FIXME how do you handle same obs????
 		for (obs, edges) in b_obs
+			if haskey(b_obs, obs)
+				@deb("Obs already present")
+			end
 			res.edges[action][obs] = edges
 		end
 		res.value = res.value + b.value
@@ -430,6 +434,7 @@ function partial_backup!(controller::Controller{A, W}, pomdpmodel::pomdpModel) w
 		end
 		@expression(lpmodel, sumc, sum(sum(sum(c[a,z,n] for n in 1:n_nodes) for z in 1:n_observations) for a in 1:n_actions))
 		@constraint(lpmodel, con_sum,  sumc == 1)
+		#@constraint(lpmodel, canz_prob[a=1:n_actions, z=1:n_observations, n=1:n_nodes], 0 <= c[a,z,n] <= 1)
 		#print(lpmodel)
 		optimize!(lpmodel)
 
@@ -447,6 +452,10 @@ function partial_backup!(controller::Controller{A, W}, pomdpmodel::pomdpModel) w
 					new_edge_vec = Vector{Edge}()
 					for (nz_id, nz) in nodes
 						prob = JuMP.value(c[action_index, obs_index, nz_id])
+						if abs(prob) < 1e-15
+							@deb("Set prob to 0 even though it was negative")
+							prob = 0
+						end
 						if prob < 0 || prob > 1
 							error("Probability outside of bounds: $prob")
 						end

@@ -10,6 +10,7 @@ end
 Function to draw value vectors. Only works with problems with 2 states.
 """
 function valueVectors2D(controller::Controller)
+    @deb("valueVectors2D called")
     pyplot()
     n_nodes = length(controller.nodes)
     alphas = Matrix{Float64}(undef,2,n_nodes)
