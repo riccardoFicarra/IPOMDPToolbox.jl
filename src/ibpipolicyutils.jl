@@ -236,12 +236,42 @@ IBPIPolicyUtils:
 			new_nodes_counter+=1
 		end
 	end
+	#=
 	"""
 		Filtering function to remove dominated nodes
 	"""
+	function filterNodes(nodes::Set{IPOMDPToolbox.Node})
+	    #@deb("Called filterNodes")
+	    new_nodes = Dict{Int64, IPOMDPToolbox.Node}()
+	    node_counter = 1
+	    #careful, here dict key != node.id!!!!
+	    for node in nodes
+	        new_nodes[node_counter] = node
+	        node_counter+=1
+	    end
+	    n_states = length(new_nodes[1].value)
+	    for (n_id, n) in new_nodes
+	        lpmodel = JuMP.Model(with_optimizer(GLPK.Optimizer))
+	        #define variables for LP. c(i)
+	        @variable(lpmodel, c[i=1:length(new_nodes)] >= 0)
+	        #e to maximize
+	        @variable(lpmodel, e)
+	        @objective(lpmodel, Max, e)
+	        @constraint(lpmodel, con[s_index=1:n_states], n.value[s_index] + e <= sum(c[n_id]*ni.value[s_index] for (n_id, ni) in new_nodes))
+	        @constraint(lpmodel, con_sum, sum(c[i] for i in 1:length(new_nodes)) == 1)
+	        optimize!(lpmodel)
+	        if JuMP.value(e) > 0
+	            for i in 1:length(new_nodes)
+	                print(JuMP.value(c[i]))
+	            end
+	            #rewiring function here!
+	            pop!(new_nodes, n_id)
+	        end
+	    end
+	    return values(new_nodes)
+	end
+	=#
 	function filterNodes(nodeSet::Set{Node})
-		@deb("Called filterNodes")
-
 		return nodeSet
 	end
 	"""
