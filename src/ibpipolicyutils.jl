@@ -26,7 +26,8 @@ IBPIPolicyUtils:
 		actionProb::Dict{A, Float64}
 		edges::Dict{A, Dict{W, Vector{E}}}
 		value::Vector{Float64}
-		incomingEdges::Vector{E}
+		#needed to efficiently redirect edges during pruning
+		incomingEdgeVector::Set{Vector{E}}
 	end
 
 	"""
@@ -42,7 +43,7 @@ IBPIPolicyUtils:
 		for i in 1:length(actions)
 			actionProb[actions[i]] = 1/length(actions)
 		end
-		return Node(id::Int64, actionProb::Dict{A, Float64}, Dict{A, Dict{W, Vector{Edge}}}(), Vector{Float64}(), Vector{Edge}())
+		return Node(id::Int64, actionProb::Dict{A, Float64}, Dict{A, Dict{W, Vector{Edge}}}(), Vector{Float64}(), Set{Vector{Edge}}())
 	end
 
 	function printNode(node::Node)
@@ -61,18 +62,21 @@ IBPIPolicyUtils:
 		Get a node with a random action chosen and with all observation edges
 		pointing back to itself
 	"""
-	function InitialNode(actions::Vector{A}, observations::Vector{W}, value_len::Int64) where {A, W}
+	function InitialNode(pomdp::POMDP{A, W}) where {A, W}
+			actions = POMDPs.actions(pomdp)
+			observations = POMDPs.observations(pomdp)
+			states = POMDPs.states(pomdp)
+			n_states = POMDPs.n_states(pomdp)
 			randindex = rand(1:length(actions))
 			n = Node(1, [actions[randindex]], observations)
 			obsdict = Dict{W, Vector{Edge}}()
 			for obs in observations
 				edge = Edge(n, 1.0)
-				push!(n.incomingEdges, edge)
 				obsdict[obs] = [edge]
+				push!(n.incomingEdgeVector, [edge])
 			end
 			n.edges[actions[randindex]] = obsdict
-			#FIXME what do i initialize this at
-			n.value = ones(Float64, value_len)
+			n.value = [POMDPs.reward(pomdp, s, actions[randindex]) for s in states]
 			return n
 	end
 	"""
@@ -143,14 +147,14 @@ IBPIPolicyUtils:
 	end
 	#no need for an ID counter, just use length(nodes)
 	#Todo add a hashmap of id -> node index to have O(1) on access from id
-	struct Controller{A, W}
+	mutable struct Controller{A, W}
 		nodes::Dict{Int64, Node{A, W, Edge}}
 	end
 	"""
 	Initialize a controller with the initial node, start id counter from 2
 	"""
-	function Controller(actions::Vector{A}, observations::Vector{W}, value_len::Int64) where {A, W}
-		newNode = InitialNode(actions, observations, value_len)
+	function Controller(pomdp::POMDP{A,W}) where {A, W}
+		newNode = InitialNode(pomdp)
 		Controller{A, W}(Dict(1 => newNode))
 	end
 
@@ -176,7 +180,7 @@ IBPIPolicyUtils:
 			end
 			edges[action] = new_obs
 		end
-		return Node(node_id, d_actionprob, edges, value, Vector{Edge}(undef, 0))
+		return Node(node_id, d_actionprob, edges, value, Set{Vector{Edge}}())
 	end
 	"""
 	Perform a full backup operation according to Pourpart and Boutilier's paper on Bounded finite state controllers
@@ -185,7 +189,7 @@ IBPIPolicyUtils:
 	function full_backup_stochastic!(controller::Controller{A, W}, pomdpmodel::pomdpModel) where {A, W}
 		pomdp = pomdpmodel.frame
 		belief = pomdpmodel.history.b
-		nodes = controller.nodes
+		nodes = deepcopy(controller.nodes)
 		observations = POMDPs.observations(pomdp)
 		#tentative from incpruning
 		#prder of it -> actions, obs
@@ -214,66 +218,82 @@ IBPIPolicyUtils:
 			union!(new_nodes, new_nodes_a)
 		end
 		#all new nodes, final filtering
-		filterNodes(new_nodes)
-		#=
-		for a in POMDPs.actions(pomdp)
-			new_node = Node(new_nodes_counter, Dict(a => 1.0), Dict{A, Dict{W, Vector{Edge}}}(), Vector{Float64}(undef, 0), Vector{Edge}(undef, 0))
-			new_nodes_counter+=1
-			for obs in observations
-				for (n_id, node) in nodes
-					new_v = node_value(node, a, obs, pomdp)
-					new_node.edges[a][obs] = Edge(node, 1.0)
-				end
-			end
-			push!(new_nodes, new_node)
-		end
-		=#
-		new_nodes_counter = length(nodes)+1
+		new_nodes = filterNodes(new_nodes)
+
+		#FIXME is it correct to throw away all old nodes??
+		nodeDict = Dict{Int64, Node{A, W, Edge}}()
+		new_nodes_counter = 1
 		for new_node in new_nodes
 			#set id and add nodes to controller
 			new_node.id = new_nodes_counter
-			nodes[new_nodes_counter] = new_node
+			nodeDict[new_nodes_counter] = new_node
 			new_nodes_counter+=1
 		end
+		controller.nodes = nodeDict
 	end
-	#=
+
 	"""
 		Filtering function to remove dominated nodes
 	"""
 	function filterNodes(nodes::Set{IPOMDPToolbox.Node})
 	    #@deb("Called filterNodes")
 	    new_nodes = Dict{Int64, IPOMDPToolbox.Node}()
-	    node_counter = 1
 	    #careful, here dict key != node.id!!!!
+	    node_counter = 1
 	    for node in nodes
 	        new_nodes[node_counter] = node
 	        node_counter+=1
 	    end
 	    n_states = length(new_nodes[1].value)
 	    for (n_id, n) in new_nodes
+	        @deb("$(length(new_nodes))")
 	        lpmodel = JuMP.Model(with_optimizer(GLPK.Optimizer))
 	        #define variables for LP. c(i)
-	        @variable(lpmodel, c[i=1:length(new_nodes)] >= 0)
+	        @variable(lpmodel, c[i=keys(new_nodes)] >= 0)
 	        #e to maximize
 	        @variable(lpmodel, e)
 	        @objective(lpmodel, Max, e)
-	        @constraint(lpmodel, con[s_index=1:n_states], n.value[s_index] + e <= sum(c[n_id]*ni.value[s_index] for (n_id, ni) in new_nodes))
-	        @constraint(lpmodel, con_sum, sum(c[i] for i in 1:length(new_nodes)) == 1)
+	        @constraint(lpmodel, con[s_index=1:n_states], n.value[s_index] + e <= sum(c[ni_id]*ni.value[s_index] for (ni_id, ni) in new_nodes))
+	        @constraint(lpmodel, con_sum, sum(c[i] for i in keys(new_nodes)) == 1)
 	        optimize!(lpmodel)
 	        if JuMP.value(e) > 0
-	            for i in 1:length(new_nodes)
-	                print(JuMP.value(c[i]))
+	            for i in keys(new_nodes)
+	                @deb("$(JuMP.value(c[i])) ")
 	            end
 	            #rewiring function here!
+	            for edgeV in n.incomingEdgeVector
+	                #FIXME change data strucure to avoid linear search!
+	                for e_i in 1:length(edgeV)
+	                    old_edge = edgeV[e_i]
+	                    if old_edge.next == n
+	                        for i in 1:length(new_nodes)
+	                            v = JuMP.value(c[i])
+	                            if v != 0
+	                                push!(edgeV, IPOMDPToolbox.Edge(new_nodes[i], old_edge.prob*v))
+	                            end
+	                        end
+	                        deleteat!(edgeV, e_i)
+	                        break
+	                    end
+	                end
+	                if length(edgeV) == 0
+	                    #remove vector if empty
+	                    pop!(n.incomingEdgeVector, edgeV)
+	                end
+	            end
+	            #end of rewiring, remove dominated node
+	            @deb("Deleting node $n_id")
 	            pop!(new_nodes, n_id)
 	        end
 	    end
-	    return values(new_nodes)
+	    return Set{IPOMDPToolbox.Node}(node for node in values(new_nodes))
 	end
-	=#
+	#=
+
 	function filterNodes(nodeSet::Set{Node})
 		return nodeSet
 	end
+=#
 	"""
 	Perform incremental pruning on a set of nodes by computing the cross sum and filtering every time
 	Follows Cassandra et al paper

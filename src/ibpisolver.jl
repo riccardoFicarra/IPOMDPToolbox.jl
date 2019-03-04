@@ -19,10 +19,8 @@ ibpisolver.jl:
         controller::Controller{A, W}
     end
 
-    function BPIPolicy(pomdp::POMDP)
-        actions = POMDPs.actions(pomdp)
-        observations = POMDPs.observations(pomdp)
-        BPIPolicy(Controller(actions, observations, POMDPs.n_states(pomdp)))
+    function BPIPolicy(pomdp::POMDP{A, W}) where {A, W}
+        BPIPolicy(Controller(pomdp))
     end
 
     function IPOMDPs.Model(pomdp::POMDP;depth=0, solvertype = :IBPI)
