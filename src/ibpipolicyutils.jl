@@ -246,7 +246,7 @@ IBPIPolicyUtils:
 	    end
 	    n_states = length(new_nodes[1].value)
 	    for (n_id, n) in new_nodes
-	        @deb("$(length(new_nodes))")
+	        #@deb("$(length(new_nodes))")
 	        lpmodel = JuMP.Model(with_optimizer(GLPK.Optimizer))
 	        #define variables for LP. c(i)
 	        @variable(lpmodel, c[i=keys(new_nodes)] >= 0)
@@ -257,21 +257,31 @@ IBPIPolicyUtils:
 	        @constraint(lpmodel, con_sum, sum(c[i] for i in keys(new_nodes)) == 1)
 	        optimize!(lpmodel)
 	        if JuMP.value(e) > 0
-	            for i in keys(new_nodes)
-	                @deb("$(JuMP.value(c[i])) ")
-	            end
 	            #rewiring function here!
 	            for edgeV in n.incomingEdgeVector
 	                #FIXME change data strucure to avoid linear search!
+					#constant for normalization
+					tot_prob = 0.0
 	                for e_i in 1:length(edgeV)
 	                    old_edge = edgeV[e_i]
+						#search for edge
 	                    if old_edge.next == n
+							#update probabilities
 	                        for i in 1:length(new_nodes)
 	                            v = JuMP.value(c[i])
-	                            if v != 0
-	                                push!(edgeV, IPOMDPToolbox.Edge(new_nodes[i], old_edge.prob*v))
+	                            if v != 0.0
+									new_prob = old_edge.prob*v
+									tot_prob+= new_prob
+	                                push!(edgeV, IPOMDPToolbox.Edge(new_nodes[i], new_prob))
 	                            end
 	                        end
+							if tot_prob != 0.5
+								@deb("tot_prob = $tot_prob")
+							end
+							for i in 1:length(new_nodes)
+								edgeV[i]/= tot_prob
+							end
+							#remove old edge from edge vector
 	                        deleteat!(edgeV, e_i)
 	                        break
 	                    end
@@ -534,6 +544,7 @@ function partial_backup!(controller::Controller{A, W}, pomdpmodel::pomdpModel) w
 			node.actionProb = new_actions
 		end
 	end
+	return changed
 end
 
 include("bpigraph.jl")
