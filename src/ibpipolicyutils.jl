@@ -16,7 +16,7 @@ IBPIPolicyUtils:
 	ActionDist specifies the probability of executing the action at the corresponding index in actions
 	Edges stores the possible edges given action and observations obtained after executing the action.
 	outer key is the action -> inner key is the observation -> for each observation get the list of all possible edges
-	Actions only contains actions with probability >
+	Actions only contains actions with probability >0
 	Right now the (any) operator for observation is not implemented, we just have entries for all possible values
 	receives as parameters all possible actions and all possible observations
 	Each node has an unique identifier, the ids of deleted nodes are reused and continuous (1:n_nodes)
@@ -46,7 +46,7 @@ IBPIPolicyUtils:
 		return Node(id::Int64, actionProb::Dict{A, Float64}, Dict{A, Dict{W, Vector{Edge}}}(), Vector{Float64}(), Set{Vector{Edge}}())
 	end
 
-	function printNode(node::Node)
+	function Base.println(node::Node)
 		for (a, prob) in node.actionProb
 			obs = node.edges[a]
 			for (obs, edges) in obs
@@ -211,6 +211,11 @@ IBPIPolicyUtils:
 					new_node = build_node(-1, [a], [1.0], [[obs]], [[1.0]], [[node]], new_v)
 					push!(new_nodes_a_z, new_node)
 				end
+				if IPOMDPToolbox.debug[] == true
+					for node in new_nodes_a_z
+						println(node)
+					end
+				end
 				new_nodes_z[obs_index] = filterNodes(new_nodes_a_z)
 			end
 			#set that contains all nodes generated from action a after incremental pruning
@@ -275,9 +280,9 @@ IBPIPolicyUtils:
 	                                push!(edgeV, IPOMDPToolbox.Edge(new_nodes[i], new_prob))
 	                            end
 	                        end
-							if tot_prob != 0.5
+							#if tot_prob != 0.5
 								@deb("tot_prob = $tot_prob")
-							end
+							#end
 							for i in 1:length(new_nodes)
 								edgeV[i]/= tot_prob
 							end
@@ -309,10 +314,16 @@ IBPIPolicyUtils:
 	Follows Cassandra et al paper
 	"""
 	function incprune(nodeVec::Vector{Set{Node}})
-		@deb("Called incprune")
+		@deb("Called incprune, length(nodevec) = $(length(nodeVec))")
 		res = filterNodes(xsum(nodeVec[1], nodeVec[2]))
+		if debug[] == true
+			for node in res
+				println(node)
+			end
+		end
 		for i = 3:length(nodeVec)
 			res = filterNodes(xsum(res, nodeVec[i]))
+			@deb("Length $i = $(length(nodeVec[i]))")
 		end
 		return res
 	end
@@ -361,7 +372,7 @@ IBPIPolicyUtils:
 		res = deepcopy(a)
 		#FIXME how do you handle same obs????
 		for (obs, edges) in b_obs
-			if haskey(b_obs, obs)
+			if haskey(res.edges[action], obs)
 				@deb("Obs already present")
 			end
 			res.edges[action][obs] = edges
@@ -539,6 +550,7 @@ function partial_backup!(controller::Controller{A, W}, pomdpmodel::pomdpModel) w
 					for (obs, vec) in new_obs
 						for i in 1:length(vec)
 							vec[i] = Edge(vec[i].next, vec[i].prob/ca)
+							@deb("renormalized: $(vec[i].prob), ca = $ca")
 						end
 					end
 					new_edges[actions[action_index]] = new_obs
