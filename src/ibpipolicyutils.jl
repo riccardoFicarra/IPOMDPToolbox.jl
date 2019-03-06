@@ -527,6 +527,11 @@ function partial_backup!(controller::Controller{A, W}, pomdpmodel::pomdpModel) w
 					end
 					if length(new_edge_vec) != 0
 						new_obs[observations[obs_index]] = new_edge_vec
+						#update incoming edge vector for other node
+						#set should handle duplicates
+						for edge in new_edge_vec
+							push!(edge.next.incomingEdgeVector, new_edge_vec)
+						end
 					end
 				end
 				if length(keys(new_obs)) != 0

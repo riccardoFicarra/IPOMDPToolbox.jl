@@ -3,8 +3,22 @@ using GraphRecipes
 using SparseArrays
 
 
-function adjacency_matrix(controller::Controller)
-    return 0
+function adjacency_matrix(controller::IPOMDPToolbox.Controller)
+    src = Vector{Int64}(undef, 0)
+    dst = Vector{Int64}(undef, 0)
+    weight = Vector{Float64}(undef, 0)
+    for (src_id, src_node) in controller.nodes
+        for a in keys(src_node.edges)
+            for obs in keys(src_node.edges[a])
+                for edge in src_node.edges[a][obs]
+                    push!(src, src_id)
+                    push!(dst, edge.next.id)
+                    push!(weight, edge.prob)
+                end
+            end
+        end
+    end
+    return sparse(src, dst, weight)
 end
 """
 Function to draw value vectors. Only works with problems with 2 states.
