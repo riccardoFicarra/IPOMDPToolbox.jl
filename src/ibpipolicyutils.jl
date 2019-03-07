@@ -189,7 +189,7 @@ IBPIPolicyUtils:
 	function full_backup_stochastic!(controller::Controller{A, W}, pomdpmodel::pomdpModel) where {A, W}
 		pomdp = pomdpmodel.frame
 		belief = pomdpmodel.history.b
-		nodes = deepcopy(controller.nodes)
+		nodes = controller.nodes
 		observations = POMDPs.observations(pomdp)
 		#tentative from incpruning
 		#prder of it -> actions, obs
@@ -208,7 +208,8 @@ IBPIPolicyUtils:
 				for (n_id, node) in nodes
 					new_v = node_value(node, a, obs, pomdp)
 					#do not set node id for now
-					new_node = build_node(-1, [a], [1.0], [[obs]], [[1.0]], [[node]], new_v)
+					#FIXME set prob of edge to 1/n_obs to be consistent with partial backup results
+					new_node = build_node(-1, [a], [1.0], [[obs]], [[1.0/length(observations)]], [[node]], new_v)
 					push!(new_nodes_a_z, new_node)
 				end
 				if IPOMDPToolbox.debug[] == true
@@ -370,7 +371,8 @@ IBPIPolicyUtils:
 	function mergeNode(a::Node, b::Node, action::A) where {A}
 		b_obs = b.edges[action]
 		res = deepcopy(a)
-		#FIXME how do you handle same obs????
+		#There is no way we have repeated observation because set[obs]
+		#only contains nodes with obs
 		for (obs, edges) in b_obs
 			if haskey(res.edges[action], obs)
 				@deb("Obs already present")
@@ -549,6 +551,7 @@ function partial_backup!(controller::Controller{A, W}, pomdpmodel::pomdpModel) w
 					#re-normalize c(a,n,z)
 					for (obs, vec) in new_obs
 						for i in 1:length(vec)
+							#FIXME *n_obs is a quick fix to have sum of prob for each obs = 1
 							vec[i] = Edge(vec[i].next, vec[i].prob/ca)
 							@deb("renormalized: $(vec[i].prob), ca = $ca")
 						end
