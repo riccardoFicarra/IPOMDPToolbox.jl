@@ -147,7 +147,7 @@ IBPIPolicyUtils:
 	end
 	#no need for an ID counter, just use length(nodes)
 	#Todo add a hashmap of id -> node index to have O(1) on access from id
-	mutable struct Controller{A, W}
+	struct Controller{A, W}
 		nodes::Dict{Int64, Node{A, W, Edge}}
 	end
 	"""
@@ -198,6 +198,8 @@ IBPIPolicyUtils:
 		#new node is tied to old node?, action a and obs z
 		#with stochastic pruning we get the cis needed
 		new_nodes = Set{Node}()
+		#new nodes counter used mainly for debugging, counts backwards (gets overwritten eventually)
+		new_nodes_counter = -1
 		for a in POMDPs.actions(pomdp)
 			#this data structure has the set of nodes for each observation (new_nodes_z[obs] = Set{Nodes} generated from obs)
 			new_nodes_z = Vector{Set{Node}}(undef, length(observations))
@@ -208,15 +210,17 @@ IBPIPolicyUtils:
 				for (n_id, node) in nodes
 					new_v = node_value(node, a, obs, pomdp)
 					#do not set node id for now
-					#FIXME set prob of edge to 1/n_obs to be consistent with partial backup results
-					new_node = build_node(-1, [a], [1.0], [[obs]], [[1.0/length(observations)]], [[node]], new_v)
+					new_node = build_node(new_nodes_counter, [a], [1.0], [[obs]], [[1.0]], [[node]], new_v)
 					push!(new_nodes_a_z, new_node)
+					new_nodes_counter -=1
 				end
 				if IPOMDPToolbox.debug[] == true
+					println("New nodes created:")
 					for node in new_nodes_a_z
 						println(node)
 					end
 				end
+
 				new_nodes_z[obs_index] = filterNodes(new_nodes_a_z)
 			end
 			#set that contains all nodes generated from action a after incremental pruning
@@ -225,24 +229,31 @@ IBPIPolicyUtils:
 		end
 		#all new nodes, final filtering
 		new_nodes = filterNodes(new_nodes)
-
-		#FIXME is it correct to throw away all old nodes??
-		nodeDict = Dict{Int64, Node{A, W, Edge}}()
-		new_nodes_counter = 1
-		for new_node in new_nodes
+		#add new nodes to controller
+		#all_nodes = union(new_nodes, Set{Node}(oldnode for oldnode in values(nodes)));
+		all_nodes = filterNodes(union(new_nodes, Set{Node}(oldnode for oldnode in values(nodes))))
+		nodes_counter = 1
+		for node in all_nodes
 			#set id and add nodes to controller
-			new_node.id = new_nodes_counter
-			nodeDict[new_nodes_counter] = new_node
-			new_nodes_counter+=1
+			#compact node ids so they are contiguous
+			node.id = nodes_counter
+			nodes[nodes_counter] = node
+			nodes_counter+=1
 		end
-		controller.nodes = nodeDict
 	end
 
 	"""
 		Filtering function to remove dominated nodes
 	"""
 	function filterNodes(nodes::Set{IPOMDPToolbox.Node})
-	    #@deb("Called filterNodes")
+	    @deb("Called filterNodes, length(nodes) = $(length(nodes))")
+		if length(nodes) == 0
+			error("called FilterNodes on empty set")
+		end
+		if length(nodes) == 1
+			#if there is only one node it is useless to try and prune anything
+			return nodes
+		end
 	    new_nodes = Dict{Int64, IPOMDPToolbox.Node}()
 	    #careful, here dict key != node.id!!!!
 	    node_counter = 1
@@ -252,6 +263,8 @@ IBPIPolicyUtils:
 	    end
 	    n_states = length(new_nodes[1].value)
 	    for (n_id, n) in new_nodes
+			#remove the node we're testing from the node set (else we always get that a node dominates itself!)
+			pop!(new_nodes, n_id)
 	        #@deb("$(length(new_nodes))")
 	        lpmodel = JuMP.Model(with_optimizer(GLPK.Optimizer))
 	        #define variables for LP. c(i)
@@ -262,8 +275,17 @@ IBPIPolicyUtils:
 	        @constraint(lpmodel, con[s_index=1:n_states], n.value[s_index] + e <= sum(c[ni_id]*ni.value[s_index] for (ni_id, ni) in new_nodes))
 	        @constraint(lpmodel, con_sum, sum(c[i] for i in keys(new_nodes)) == 1)
 	        optimize!(lpmodel)
-	        if JuMP.value(e) > 0
+			if debug[] == true
+				println("node $(n.id) -> eps = $(JuMP.value(e))")
+			end
+	        if JuMP.value(e) >= 0
 	            #rewiring function here!
+			if debug[] == true
+				for i in keys(new_nodes)
+					print("c$(new_nodes[i].id) = $(JuMP.value(c[i])) ")
+				end
+				println("")
+			end
 	            for edgeV in n.incomingEdgeVector
 	                #FIXME change data strucure to avoid linear search!
 					#constant for normalization
@@ -273,7 +295,7 @@ IBPIPolicyUtils:
 						#search for edge
 	                    if old_edge.next == n
 							#update probabilities
-	                        for i in 1:length(new_nodes)
+	                        for i in keys(new_nodes)
 	                            v = JuMP.value(c[i])
 	                            if v != 0.0
 									new_prob = old_edge.prob*v
@@ -282,11 +304,11 @@ IBPIPolicyUtils:
 	                            end
 	                        end
 							#if tot_prob != 0.5
-								@deb("tot_prob = $tot_prob")
+							@deb("tot_prob = $tot_prob")
 							#end
-							for i in 1:length(new_nodes)
-								edgeV[i]/= tot_prob
-							end
+							#for i in 1:length(new_nodes)
+							#	edgeV[i].prob/= tot_prob
+							#end
 							#remove old edge from edge vector
 	                        deleteat!(edgeV, e_i)
 	                        break
@@ -298,9 +320,14 @@ IBPIPolicyUtils:
 	                end
 	            end
 	            #end of rewiring, remove dominated node
-	            @deb("Deleting node $n_id")
-	            pop!(new_nodes, n_id)
-	        end
+				if debug[] == true
+					println("Deleting node $(n.id): obj value = $(JuMP.value(e))")
+					println(n)
+				end
+	        else
+				#if node is not dominated readd it to the dict!
+				new_nodes[n_id] = n
+			end
 	    end
 	    return Set{IPOMDPToolbox.Node}(node for node in values(new_nodes))
 	end
@@ -317,11 +344,12 @@ IBPIPolicyUtils:
 	function incprune(nodeVec::Vector{Set{Node}})
 		@deb("Called incprune, length(nodevec) = $(length(nodeVec))")
 		res = filterNodes(xsum(nodeVec[1], nodeVec[2]))
-		if debug[] == true
+		#=if debug[] == true
 			for node in res
 				println(node)
 			end
 		end
+		=#
 		for i = 3:length(nodeVec)
 			res = filterNodes(xsum(res, nodeVec[i]))
 			@deb("Length $i = $(length(nodeVec[i]))")
@@ -363,6 +391,10 @@ IBPIPolicyUtils:
 			b_action = collect(keys(b.actionProb))[1]
 			@assert a_action == b_action "action mismatch"
 			c = mergeNode(a, b, a_action)
+			if IPOMDPToolbox.debug[] == true
+				println("nodes merged:$(a.id) <- $(b.id)")
+				println(c)
+			end
 			push!(X, c)
 	    end
 	    return X
