@@ -8,9 +8,6 @@ IBPIPolicyUtils:
 	using JuMP
 	using GLPK
 
-	abstract type AbstractEdge
-	#used to implement reciprocally nested structs until it gets fixed
-	end
 	"""
 	Structure used for policy nodes.
 	ActionDist specifies the probability of executing the action at the corresponding index in actions
@@ -21,37 +18,39 @@ IBPIPolicyUtils:
 	receives as parameters all possible actions and all possible observations
 	Each node has an unique identifier, the ids of deleted nodes are reused and continuous (1:n_nodes)
 	"""
-	mutable struct Node{A, W, E <: AbstractEdge}
+	mutable struct Node{A, W}
 		id::Int64
 		actionProb::Dict{A, Float64}
-		edges::Dict{A, Dict{W, Vector{E}}}
+		#action -> observation -> node -> prob
+		edges::Dict{A, Dict{W, Dict{Node, Float64}}}
 		value::Vector{Float64}
 		#needed to efficiently redirect edges during pruning
-		incomingEdgeVector::Set{Vector{E}}
+		#srcNode -> vectors of dictionaries that contains edge to this node
+		incomingEdgeDicts::Dict{Node, Set{Dict{Node, Float64}}}
 	end
 
-	"""
-	Each edge structure contains the node to which it brings to, and the probability of taking that edge.
-	"""
-	struct Edge{A, W} <: AbstractEdge
-		next::Node{A, W, Edge}
-		prob::Float64
-	end
 
 	function Node(id::Int64,actions::Vector{A}, observations::Vector{W}) where {A, W}
 		actionProb = Dict{A, Float64}()
 		for i in 1:length(actions)
 			actionProb[actions[i]] = 1/length(actions)
 		end
-		return Node(id::Int64, actionProb::Dict{A, Float64}, Dict{A, Dict{W, Vector{Edge}}}(), Vector{Float64}(), Set{Vector{Edge}}())
+		return Node(id::Int64, actionProb::Dict{A, Float64}, Dict{A, Dict{W, Dict{Node, Float64}}}(), Vector{Float64}(), Dict{Node, Set{Dict{Node, Float64}}}())
 	end
 
 	function Base.println(node::Node)
 		for (a, prob) in node.actionProb
 			obs = node.edges[a]
 			for (obs, edges) in obs
-				for edge in edges
-					println("node_id=$(node.id), a=$a, $prob, $obs -> $(edge.next.id), $(edge.prob)")
+				for (next, prob) in edges
+					println("node_id=$(node.id), a=$a, $prob, $obs -> $(next.id), $(prob)")
+				end
+			end
+		end
+		for (src_node, dict_vect) in node.incomingEdgeDicts
+			for dict in dict_vect
+				for (edge, prob) in dict
+					println("from node $(src_node.id) p=$(prob) to node $(edge.id)")
 				end
 			end
 		end
@@ -69,11 +68,11 @@ IBPIPolicyUtils:
 			n_states = POMDPs.n_states(pomdp)
 			randindex = rand(1:length(actions))
 			n = Node(1, [actions[randindex]], observations)
-			obsdict = Dict{W, Vector{Edge}}()
+			obsdict = Dict{W, Dict{Node, Float64}}()
 			for obs in observations
-				edge = Edge(n, 1.0)
-				obsdict[obs] = [edge]
-				push!(n.incomingEdgeVector, [edge])
+				edges = Dict{Node, Float64}(n => 1.0)
+				obsdict[obs] = edges
+				n.incomingEdgeDicts[n] = Set{Dict{Node, Float64}}([edges])
 			end
 			n.edges[actions[randindex]] = obsdict
 			n.value = [POMDPs.reward(pomdp, s, actions[randindex]) for s in states]
@@ -83,7 +82,7 @@ IBPIPolicyUtils:
 		Randomly choose an action based on action probability given a node
 		returns action::A
 	"""
-	function getAction(node::Node{A, W, Edge}) where {A, W}
+	function getAction(node::Node{A, W}) where {A, W}
 		action = chooseWithProbability(node.actionProb)
 		@deb("Chosen action $action")
 		return action
@@ -92,14 +91,14 @@ IBPIPolicyUtils:
 		Get a vector of actions with probability != 0
 		TODO: transform the two arrays in a dict, only keep possible actions
 	"""
-	function getPossibleActions(node::Node{A, W, Edge}) where {A, W}
+	function getPossibleActions(node::Node{A, W}) where {A, W}
 		return keys(node.actionProb)
 	end
 	"""
 		given node, action and observation returns the next node
 		maps the whole array of edges to get edge prob (O(n)), then calls chooseWithProbability O(n)
 	"""
-	function getNextNode(node::Node{A, W, Edge}, action::A, observation::W) where {A, W}
+	function getNextNode(node::Node{A, W}, action::A, observation::W) where {A, W}
 		if !haskey(node.edges, action)
 			error("Action has probability 0!")
 		end
@@ -127,28 +126,12 @@ IBPIPolicyUtils:
 		end
 		error("Out of dict bounds while choosing items")
 	end
-	"""
-	Given an array of edges
-	Pick a random edge based on the prob.
-	prob must sum to 1.
-	O(n)
-	"""
-	function chooseWithProbability(edges::Vector{Edge})
-		randn = rand() #number in [0, 1)
-		@deb(randn)
-		for edge in edges
-			if randn <= edge.prob
-				return edge
-			else
-				randn-= edge.prob
-			end
-		end
-		error("Out of dict bounds while choosing items")
-	end
+
+
 	#no need for an ID counter, just use length(nodes)
 	#Todo add a hashmap of id -> node index to have O(1) on access from id
 	struct Controller{A, W}
-		nodes::Dict{Int64, Node{A, W, Edge}}
+		nodes::Dict{Int64, Node{A, W}}
 	end
 	"""
 	Initialize a controller with the initial node, start id counter from 2
@@ -158,11 +141,11 @@ IBPIPolicyUtils:
 		Controller{A, W}(Dict(1 => newNode))
 	end
 
-	function build_node(node_id::Int64, actions::Vector{A}, actionProb::Vector{Float64}, observations::Vector{Vector{W}}, observation_prob::Vector{Vector{Float64}}, next_nodes::Vector{Vector{Node{A,W,Edge}}}, value::Vector{Float64}) where {A, W}
+	function build_node(node_id::Int64, actions::Vector{A}, actionProb::Vector{Float64}, observations::Vector{Vector{W}}, observation_prob::Vector{Vector{Float64}}, next_nodes::Vector{Vector{Node{A,W}}}, value::Vector{Float64}) where {A, W}
 		if length(actions) != length(observations) || length(actions) != length(actionProb) || length(actions) != length(observation_prob) || length(actions) != length(next_nodes)
 			error("Length of action-level arrays are different")
 		end
-		edges = Dict{A, Dict{W, Vector{Edge}}}()
+		edges = Dict{A, Dict{W, Dict{Node, Float64}}}()
 		d_actionprob = Dict{A, Float64}()
 		for a_i in 1:length(actions)
 			action = actions[a_i]
@@ -173,14 +156,14 @@ IBPIPolicyUtils:
 			if length(a_obs) != length(a_obs_prob) || length(a_obs) != length(a_next_nodes)
 				error("Length of observation-level arrays are different")
 			end
-			new_obs = Dict{W, Vector{Edge}}()
+			new_obs = Dict{W, Dict{Node, Float64}}()
 			for obs_index in 1:length(a_obs)
 				obs = a_obs[obs_index]
-				new_obs[obs] = [Edge(a_next_nodes[obs_index], a_obs_prob[obs_index])]
+				new_obs[obs] = Dict{Node, Float64}(a_next_nodes[obs_index] => a_obs_prob[obs_index])
 			end
 			edges[action] = new_obs
 		end
-		return Node(node_id, d_actionprob, edges, value, Set{Vector{Edge}}())
+		return Node(node_id, d_actionprob, edges, value, Dict{Node, Set{Dict{Node, Float64}}}())
 	end
 	"""
 	Perform a full backup operation according to Pourpart and Boutilier's paper on Bounded finite state controllers
@@ -232,11 +215,15 @@ IBPIPolicyUtils:
 		#before performing filtering with the old nodes update incomingEdge structure of old nodes
 		for new_node in new_nodes
 			for (action, observation_map) in new_node.edges
-				for (observation, edge_vec) in observation_map
-					for edge in edge_vec
-						@deb("added incoming edge from $(new_node.id) to $(edge.next.id)")
-						next = edge.next
-						push!(next.incomingEdgeVector, edge_vec)
+				for (observation, edge_map) in observation_map
+					for (next, prob) in edge_map
+						@deb("added incoming edge from $(new_node.id) to $(next.id)")
+						if haskey(next.incomingEdgeDicts, new_node)
+							push!(next.incomingEdgeDicts[new_node], edge_map)
+						else
+							@deb("it was the first edge")
+							next.incomingEdgeDicts[new_node] = Set{Dict{Node, Float64}}([edge_map])
+						end
 					end
 				end
 			end
@@ -244,7 +231,7 @@ IBPIPolicyUtils:
 		#add new nodes to controller
 		#all_nodes = union(new_nodes, Set{Node}(oldnode for oldnode in values(nodes)));
 		all_nodes = filterNodes(union(new_nodes, Set{Node}(oldnode for oldnode in values(nodes))))
-		nodes_counter = length(nodes)+1
+		nodes_counter = 1
 		for node in all_nodes
 			#set id and add nodes to controller
 			#compact node ids so they are contiguous
@@ -298,41 +285,41 @@ IBPIPolicyUtils:
 					end
 					println("")
 				end
-	            for edgeV in n.incomingEdgeVector
-					todelete = Vector{Edge}();
-					@deb("Updating incoming edge vectors pointing to node $(n.id)")
-					@deb("Length of incomingEdgeVector = $(length(n.incomingEdgeVector))")
-					tot_prob = 0.0
-					#TODO modify data structure to avoid linear search
-	                for e_i in 1:length(edgeV)
-	                    old_edge = edgeV[e_i]
-						#search for edges pointing to node being removed
-	                    if old_edge.next == n
-							#update probabilities
-	                        for i in keys(new_nodes)
-								#automatically avoid self referencing edges because n was popped earlier
-	                            v = JuMP.value(c[i])
-	                            if v != 0.0
-									new_prob = old_edge.prob*v
-									tot_prob+= new_prob
-									@deb("adding edge to $(new_nodes[i].id)")
-	                                push!(edgeV, IPOMDPToolbox.Edge(new_nodes[i], new_prob))
-	                            end
-	                        end
-							#mark edge as to be deleted (needed to not screw up with loop indices)
-							@deb("removing old edge of node $(old_edge.next.id)")
-							push!(todelete, old_edge)
-	                    end
-	                end
-					#delete all edges in todelete from edgeV
-					setdiff!(edgeV, todelete)
-	                if length(edgeV) == 0
-	                    #remove vector if empty
-						@deb("edgeV of node $(n.id) is empty, deleting it")
-	                    pop!(n.incomingEdgeVector, edgeV)
-	                end
-	            end
+	            #rewiring starts here!
+				@deb("Start of rewiring")
+				for (src_node, dict_set) in n.incomingEdgeDicts
+					for dict in dict_set
+						#dict[n] is the probability of getting to the dominated node (n)
+						old_prob = dict[n]
+						for (dst_id,dst_node) in new_nodes
+							#remember that dst_id (positive) is != dst_node.id (negative)
+							#add new edges to edges structure
+							v = JuMP.value(c[dst_id])
+							if v > 0.0
+								@deb("Added edge from node $(src_node.id) to $(dst_node.id)")
+								dict[dst_node] = v*old_prob
+								#update incomingEdgeDicts for new dst node
+								if haskey(dst_node.incomingEdgeDicts, src_node)
+									push!(dst_node.incomingEdgeDicts[src_node], dict)
+								else
+									dst_node.incomingEdgeDicts[src_node] = Set{Dict{Node, Float64}}([dict])
+								end
+							end
+						end
+						#remove edge of dominated node
+						@deb("Removed edge from node $(src_node.id) to $(n.id)")
+						delete!(dict, n)
+						if length(dict) == 0
+							#only happens if n was the last node pointed by that node for that action/obs pair
+							#and all c[i]s = 0, which is impossible!
+							@deb("length of dict coming from $(src_node.id) == 0 after deletion, removing")						end
+					end
+
+				end
+				@deb("End of rewiring")
 	            #end of rewiring, do not readd dominated node
+				#set it to nothing just to be sure
+				n = nothing
 				if debug[] == true
 					println("Deleting node $(n.id): obj value = $(JuMP.value(e))")
 					println(n)
@@ -370,7 +357,7 @@ IBPIPolicyUtils:
 		return res
 	end
 
-	function node_value(node::Node{A, W, Edge}, action::A, observation::W, pomdp::POMDP) where {A, W}
+	function node_value(node::Node{A, W}, action::A, observation::W, pomdp::POMDP) where {A, W}
 		states = POMDPs.states(pomdp)
 		n_states = length(states)
 		n_observations = POMDPs.n_observations(pomdp)
@@ -414,11 +401,11 @@ IBPIPolicyUtils:
 	end
 
 	function mergeNode(a::Node, b::Node, action::A) where {A}
-		b_obs = b.edges[action]
+		b_observation_map = b.edges[action]
 		res = deepcopy(a)
 		#There is no way we have repeated observation because set[obs]
 		#only contains nodes with obs
-		for (obs, edges) in b_obs
+		for (obs, edges) in b_observation_map
 			if haskey(res.edges[action], obs)
 				@deb("Obs already present")
 			end
@@ -457,12 +444,12 @@ IBPIPolicyUtils:
 								p_s_prime =POMDPModelTools.pdf(POMDPs.transition(pomdp,s,a), s_prime)
 								p_a_n = node.actionProb[a]
 								p_z = POMDPModelTools.pdf(POMDPs.observation(pomdp, s_prime, a), obs)
-								for edge in node.edges[a][obs]
-									if !haskey(controller.nodes,edge.next.id)
+								for (next, prob) in node.edges[a][obs]
+									if !haskey(controller.nodes,next.id)
 										error("Node not present in nodes")
 									end
-									nz_index = edge.next.id
-									c_a_nz = edge.prob*node.actionProb[a] #CHECK THAT THIS IS THE RIGHT VALUE (page 5 of BPI paper)
+									nz_index = next.id
+									c_a_nz = prob*node.actionProb[a] #CHECK THAT THIS IS THE RIGHT VALUE (page 5 of BPI paper)
 									M[composite_index([n_id, s_index],[n_nodes, n_states]), composite_index([nz_index, s_prime_index],[n_nodes,n_states])]+= POMDPs.discount(pomdp)*p_s_prime*p_z*p_a_n*c_a_nz
 								end
 							end
@@ -560,14 +547,14 @@ function partial_backup!(controller::Controller{A, W}, pomdpmodel::pomdpModel) w
 		if JuMP.value(e) >= 0
 			changed = true
 			#@deb("Good so far")
-			new_edges = Dict{A, Dict{W, Vector{Edge}}}()
+			new_edges = Dict{A, Dict{W,Dict{Node, Float64}}}()
 			new_actions = Dict{A, Float64}()
 			#@deb("New structures created")
 			for action_index in 1:n_actions
 				ca = 0
-				new_obs = Dict{W, Vector{Edge}}()
+				new_obs = Dict{W, Dict{Node, Float64}}()
 				for obs_index in 1:n_observations
-					new_edge_vec = Vector{Edge}()
+					new_edge_dict = Dict{Node, Float64}()
 					for (nz_id, nz) in nodes
 						prob = JuMP.value(c[action_index, obs_index, nz_id])
 						if abs(prob) < 1e-15
@@ -579,26 +566,26 @@ function partial_backup!(controller::Controller{A, W}, pomdpmodel::pomdpModel) w
 						end
 						if prob != 0
 							@deb("New edge: $(action_index), $(obs_index) -> $nz_id, $prob")
-							push!(new_edge_vec, Edge(nz, prob))
+							new_edge_dict[nz] = prob
 							ca+=prob
 						end
 					end
-					if length(new_edge_vec) != 0
-						new_obs[observations[obs_index]] = new_edge_vec
+					if length(new_edge_dict) != 0
+						new_obs[observations[obs_index]] = new_edge_dict
 						#update incoming edge vector for other node
 						#set should handle duplicates
-						for edge in new_edge_vec
-							push!(edge.next.incomingEdgeVector, new_edge_vec)
+						for (next, prob) in new_edge_dict
+							next.incomingEdgeDicts[node] = new_edge_dict
 						end
 					end
 				end
 				if length(keys(new_obs)) != 0
 					#re-normalize c(a,n,z)
-					for (obs, vec) in new_obs
-						for i in 1:length(vec)
+					for (obs, dict) in new_obs
+						for (next, prob) in dict
 							#FIXME *n_obs is a quick fix to have sum of prob for each obs = 1
-							vec[i] = Edge(vec[i].next, vec[i].prob/ca)
-							@deb("renormalized: $(vec[i].prob), ca = $ca")
+							dict[next] = prob/ca
+							@deb("renormalized: $dict[next]), ca = $ca")
 						end
 					end
 					new_edges[actions[action_index]] = new_obs
