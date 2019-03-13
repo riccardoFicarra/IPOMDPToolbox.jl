@@ -318,12 +318,12 @@ IBPIPolicyUtils:
 				end
 				@deb("End of rewiring")
 	            #end of rewiring, do not readd dominated node
-				#set it to nothing just to be sure
-				n = nothing
 				if debug[] == true
 					println("Deleting node $(n.id): obj value = $(JuMP.value(e))")
 					println(n)
 				end
+				#set it to nothing just to be sure
+				n = nothing
 	        else
 				#if node is not dominated readd it to the dict!
 				new_nodes[n_id] = n
