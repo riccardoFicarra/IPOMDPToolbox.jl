@@ -229,10 +229,22 @@ IBPIPolicyUtils:
 		end
 		#all new nodes, final filtering
 		new_nodes = filterNodes(new_nodes)
+		#before performing filtering with the old nodes update incomingEdge structure of old nodes
+		for new_node in new_nodes
+			for (action, observation_map) in new_node.edges
+				for (observation, edge_vec) in observation_map
+					for edge in edge_vec
+						@deb("added incoming edge from $(new_node.id) to $(edge.next.id)")
+						next = edge.next
+						push!(next.incomingEdgeVector, edge_vec)
+					end
+				end
+			end
+		end
 		#add new nodes to controller
 		#all_nodes = union(new_nodes, Set{Node}(oldnode for oldnode in values(nodes)));
 		all_nodes = filterNodes(union(new_nodes, Set{Node}(oldnode for oldnode in values(nodes))))
-		nodes_counter = 1
+		nodes_counter = length(nodes)+1
 		for node in all_nodes
 			#set id and add nodes to controller
 			#compact node ids so they are contiguous
@@ -278,48 +290,49 @@ IBPIPolicyUtils:
 			if debug[] == true
 				println("node $(n.id) -> eps = $(JuMP.value(e))")
 			end
-	        if JuMP.value(e) >= 0
+	        if JuMP.value(e) >= -1e-14
 	            #rewiring function here!
-			if debug[] == true
-				for i in keys(new_nodes)
-					print("c$(new_nodes[i].id) = $(JuMP.value(c[i])) ")
+				if debug[] == true
+					for i in keys(new_nodes)
+						print("c$(new_nodes[i].id) = $(JuMP.value(c[i])) ")
+					end
+					println("")
 				end
-				println("")
-			end
 	            for edgeV in n.incomingEdgeVector
-	                #FIXME change data strucure to avoid linear search!
-					#constant for normalization
+					todelete = Vector{Edge}();
+					@deb("Updating incoming edge vectors pointing to node $(n.id)")
+					@deb("Length of incomingEdgeVector = $(length(n.incomingEdgeVector))")
 					tot_prob = 0.0
+					#TODO modify data structure to avoid linear search
 	                for e_i in 1:length(edgeV)
 	                    old_edge = edgeV[e_i]
-						#search for edge
+						#search for edges pointing to node being removed
 	                    if old_edge.next == n
 							#update probabilities
 	                        for i in keys(new_nodes)
+								#automatically avoid self referencing edges because n was popped earlier
 	                            v = JuMP.value(c[i])
 	                            if v != 0.0
 									new_prob = old_edge.prob*v
 									tot_prob+= new_prob
+									@deb("adding edge to $(new_nodes[i].id)")
 	                                push!(edgeV, IPOMDPToolbox.Edge(new_nodes[i], new_prob))
 	                            end
 	                        end
-							#if tot_prob != 0.5
-							@deb("tot_prob = $tot_prob")
-							#end
-							#for i in 1:length(new_nodes)
-							#	edgeV[i].prob/= tot_prob
-							#end
-							#remove old edge from edge vector
-	                        deleteat!(edgeV, e_i)
-	                        break
+							#mark edge as to be deleted (needed to not screw up with loop indices)
+							@deb("removing old edge of node $(old_edge.next.id)")
+							push!(todelete, old_edge)
 	                    end
 	                end
+					#delete all edges in todelete from edgeV
+					setdiff!(edgeV, todelete)
 	                if length(edgeV) == 0
 	                    #remove vector if empty
+						@deb("edgeV of node $(n.id) is empty, deleting it")
 	                    pop!(n.incomingEdgeVector, edgeV)
 	                end
 	            end
-	            #end of rewiring, remove dominated node
+	            #end of rewiring, do not readd dominated node
 				if debug[] == true
 					println("Deleting node $(n.id): obj value = $(JuMP.value(e))")
 					println(n)
