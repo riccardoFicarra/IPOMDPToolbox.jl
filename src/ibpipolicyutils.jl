@@ -217,11 +217,7 @@ IBPIPolicyUtils:
 		#all new nodes, final filtering
 		new_nodes = filterNodes(new_nodes)
 		#before performing filtering with the old nodes update incomingEdge structure of old nodes
-		new_nodes_counter = length(nodes)+1
 		for new_node in new_nodes
-			#assign definitive ids
-			new_node.id = new_nodes_counter
-			new_nodes_counter+=1
 			for (action, observation_map) in new_node.edges
 				for (observation, edge_map) in observation_map
 					for (next, prob) in edge_map
@@ -229,7 +225,10 @@ IBPIPolicyUtils:
 						if debug[] == true
 							for (src_node, dict_set) in next.incomingEdgeDicts
 								for dict in dict_set
-									println(collect(keys(dict)))
+									for node in keys(dict)
+										print("Node $(node.id) ")
+									end
+									println("")
 								end
 							end
 						end
@@ -247,9 +246,13 @@ IBPIPolicyUtils:
 		#add new nodes to controller
 		all_nodes = filterNodes(union(new_nodes, Set{Node}(oldnode for oldnode in values(nodes))))
 		new_controller_nodes = Dict{Int64, Node}()
+		nodes_counter = 1
 		for node in all_nodes
+			#assign definitive ids
+			node.id = nodes_counter
 			#add nodes to the controller
 			new_controller_nodes[node.id] = node
+			nodes_counter+=1
 		end
 		controller.nodes = new_controller_nodes
 	end
