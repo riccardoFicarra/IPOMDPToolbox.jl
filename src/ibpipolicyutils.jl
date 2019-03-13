@@ -217,11 +217,12 @@ IBPIPolicyUtils:
 			for (action, observation_map) in new_node.edges
 				for (observation, edge_map) in observation_map
 					for (next, prob) in edge_map
-						@deb("added incoming edge from $(new_node.id) to $(next.id)")
+						@deb("added incoming edge from $(new_node.id) to $(next.id) ($action, $observation)")
 						if haskey(next.incomingEdgeDicts, new_node)
+							@deb("it was the $(length(next.incomingEdgeDicts[new_node])+1)th")
 							push!(next.incomingEdgeDicts[new_node], edge_map)
 						else
-							@deb("it was the first edge")
+							@deb("it was the first edge for $new_node")
 							next.incomingEdgeDicts[new_node] = Set{Dict{Node, Float64}}([edge_map])
 						end
 					end
@@ -231,7 +232,7 @@ IBPIPolicyUtils:
 		#add new nodes to controller
 		#all_nodes = union(new_nodes, Set{Node}(oldnode for oldnode in values(nodes)));
 		all_nodes = filterNodes(union(new_nodes, Set{Node}(oldnode for oldnode in values(nodes))))
-		nodes_counter = 1
+		nodes_counter = length(nodes)+1
 		for node in all_nodes
 			#set id and add nodes to controller
 			#compact node ids so they are contiguous
@@ -288,36 +289,48 @@ IBPIPolicyUtils:
 	            #rewiring starts here!
 				@deb("Start of rewiring")
 				for (src_node, dict_set) in n.incomingEdgeDicts
-					for dict in dict_set
-						#dict[n] is the probability of getting to the dominated node (n)
-						old_prob = dict[n]
-						for (dst_id,dst_node) in new_nodes
-							#remember that dst_id (positive) is != dst_node.id (negative)
-							#add new edges to edges structure
-							v = JuMP.value(c[dst_id])
-							if v > 0.0
-								@deb("Added edge from node $(src_node.id) to $(dst_node.id)")
-								dict[dst_node] = v*old_prob
-								#update incomingEdgeDicts for new dst node
-								if haskey(dst_node.incomingEdgeDicts, src_node)
-									push!(dst_node.incomingEdgeDicts[src_node], dict)
-								else
-									dst_node.incomingEdgeDicts[src_node] = Set{Dict{Node, Float64}}([dict])
+					#skip rewiring of edges from dominated node
+					if src_node != n
+						@deb("length of dict_set = $(length(dict_set))")
+						for dict in dict_set
+							#dict[n] is the probability of getting to the dominated node (n)
+							old_prob = dict[n]
+							for (dst_id,dst_node) in new_nodes
+								#remember that dst_id (positive) is != dst_node.id (negative)
+								#add new edges to edges structure
+								v = JuMP.value(c[dst_id])
+								if v > 0.0
+									@deb("Added edge from node $(src_node.id) to $(dst_node.id)")
+									dict[dst_node] = v*old_prob
+									#update incomingEdgeDicts for new dst node
+									if haskey(dst_node.incomingEdgeDicts, src_node)
+										push!(dst_node.incomingEdgeDicts[src_node], dict)
+									else
+										dst_node.incomingEdgeDicts[src_node] = Set{Dict{Node, Float64}}([dict])
+									end
 								end
 							end
+							#remove edge of dominated node
+							@deb("Removed edge from node $(src_node.id) to $(n.id)")
+							delete!(dict, n)
+							if length(dict) == 0
+								#only happens if n was the last node pointed by that node for that action/obs pair
+								#and all c[i]s = 0, which is impossible!
+								@deb("length of dict coming from $(src_node.id) == 0 after deletion, removing")						end
 						end
-						#remove edge of dominated node
-						@deb("Removed edge from node $(src_node.id) to $(n.id)")
-						delete!(dict, n)
-						if length(dict) == 0
-							#only happens if n was the last node pointed by that node for that action/obs pair
-							#and all c[i]s = 0, which is impossible!
-							@deb("length of dict coming from $(src_node.id) == 0 after deletion, removing")						end
 					end
-
 				end
 				@deb("End of rewiring")
 	            #end of rewiring, do not readd dominated node
+				#remove incoming edge from pointed nodes
+				for (action, observation_map) in n.edges
+					for (observation, edge_map) in observation_map
+						for (next, prob) in edge_map
+							@deb("removed incoming edge from $(n.id) to $(next.id) ($action, $observation)")
+							delete!(next.incomingEdgeDicts, n)
+						end
+					end
+				end
 				if debug[] == true
 					println("Deleting node $(n.id): obj value = $(JuMP.value(e))")
 					println(n)
