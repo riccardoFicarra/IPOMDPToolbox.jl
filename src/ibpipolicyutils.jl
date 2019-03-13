@@ -29,6 +29,10 @@ IBPIPolicyUtils:
 		incomingEdgeDicts::Dict{Node, Set{Dict{Node, Float64}}}
 	end
 
+	#overload hash and isequal to use only id as keys in dicts
+	Base.hash(n::Node) = hash(n.id)
+	Base.isequal(n1::Node, n2::Node) = Base.isequal(hash(n1), hash(n2))
+
 
 	function Node(id::Int64,actions::Vector{A}, observations::Vector{W}) where {A, W}
 		actionProb = Dict{A, Float64}()
@@ -49,8 +53,8 @@ IBPIPolicyUtils:
 		end
 		for (src_node, dict_vect) in node.incomingEdgeDicts
 			for dict in dict_vect
-				for (edge, prob) in dict
-					println("from node $(src_node.id) p=$(prob) to node $(edge.id)")
+				for (next, prob) in dict
+					println("from node $(src_node.id) p=$(prob) to node $(next.id)")
 				end
 			end
 		end
@@ -128,9 +132,7 @@ IBPIPolicyUtils:
 	end
 
 
-	#no need for an ID counter, just use length(nodes)
-	#Todo add a hashmap of id -> node index to have O(1) on access from id
-	struct Controller{A, W}
+	mutable struct Controller{A, W}
 		nodes::Dict{Int64, Node{A, W}}
 	end
 	"""
@@ -149,7 +151,9 @@ IBPIPolicyUtils:
 		d_actionprob = Dict{A, Float64}()
 		for a_i in 1:length(actions)
 			action = actions[a_i]
+			#fill actionprob dic
 			d_actionprob[action] = actionProb[a_i]
+			#vector of observations tied to action
 			a_obs = observations[a_i]
 			a_obs_prob = observation_prob[a_i]
 			a_next_nodes = next_nodes[a_i]
@@ -213,16 +217,27 @@ IBPIPolicyUtils:
 		#all new nodes, final filtering
 		new_nodes = filterNodes(new_nodes)
 		#before performing filtering with the old nodes update incomingEdge structure of old nodes
+		new_nodes_counter = length(nodes)+1
 		for new_node in new_nodes
+			#assign definitive ids
+			new_node.id = new_nodes_counter
+			new_nodes_counter+=1
 			for (action, observation_map) in new_node.edges
 				for (observation, edge_map) in observation_map
 					for (next, prob) in edge_map
 						@deb("added incoming edge from $(new_node.id) to $(next.id) ($action, $observation)")
+						if debug[] == true
+							for (src_node, dict_set) in next.incomingEdgeDicts
+								for dict in dict_set
+									println(collect(keys(dict)))
+								end
+							end
+						end
 						if haskey(next.incomingEdgeDicts, new_node)
 							@deb("it was the $(length(next.incomingEdgeDicts[new_node])+1)th")
 							push!(next.incomingEdgeDicts[new_node], edge_map)
 						else
-							@deb("it was the first edge for $new_node")
+							@deb("it was the first edge for $(new_node.id)")
 							next.incomingEdgeDicts[new_node] = Set{Dict{Node, Float64}}([edge_map])
 						end
 					end
@@ -230,16 +245,13 @@ IBPIPolicyUtils:
 			end
 		end
 		#add new nodes to controller
-		#all_nodes = union(new_nodes, Set{Node}(oldnode for oldnode in values(nodes)));
 		all_nodes = filterNodes(union(new_nodes, Set{Node}(oldnode for oldnode in values(nodes))))
-		nodes_counter = length(nodes)+1
+		new_controller_nodes = Dict{Int64, Node}()
 		for node in all_nodes
-			#set id and add nodes to controller
-			#compact node ids so they are contiguous
-			node.id = nodes_counter
-			nodes[nodes_counter] = node
-			nodes_counter+=1
+			#add nodes to the controller
+			new_controller_nodes[node.id] = node
 		end
+		controller.nodes = new_controller_nodes
 	end
 
 	"""
@@ -458,8 +470,8 @@ IBPIPolicyUtils:
 								p_a_n = node.actionProb[a]
 								p_z = POMDPModelTools.pdf(POMDPs.observation(pomdp, s_prime, a), obs)
 								for (next, prob) in node.edges[a][obs]
-									if !haskey(controller.nodes,next.id)
-										error("Node not present in nodes")
+									if !haskey(controller.nodes, next.id)
+										error("Node $(next.id) not present in nodes")
 									end
 									nz_index = next.id
 									c_a_nz = prob*node.actionProb[a] #CHECK THAT THIS IS THE RIGHT VALUE (page 5 of BPI paper)
@@ -560,14 +572,14 @@ function partial_backup!(controller::Controller{A, W}, pomdpmodel::pomdpModel) w
 		if JuMP.value(e) >= 0
 			changed = true
 			#@deb("Good so far")
-			new_edges = Dict{A, Dict{W,Dict{Node, Float64}}}()
+			new_edges = Dict{A, Dict{W,Dict{Int64, Float64}}}()
 			new_actions = Dict{A, Float64}()
 			#@deb("New structures created")
 			for action_index in 1:n_actions
 				ca = 0
-				new_obs = Dict{W, Dict{Node, Float64}}()
+				new_obs = Dict{W, Dict{Int64, Float64}}()
 				for obs_index in 1:n_observations
-					new_edge_dict = Dict{Node, Float64}()
+					new_edge_dict = Dict{Int64, Float64}()
 					for (nz_id, nz) in nodes
 						prob = JuMP.value(c[action_index, obs_index, nz_id])
 						if abs(prob) < 1e-15
