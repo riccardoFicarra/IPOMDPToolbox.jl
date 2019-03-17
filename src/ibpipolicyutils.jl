@@ -64,22 +64,30 @@ IBPIPolicyUtils:
 		Receives vectors of all possible actions and observations, plus number of states
 		Get a node with a random action chosen and with all observation edges
 		pointing back to itself
+		If force is defined the action is decided by the user (by index in 1:length(actions))
 	"""
-	function InitialNode(pomdp::POMDP{A, W}) where {A, W}
+	function InitialNode(pomdp::POMDP{A, W};force::Int64=0) where {A, W}
 			actions = POMDPs.actions(pomdp)
 			observations = POMDPs.observations(pomdp)
 			states = POMDPs.states(pomdp)
 			n_states = POMDPs.n_states(pomdp)
-			randindex = rand(1:length(actions))
-			n = Node(1, [actions[randindex]], observations)
+			if force == 0
+				actionindex = rand(1:length(actions))
+			else
+				if force > length(actions)
+					error("forced action outside of action vector length")
+				end
+				actionindex = force
+			end
+			n = Node(1, [actions[actionindex]], observations)
 			obsdict = Dict{W, Dict{Node, Float64}}()
 			for obs in observations
 				edges = Dict{Node, Float64}(n => 1.0)
 				obsdict[obs] = edges
 				n.incomingEdgeDicts[n] = Set{Dict{Node, Float64}}([edges])
 			end
-			n.edges[actions[randindex]] = obsdict
-			n.value = [POMDPs.reward(pomdp, s, actions[randindex]) for s in states]
+			n.edges[actions[actionindex]] = obsdict
+			n.value = [POMDPs.reward(pomdp, s, actions[actionindex]) for s in states]
 			return n
 	end
 	"""
@@ -220,11 +228,14 @@ IBPIPolicyUtils:
 		for new_node in new_nodes
 			for (action, observation_map) in new_node.edges
 				for (observation, edge_map) in observation_map
+					@deb("Obs $observation")
 					for (next, prob) in edge_map
 						@deb("added incoming edge from $(new_node.id) to $(next.id) ($action, $observation)")
 						if debug[] == true
 							for (src_node, dict_set) in next.incomingEdgeDicts
+								println("src = $(src_node.id)")
 								for dict in dict_set
+									println("dict")
 									for node in keys(dict)
 										print("Node $(node.id) ")
 									end
@@ -238,6 +249,18 @@ IBPIPolicyUtils:
 						else
 							@deb("it was the first edge for $(new_node.id)")
 							next.incomingEdgeDicts[new_node] = Set{Dict{Node, Float64}}([edge_map])
+						end
+						if debug[] == true
+							for (src_node, dict_set) in next.incomingEdgeDicts
+								println("src = $(src_node.id)")
+								for dict in dict_set
+									println("dict")
+									for node in keys(dict)
+										print("Node $(node.id) ")
+									end
+									println("")
+								end
+							end
 						end
 					end
 				end
@@ -331,7 +354,8 @@ IBPIPolicyUtils:
 							if length(dict) == 0
 								#only happens if n was the last node pointed by that node for that action/obs pair
 								#and all c[i]s = 0, which is impossible!
-								@deb("length of dict coming from $(src_node.id) == 0 after deletion, removing")						end
+								@deb("length of dict coming from $(src_node.id) == 0 after deletion, removing")
+							end
 						end
 					end
 				end
@@ -357,14 +381,10 @@ IBPIPolicyUtils:
 				new_nodes[n_id] = n
 			end
 	    end
+
 	    return Set{IPOMDPToolbox.Node}(node for node in values(new_nodes))
 	end
-	#=
 
-	function filterNodes(nodeSet::Set{Node})
-		return nodeSet
-	end
-=#
 	"""
 	Perform incremental pruning on a set of nodes by computing the cross sum and filtering every time
 	Follows Cassandra et al paper
@@ -384,7 +404,7 @@ IBPIPolicyUtils:
 		end
 		return res
 	end
-
+	#using eq τ(n, a, z) from incremental pruning paper
 	function node_value(node::Node{A, W}, action::A, observation::W, pomdp::POMDP) where {A, W}
 		states = POMDPs.states(pomdp)
 		n_states = length(states)
@@ -454,7 +474,7 @@ IBPIPolicyUtils:
 			M = zeros(n_states*n_nodes, n_states*n_nodes)
 			b = zeros(n_states*n_nodes)
 
-			#compute coefficients for sum(a)[R(s|a)*P(a|n)+gamma*sum(z, n')[P(s'|s,a)*P(z|s',a)*P(a|n)*P(n'|z)*V(nz, s')]]
+			#compute coefficients for sum(a)[R(s|a)*P(a|n)+gamma*sum(z, n', s')[P(s'|s,a)*P(z|s',a)*P(a|n)*P(n'|z)*V(nz, s')]]
 			for (n_id, node) in nodes
 				#M is the coefficient matrix (form x1 = a2x2+...+anxn+b)
 				#b is the constant term vector
