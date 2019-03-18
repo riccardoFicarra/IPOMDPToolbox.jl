@@ -66,7 +66,7 @@ IBPIPolicyUtils:
 		pointing back to itself
 		If force is defined the action is decided by the user (by index in 1:length(actions))
 	"""
-	function InitialNode(pomdp::POMDP{A, W};force::Int64=0) where {A, W}
+	function InitialNode(pomdp::POMDP{A, W},force::Int64) where {A, W}
 			actions = POMDPs.actions(pomdp)
 			observations = POMDPs.observations(pomdp)
 			states = POMDPs.states(pomdp)
@@ -146,8 +146,8 @@ IBPIPolicyUtils:
 	"""
 	Initialize a controller with the initial node, start id counter from 2
 	"""
-	function Controller(pomdp::POMDP{A,W}) where {A, W}
-		newNode = InitialNode(pomdp)
+	function Controller(pomdp::POMDP{A,W}, force::Int64) where {A, W}
+		newNode = InitialNode(pomdp, force)
 		Controller{A, W}(Dict(1 => newNode))
 	end
 

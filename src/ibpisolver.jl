@@ -19,18 +19,18 @@ ibpisolver.jl:
         controller::Controller{A, W}
     end
 
-    function BPIPolicy(pomdp::POMDP{A, W}) where {A, W}
-        BPIPolicy(Controller(pomdp))
+    function BPIPolicy(pomdp::POMDP{A, W}, force::Int64) where {A, W}
+        BPIPolicy(Controller(pomdp, force))
     end
 
-    function IPOMDPs.Model(pomdp::POMDP;depth=0, solvertype = :IBPI)
+    function IPOMDPs.Model(pomdp::POMDP;depth=0, solvertype = :IBPI, force = 0)
         # Timeout
         t = 10.0
         for i = 1:depth
             t = t/10
         end
         name = hash(pomdp)
-        policy = BPIPolicy(pomdp)
+        policy = BPIPolicy(pomdp, force)
         solver = IBPISolver(t)
         updater = BeliefUpdaters.DiscreteUpdater(pomdp)
         belief = BeliefUpdaters.uniform_belief(pomdp)

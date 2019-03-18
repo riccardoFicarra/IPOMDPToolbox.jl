@@ -37,10 +37,10 @@ end
 """
     Constructs a Model given the relative problem.
     In case the model uses an offline solver (e.g. pomdpModel uses SARSOP), the problem is solved an all the necessary data in order to retreive the best action is stored
-    Model(pomdp::POMDP)
+	Model(pomdp::POMDP)
     Model(ipomdp::IPOMDP)
 """
-function IPOMDPs.Model(model;depth,solver)
+function IPOMDPs.Model(model;depth,solver,force)
     return IPOMDPs.Model(model)
 end
 
