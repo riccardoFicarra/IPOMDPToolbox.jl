@@ -60,6 +60,9 @@ IBPIPolicyUtils:
 		end
 		println("Value vector = $(node.value)")
 	end
+
+	#overload display function to avoid walls of text when printing nodes
+	Base.display(n::IPOMDPToolbox.Node) = println(n)
 	"""
 		Receives vectors of all possible actions and observations, plus number of states
 		Get a node with a random action chosen and with all observation edges
@@ -159,7 +162,7 @@ IBPIPolicyUtils:
 		d_actionprob = Dict{A, Float64}()
 		for a_i in 1:length(actions)
 			action = actions[a_i]
-			#fill actionprob dic
+			#fill actionprob dict
 			d_actionprob[action] = actionProb[a_i]
 			#vector of observations tied to action
 			a_obs = observations[a_i]
@@ -176,6 +179,11 @@ IBPIPolicyUtils:
 			edges[action] = new_obs
 		end
 		return Node(node_id, d_actionprob, edges, value, Dict{Node, Set{Dict{Node, Float64}}}())
+	end
+	function build_node(node_id::Int64, action::A, observation::W, next_node::Node{A, W}, value::Vector{Float64}) where {A, W}
+		actionprob = Dict{A, Float64}(action => 1.0)
+		edges = Dict{A, Dict{W, Dict{Node, Float64}}}(action => Dict{W, Dict{Node, Float64}}(observation => Dict{Node, Float64}(next_node=> 1.0)))
+		return Node(node_id, actionprob, edges, value, Dict{Node, Set{Dict{Node, Float64}}}())
 	end
 	"""
 	Perform a full backup operation according to Pourpart and Boutilier's paper on Bounded finite state controllers
@@ -202,10 +210,11 @@ IBPIPolicyUtils:
 				obs = observations[obs_index]
 				#this set contains all new nodes for action, obs for all nodes
 				new_nodes_a_z = Set{Node}()
-				for (n_id, node) in nodes
+				for (n_id, node) in controller.nodes
 					new_v = node_value(node, a, obs, pomdp)
 					#do not set node id for now
-					new_node = build_node(new_nodes_counter, [a], [1.0], [[obs]], [[1.0]], [[node]], new_v)
+					#new_node = build_node(new_nodes_counter, [a], [1.0], [[obs]], [[1.0]], [[node]], new_v)
+					new_node = build_node(new_nodes_counter, a, obs, node, new_v)
 					push!(new_nodes_a_z, new_node)
 					new_nodes_counter -=1
 				end
@@ -225,23 +234,29 @@ IBPIPolicyUtils:
 		#all new nodes, final filtering
 		new_nodes = filterNodes(new_nodes)
 		#before performing filtering with the old nodes update incomingEdge structure of old nodes
+		#also assign permanent ids
+		nodes_counter = length(nodes)+1
 		for new_node in new_nodes
+			@deb("Node $(new_node.id) becomes node $(nodes_counter)")
+			new_node.id = nodes_counter
+			nodes_counter+=1
 			for (action, observation_map) in new_node.edges
+				old_next = nothing
 				for (observation, edge_map) in observation_map
 					@deb("Obs $observation")
 					for (next, prob) in edge_map
-						@deb("added incoming edge from $(new_node.id) to $(next.id) ($action, $observation)")
+						if old_next != nothing && old_next != next
+							@deb("$(old_next.id)\n $(next.id)")
+						end
+						if old_next != nothing && hash(old_next) != hash(next)
+							@deb("$(hash(old_next))\n $(hash(next))")
+						else
+							@deb("hashes are equal")
+						end
+						old_next = next
+						@deb("adding incoming edge from $(new_node.id) to $(next.id) ($action, $observation)")
 						if debug[] == true
-							for (src_node, dict_set) in next.incomingEdgeDicts
-								println("src = $(src_node.id)")
-								for dict in dict_set
-									println("dict")
-									for node in keys(dict)
-										print("Node $(node.id) ")
-									end
-									println("")
-								end
-							end
+							println(next)
 						end
 						if haskey(next.incomingEdgeDicts, new_node)
 							@deb("it was the $(length(next.incomingEdgeDicts[new_node])+1)th")
@@ -251,16 +266,7 @@ IBPIPolicyUtils:
 							next.incomingEdgeDicts[new_node] = Set{Dict{Node, Float64}}([edge_map])
 						end
 						if debug[] == true
-							for (src_node, dict_set) in next.incomingEdgeDicts
-								println("src = $(src_node.id)")
-								for dict in dict_set
-									println("dict")
-									for node in keys(dict)
-										print("Node $(node.id) ")
-									end
-									println("")
-								end
-							end
+							println(next)
 						end
 					end
 				end
@@ -269,13 +275,9 @@ IBPIPolicyUtils:
 		#add new nodes to controller
 		all_nodes = filterNodes(union(new_nodes, Set{Node}(oldnode for oldnode in values(nodes))))
 		new_controller_nodes = Dict{Int64, Node}()
-		nodes_counter = 1
 		for node in all_nodes
-			#assign definitive ids
-			node.id = nodes_counter
 			#add nodes to the controller
 			new_controller_nodes[node.id] = node
-			nodes_counter+=1
 		end
 		controller.nodes = new_controller_nodes
 	end
@@ -300,9 +302,9 @@ IBPIPolicyUtils:
 	        node_counter+=1
 	    end
 	    n_states = length(new_nodes[1].value)
-	    for (n_id, n) in new_nodes
+	    for (temp_id, n) in new_nodes
 			#remove the node we're testing from the node set (else we always get that a node dominates itself!)
-			pop!(new_nodes, n_id)
+			pop!(new_nodes, temp_id)
 	        #@deb("$(length(new_nodes))")
 	        lpmodel = JuMP.Model(with_optimizer(GLPK.Optimizer))
 	        #define variables for LP. c(i)
@@ -378,7 +380,7 @@ IBPIPolicyUtils:
 				n = nothing
 	        else
 				#if node is not dominated readd it to the dict!
-				new_nodes[n_id] = n
+				new_nodes[temp_id] = n
 			end
 	    end
 
@@ -450,7 +452,7 @@ IBPIPolicyUtils:
 
 	function mergeNode(a::Node, b::Node, action::A) where {A}
 		b_observation_map = b.edges[action]
-		res = deepcopy(a)
+		res = a
 		#There is no way we have repeated observation because set[obs]
 		#only contains nodes with obs
 		for (obs, edges) in b_observation_map
@@ -471,8 +473,14 @@ IBPIPolicyUtils:
 			n_nodes = length(keys(controller.nodes))
 			states = POMDPs.states(pomdp)
 			n_states = POMDPs.n_states(pomdp)
-			M = zeros(n_states*n_nodes, n_states*n_nodes)
+			M = spzeros(n_states*n_nodes, n_states*n_nodes)
 			b = zeros(n_states*n_nodes)
+
+			#dictionary used for recompacting ids
+			temp_id = Dict{Int64, Int64}()
+			for (node_id, node) in nodes
+				temp_id[node_id] = length(temp_id)+1
+			end
 
 			#compute coefficients for sum(a)[R(s|a)*P(a|n)+gamma*sum(z, n', s')[P(s'|s,a)*P(z|s',a)*P(a|n)*P(n'|z)*V(nz, s')]]
 			for (n_id, node) in nodes
@@ -483,7 +491,7 @@ IBPIPolicyUtils:
 				for s_index in 1:n_states
 					s = POMDPs.states(pomdp)[s_index]
 					for a in actions
-						b[composite_index([n_id, s_index],[n_nodes, n_states])] += POMDPs.reward(pomdp, s, a)*node.actionProb[a]
+						b[composite_index([temp_id[n_id], s_index],[n_nodes, n_states])] += POMDPs.reward(pomdp, s, a)*node.actionProb[a]
 						s_primes = POMDPs.transition(pomdp,s,a).vals
 						possible_obs = keys(node.edges[a])  #only consider observations possible from current node/action combo
 						for obs in possible_obs
@@ -496,9 +504,9 @@ IBPIPolicyUtils:
 									if !haskey(controller.nodes, next.id)
 										error("Node $(next.id) not present in nodes")
 									end
-									nz_index = next.id
+									nz_index = temp_id[next.id]
 									c_a_nz = prob*node.actionProb[a] #CHECK THAT THIS IS THE RIGHT VALUE (page 5 of BPI paper)
-									M[composite_index([n_id, s_index],[n_nodes, n_states]), composite_index([nz_index, s_prime_index],[n_nodes,n_states])]+= POMDPs.discount(pomdp)*p_s_prime*p_z*p_a_n*c_a_nz
+									M[composite_index([temp_id[n_id], s_index],[n_nodes, n_states]), composite_index([nz_index, s_prime_index],[n_nodes,n_states])]+= POMDPs.discount(pomdp)*p_s_prime*p_z*p_a_n*c_a_nz
 								end
 							end
 						end
@@ -512,7 +520,7 @@ IBPIPolicyUtils:
 			res = (I- M) \ b
 			#copy respective value functions in nodes
 			for (n_id, node) in nodes
-				node.value = copy(res[(n_id-1)*n_states+1 : n_id*n_states])
+				node.value = copy(res[(temp_id[n_id]-1)*n_states+1 : temp_id[n_id]*n_states])
 				@deb("Value vector of node $n_id = $(nodes[n_id].value)")
 			end
 	end
