@@ -25,7 +25,10 @@ IBPIPolicyUtils:
 		edges::Dict{A, Dict{W, Dict{Node, Float64}}}
 		value::Vector{Float64}
 		#needed to efficiently redirect edges during pruning
-		#srcNode -> vectors of dictionaries that contains edge to this node
+		#srcNodeID -> vectors of dictionaries that contains edge to this node
+		#TODO change key from Node to NodeId
+		#TODO perform final id assignment earlier
+		#TODO modify all functions to work with non-contiguous ids.
 		incomingEdgeDicts::Dict{Node, Set{Dict{Node, Float64}}}
 	end
 
