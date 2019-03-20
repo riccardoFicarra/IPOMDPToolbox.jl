@@ -28,9 +28,11 @@ function valueVectors2D(controller::Controller)
     pyplot()
     n_nodes = length(controller.nodes)
     alphas = Matrix{Float64}(undef,2,n_nodes)
+    col_counter = 1
     for (n_id, node) in controller.nodes
-        alphas[:, n_id] = node.value
+        alphas[:, col_counter] = node.value
+        col_counter+=1
     end
     #@deb("$alphas")
-    plot(0:1, alphas, label=reshape(1:n_nodes, 1, n_nodes))
+    plot(0:1, alphas, label=reshape(collect(keys(controller.nodes)), 1, n_nodes))
 end
