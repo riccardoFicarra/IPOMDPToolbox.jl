@@ -85,10 +85,11 @@ IBPIPolicyUtils:
 			end
 			n = Node(1, [actions[actionindex]], observations)
 			obsdict = Dict{W, Dict{Node, Float64}}()
+			n.incomingEdgeDicts[n] = Vector{Dict{Node, Float64}}(undef, 0)
 			for obs in observations
 				edges = Dict{Node, Float64}(n => 1.0)
 				obsdict[obs] = edges
-				n.incomingEdgeDicts[n] = [edges]
+				push!(n.incomingEdgeDicts[n], edges)
 			end
 			n.edges[actions[actionindex]] = obsdict
 			n.value = [POMDPs.reward(pomdp, s, actions[actionindex]) for s in states]
@@ -193,6 +194,7 @@ IBPIPolicyUtils:
 	TODO: make this thing actually do a backup
 	"""
 	function full_backup_stochastic!(controller::Controller{A, W}, pomdpmodel::pomdpModel) where {A, W}
+		minval = 1e-10
 		pomdp = pomdpmodel.frame
 		belief = pomdpmodel.history.b
 		nodes = controller.nodes
@@ -227,26 +229,29 @@ IBPIPolicyUtils:
 						println(node)
 					end
 				end
-				new_nodes_z[obs_index] = filterNodes(new_nodes_a_z)
+				new_nodes_z[obs_index] = filterNodes(new_nodes_a_z, minval)
 			end
 			#set that contains all nodes generated from action a after incremental pruning
-			new_nodes_counter, new_nodes_a = incprune(new_nodes_z, new_nodes_counter)
+			new_nodes_counter, new_nodes_a = incprune(new_nodes_z, new_nodes_counter, minval)
 			union!(new_nodes, new_nodes_a)
 		end
 		#all new nodes, final filtering
-		new_nodes = filterNodes(new_nodes)
+		new_nodes = filterNodes(new_nodes, minval)
 		#before performing filtering with the old nodes update incomingEdge structure of old nodes
 		#also assign permanent ids
 		nodes_counter = controller.maxId+1
 		for new_node in new_nodes
 			@deb("Node $(new_node.id) becomes node $(nodes_counter)")
 			new_node.id = nodes_counter
+			if debug[] == true
+				println(new_node)
+			end
 			nodes_counter+=1
 			for (action, observation_map) in new_node.edges
 				for (observation, edge_map) in observation_map
 					#@deb("Obs $observation")
 					for (next, prob) in edge_map
-						@deb("adding incoming edge from $(new_node.id) to $(next.id) ($action, $observation)")
+						#@deb("adding incoming edge from $(new_node.id) to $(next.id) ($action, $observation)")
 						if haskey(next.incomingEdgeDicts, new_node)
 							#@deb("it was the $(length(next.incomingEdgeDicts[new_node])+1)th")
 							push!(next.incomingEdgeDicts[new_node], edge_map)
@@ -264,7 +269,7 @@ IBPIPolicyUtils:
 		#no need to sort, just have new nodes examined before old nodes
 		#the inner union is needed to have an orderedset as first parameter, as the result of union({ordered}, {not ordered}) = {ordered}
 		orderedset = union(union(OrderedSet{Node}(), new_nodes), Set{Node}(oldnode for oldnode in values(nodes)))
-		all_nodes = filterNodes(orderedset)
+		all_nodes = filterNodes(orderedset, minval)
 		new_controller_nodes = Dict{Int64, Node}()
 		for node in all_nodes
 			#add nodes to the controller
@@ -291,6 +296,8 @@ IBPIPolicyUtils:
 				s_prime_index = POMDPs.stateindex(pomdp, s_prime)
 				p_s_prime = POMDPModelTools.pdf(transition_dist, s_prime)
 				p_obs = POMDPModelTools.pdf(POMDPs.observation(pomdp, action, s_prime), observation)
+				@deb("$action, $state, $observation, $s_prime")
+				@deb("$(node.value[s_prime_index]) * $(p_obs) * $(p_s_prime)")
 				sum+= node.value[s_prime_index] * p_obs * p_s_prime
 			end
 			new_V[s_index] = (1/n_observations) * POMDPs.reward(pomdp, state, action) + γ*sum
@@ -302,11 +309,11 @@ IBPIPolicyUtils:
 	Perform incremental pruning on a set of nodes by computing the cross sum and filtering every time
 	Follows Cassandra et al paper
 	"""
-	function incprune(nodeVec::Vector{Set{Node}}, startId::Int64)
+	function incprune(nodeVec::Vector{Set{Node}}, startId::Int64, minval::Float64)
 		@deb("Called incprune, startId = $startId")
 		id = startId
 		id, xs = xsum(nodeVec[1], nodeVec[2], id)
-		res = filterNodes(xs)
+		res = filterNodes(xs, minval)
 		#=if debug[] == true
 			for node in res
 				println(node)
@@ -315,7 +322,7 @@ IBPIPolicyUtils:
 		=#
 		for i = 3:length(nodeVec)
 			id, xs = xsum(nodeVec[1], nodeVec[2], id)
-			res = filterNodes(xs)
+			res = filterNodes(xs, minval)
 			#@deb("Length $i = $(length(nodeVec[i]))")
 		end
 		#@deb("returned ID = $id")
@@ -371,9 +378,10 @@ IBPIPolicyUtils:
 	end
 
 	"""
-		Filtering function to remove dominated nodes
+		Filtering function to remove dominated nodes.
+		Minval is the minimum probability that an edge can have. values below minval are treated as zero, values above 1-minval are treated as 1
 	"""
-	function filterNodes(nodes::Set{IPOMDPToolbox.Node})
+	function filterNodes(nodes::Set{IPOMDPToolbox.Node}, minval::Float64)
 	    @deb("Called filterNodes, length(nodes) = $(length(nodes))")
 		if length(nodes) == 0
 			error("called FilterNodes on empty set")
@@ -405,12 +413,15 @@ IBPIPolicyUtils:
 	        @variable(lpmodel, e)
 	        @objective(lpmodel, Max, e)
 	        @constraint(lpmodel, con[s_index=1:n_states], n.value[s_index] + e <= sum(c[ni_id]*ni.value[s_index] for (ni_id, ni) in new_nodes))
+			#this constraint is used to avoid having edges with extremely low probability
+			#@constraint(lpmodel, con_small[i=keys(new_nodes)], c[i]*(c[i]-minval) >= 0)
+			#not supported by solver =(
 	        @constraint(lpmodel, con_sum, sum(c[i] for i in keys(new_nodes)) == 1)
 	        optimize!(lpmodel)
 			if debug[] == true
 				println("node $(n.id) -> eps = $(JuMP.value(e))")
 			end
-	        if JuMP.value(e) >= -1e-14
+	        if JuMP.value(e) >= -1e-12
 	            #rewiring function here!
 				if debug[] == true
 					for i in keys(new_nodes)
@@ -419,7 +430,7 @@ IBPIPolicyUtils:
 					println("")
 				end
 	            #rewiring starts here!
-				@deb("Start of rewiring")
+				#@deb("Start of rewiring")
 				for (src_node, dict_vect) in n.incomingEdgeDicts
 					#skip rewiring of edges from dominated node
 					if src_node != n
@@ -431,8 +442,12 @@ IBPIPolicyUtils:
 								#remember that dst_id (positive) is != dst_node.id (negative)
 								#add new edges to edges structure
 								v = JuMP.value(c[dst_id])
-								if v > 0.0
-									@deb("Added edge from node $(src_node.id) to $(dst_node.id)")
+								#FIXME hack: sum of cis is no longer 1 (but it is really close)
+								if v >= 1-minval
+									v = 1
+								end
+								if v > minval
+									#@deb("Added edge from node $(src_node.id) to $(dst_node.id)")
 									dict[dst_node] = v*old_prob
 									#update incomingEdgeDicts for new dst node
 									if haskey(dst_node.incomingEdgeDicts, src_node)
@@ -443,7 +458,7 @@ IBPIPolicyUtils:
 								end
 							end
 							#remove edge of dominated node
-							@deb("Removed edge from node $(src_node.id) to $(n.id)")
+							#@deb("Removed edge from node $(src_node.id) to $(n.id)")
 							delete!(dict, n)
 							if length(dict) == 0
 								#only happens if n was the last node pointed by that node for that action/obs pair
@@ -453,14 +468,14 @@ IBPIPolicyUtils:
 						end
 					end
 				end
-				@deb("End of rewiring")
+				#@deb("End of rewiring")
 	            #end of rewiring, do not readd dominated node
 				#remove incoming edge from pointed nodes
 				for (action, observation_map) in n.edges
 					for (observation, edge_map) in observation_map
 						for (next, prob) in edge_map
 							if haskey(next.incomingEdgeDicts, n)
-								@deb("removed incoming edge from $(n.id) to $(next.id) ($action, $observation)")
+								#@deb("removed incoming edge vector from $(n.id) to $(next.id) ($action, $observation)")
 								delete!(next.incomingEdgeDicts, n)
 							end
 						end
@@ -482,9 +497,11 @@ IBPIPolicyUtils:
 	end
 
 	"""
-		Filtering function to remove dominated nodes
+		Filtering function to remove dominated nodes.
+		Minval is the minimum probability that an edge can have. values below minval are treated as zero, values above 1-minval are treated as 1
+		This version of filterNodes analyzes new nodes before old nodes to avoid rewiring in case of nodes with equal values
 	"""
-	function filterNodes(nodes::OrderedSet{IPOMDPToolbox.Node})
+	function filterNodes(nodes::OrderedSet{IPOMDPToolbox.Node}, minval::Float64)
 	    @deb("Called filterNodes, length(nodes) = $(length(nodes))")
 		if length(nodes) == 0
 			error("called FilterNodes on empty set")
@@ -493,16 +510,20 @@ IBPIPolicyUtils:
 			#if there is only one node it is useless to try and prune anything
 			return nodes
 		end
-	    new_nodes = OrderedDict{Int64, IPOMDPToolbox.Node}()
+	    new_nodes = Dict{Int64, IPOMDPToolbox.Node}()
 	    #careful, here dict key != node.id!!!!
 	    node_counter = 1
 	    for node in nodes
 	        new_nodes[node_counter] = node
-			@deb("$(node.id)")
+			#@deb("temp = $node_counter, id = $(node.id)")
 	        node_counter+=1
 	    end
 	    n_states = length(new_nodes[1].value)
-	    for (temp_id, n) in new_nodes
+		#since we know temp_ids are contiguous we can iterate in order
+		#this way new nodes are checked first without need for an ordered dict nor sorting
+	    for temp_id in 1:length(new_nodes)
+			n = new_nodes[temp_id]
+			#@deb("temp_id = $temp_id, n.id = $(n.id)")
 			#remove the node we're testing from the node set (else we always get that a node dominates itself!)
 			if length(new_nodes) == 1
 				#only one node in the set, no reason to keep pruning
@@ -522,7 +543,7 @@ IBPIPolicyUtils:
 			if debug[] == true
 				println("node $(n.id) -> eps = $(JuMP.value(e))")
 			end
-	        if JuMP.value(e) >= -1e-14
+	        if JuMP.value(e) >= -1e-10
 	            #rewiring function here!
 				if debug[] == true
 					for i in keys(new_nodes)
@@ -543,7 +564,10 @@ IBPIPolicyUtils:
 								#remember that dst_id (positive) is != dst_node.id (negative)
 								#add new edges to edges structure
 								v = JuMP.value(c[dst_id])
-								if v > 0.0
+								if v >= 1-minval
+									v = 1
+								end
+								if v > minval
 									@deb("Added edge from node $(src_node.id) to $(dst_node.id)")
 									dict[dst_node] = v*old_prob
 									#update incomingEdgeDicts for new dst node
@@ -572,7 +596,7 @@ IBPIPolicyUtils:
 					for (observation, edge_map) in observation_map
 						for (next, prob) in edge_map
 							if haskey(next.incomingEdgeDicts, n)
-								@deb("removed incoming edge from $(n.id) to $(next.id) ($action, $observation)")
+								@deb("removed incoming edge vector from $(n.id) to $(next.id) ($action, $observation)")
 								delete!(next.incomingEdgeDicts, n)
 							end
 						end
@@ -620,22 +644,32 @@ IBPIPolicyUtils:
 				for s_index in 1:n_states
 					s = POMDPs.states(pomdp)[s_index]
 					for a in actions
-						b[composite_index([temp_id[n_id], s_index],[n_nodes, n_states])] += POMDPs.reward(pomdp, s, a)*node.actionProb[a]
+						@deb("action = $a")
+						b[composite_index([temp_id[n_id], s_index],[n_nodes, n_states])] = POMDPs.reward(pomdp, s, a)*node.actionProb[a]
+						@deb("b($n_id, $s) = $(POMDPs.reward(pomdp, s, a)*node.actionProb[a])")
+						M[composite_index([temp_id[n_id], s_index],[n_nodes, n_states]), composite_index([temp_id[n_id], s_index],[n_nodes, n_states])] = 1
+						@deb("M[$n_id, $s][$n_id, $s] = 1")
 						s_primes = POMDPs.transition(pomdp,s,a).vals
 						possible_obs = keys(node.edges[a])  #only consider observations possible from current node/action combo
 						for obs in possible_obs
+							@deb("obs = $obs")
 							for s_prime_index in 1:length(s_primes)
 								s_prime = s_primes[s_prime_index]
 								p_s_prime =POMDPModelTools.pdf(POMDPs.transition(pomdp,s,a), s_prime)
+								if p_s_prime == 0.0
+									continue
+								end
 								p_a_n = node.actionProb[a]
-								p_z = POMDPModelTools.pdf(POMDPs.observation(pomdp, s_prime, a), obs)
+								p_z = POMDPModelTools.pdf(POMDPs.observation(pomdp, a, s_prime), obs)
+								@deb("p_z = $p_z")
 								for (next, prob) in node.edges[a][obs]
 									if !haskey(controller.nodes, next.id)
 										error("Node $(next.id) not present in nodes")
 									end
 									nz_index = temp_id[next.id]
-									c_a_nz = prob*node.actionProb[a] #CHECK THAT THIS IS THE RIGHT VALUE (page 5 of BPI paper)
-									M[composite_index([temp_id[n_id], s_index],[n_nodes, n_states]), composite_index([nz_index, s_prime_index],[n_nodes,n_states])]+= POMDPs.discount(pomdp)*p_s_prime*p_z*p_a_n*c_a_nz
+									c_a_nz = prob #CHECK THAT THIS IS THE RIGHT VALUE (page 5 of BPI paper)
+									M[composite_index([temp_id[n_id], s_index],[n_nodes, n_states]), composite_index([nz_index, s_prime_index],[n_nodes,n_states])]-= POMDPs.discount(pomdp)*p_s_prime*p_z*p_a_n*c_a_nz
+									@deb("M[$n_id, $s][$(next.id), $s_prime] = gamma=$(POMDPs.discount(pomdp))*ps'=$p_s_prime*pz=$p_z*pa=$p_a_n*pn'=$c_a_nz = $(M[composite_index([temp_id[n_id], s_index],[n_nodes, n_states]), composite_index([nz_index, s_prime_index],[n_nodes,n_states])])")
 								end
 							end
 						end
@@ -644,9 +678,7 @@ IBPIPolicyUtils:
 			end
 			@deb("M = $M")
 			@deb("b = $b")
-			#maybe put this in coefficient computation instead of doing matrix operations for faster comp?
-			I = Diagonal(ones(Float64,size(M,1), size(M,2) ))
-			res = (I- M) \ b
+			res = M \ b
 			#copy respective value functions in nodes
 			for (n_id, node) in nodes
 				node.value = copy(res[(temp_id[n_id]-1)*n_states+1 : temp_id[n_id]*n_states])
@@ -678,6 +710,7 @@ function partial_backup!(controller::Controller{A, W}, pomdpmodel::pomdpModel) w
 	#this time the matrix form is a1x1+...+anxn = b1
 	#sum(a,s)[sum(nz)[canz*[R(s,a)+gamma*sum(s')p(s'|s, a)p(z|s', a)v(nz,s')]] -eps = V(n,s)
 	#number of variables is |A||Z||N|+1 (canz and eps)
+	minval = 1e-10
 	pomdp = pomdpmodel.frame
 	nodes = controller.nodes
 	n_nodes = length(keys(controller.nodes))
@@ -699,7 +732,7 @@ function partial_backup!(controller::Controller{A, W}, pomdpmodel::pomdpModel) w
 		#define constraints
 		for s_index in 1:n_states
 			s = states[s_index]
-			M = zeros(n_actions, n_observations, n_nodes)
+			M = spzeros(n_actions, n_observations, n_nodes)
 			for a_index in 1:n_actions
 				action = actions[a_index]
 				r_s_a = POMDPs.reward(pomdp, s, action)
@@ -712,7 +745,7 @@ function partial_backup!(controller::Controller{A, W}, pomdpmodel::pomdpModel) w
 							#comp_eq_index = composite_index([a_index, obs_index, n_id], [n_actions,n_observations, n_nodes])
 							#comp_var_index = composite_index([a_index, obs_index, nz_id], [n_actions,n_observations, n_nodes])
 							p_s_prime =POMDPModelTools.pdf(POMDPs.transition(pomdp,s,action), s_prime)
-							p_z = POMDPModelTools.pdf(POMDPs.observation(pomdp, s_prime, action), obs)
+							p_z = POMDPModelTools.pdf(POMDPs.observation(pomdp, action, s_prime), obs)
 							v_nz_sp = nz.value[POMDPs.stateindex(pomdp, s_prime)]
 							#@deb("obs = $obs, nz = $(nz_id), action = $action, , state = $s, s_prime = $s_prime")
 							M[a_index, obs_index, nz_id] += r_s_a+POMDPs.discount(pomdp)*p_s_prime*p_z*v_nz_sp
@@ -729,7 +762,7 @@ function partial_backup!(controller::Controller{A, W}, pomdpmodel::pomdpModel) w
 		optimize!(lpmodel)
 
 
-		if JuMP.value(e) >= 0
+		if JuMP.value(e) >= -1e-14
 			changed = true
 			#@deb("Good so far")
 			new_edges = Dict{A, Dict{W,Dict{Int64, Float64}}}()
@@ -749,7 +782,10 @@ function partial_backup!(controller::Controller{A, W}, pomdpmodel::pomdpModel) w
 						if prob < 0 || prob > 1
 							error("Probability outside of bounds: $prob")
 						end
-						if prob != 0
+						if prob > 1-minval
+							prob = 1
+						end
+						if prob > minval
 							@deb("New edge: $(action_index), $(obs_index) -> $nz_id, $prob")
 							new_edge_dict[nz] = prob
 							ca+=prob
