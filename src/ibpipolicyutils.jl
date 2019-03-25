@@ -725,92 +725,107 @@ function partial_backup!(controller::Controller{A, W}, pomdpmodel::pomdpModel) w
 	for (n_id, node) in nodes
 		lpmodel = JuMP.Model(with_optimizer(GLPK.Optimizer))
 		#define variables for LP. c(a, n, z)
-		@variable(lpmodel, c[a=1:n_actions, z=1:n_observations, n=keys(nodes)] >= 0)
+		@variable(lpmodel, canz[a=1:n_actions, z=1:n_observations, n=keys(nodes)] >= 0)
+		@variable(lpmodel, ca[a=1:n_actions] >= 0)
 		#e to maximize
 		@variable(lpmodel, e)
 		@objective(lpmodel, Max, e)
 		#define constraints
 		for s_index in 1:n_states
 			s = states[s_index]
-			M = spzeros(n_actions, n_observations, n_nodes)
+			M = zeros(n_actions, n_observations, n_nodes)
+			#line vector
+			M_a = zeros(1, n_actions)
 			for a_index in 1:n_actions
 				action = actions[a_index]
-				r_s_a = POMDPs.reward(pomdp, s, action)
+				M_a[1, a_index] = POMDPs.reward(pomdp, s, action)
 				s_primes = POMDPs.transition(pomdp,s,action).vals
 				for obs_index in 1:n_observations
 					obs = observations[obs_index]
 					#array of edges given observation
-					for s_prime in s_primes
-						for (nz_id, nz) in nodes
-							#comp_eq_index = composite_index([a_index, obs_index, n_id], [n_actions,n_observations, n_nodes])
-							#comp_var_index = composite_index([a_index, obs_index, nz_id], [n_actions,n_observations, n_nodes])
+					for (nz_id, nz) in nodes
+						s_prime_partial = 0.0
+						for s_prime in s_primes
 							p_s_prime =POMDPModelTools.pdf(POMDPs.transition(pomdp,s,action), s_prime)
-							p_z = POMDPModelTools.pdf(POMDPs.observation(pomdp, action, s_prime), obs)
-							v_nz_sp = nz.value[POMDPs.stateindex(pomdp, s_prime)]
-							#@deb("obs = $obs, nz = $(nz_id), action = $action, , state = $s, s_prime = $s_prime")
-							M[a_index, obs_index, nz_id] += r_s_a+POMDPs.discount(pomdp)*p_s_prime*p_z*v_nz_sp
+							if p_s_prime != 0.0
+								p_z = POMDPModelTools.pdf(POMDPs.observation(pomdp, action, s_prime), obs)
+								v_nz_sp = nz.value[POMDPs.stateindex(pomdp, s_prime)]
+								@deb("state = $s, action = $action, obs = $obs, nz = $(nz_id), s_prime = $s_prime")
+								#@deb("$p_s_prime $p_z $v_nz_sp")
+								s_prime_partial+= p_s_prime*p_z*v_nz_sp
+							end
 						end
+						M[a_index, obs_index, nz_id] = POMDPs.discount(pomdp)*s_prime_partial
+						@deb("M[$a_index, $obs_index, $nz_id] = $(M[a_index, obs_index, nz_id])")
+
 					end
 				end
 			end
-			@constraint(lpmodel, [s_index],  e - M.*c .<= -1*node.value[s_index])
+			@deb("state $s: $M")
+			@deb("state $s: $M_a")
+			#constraint on the big formula in table 2
+			@constraint(lpmodel,  e - M_a * ca - sum(sum(sum(canz[a, z, n] * M[a, z, n] for n in keys(nodes)) for z in 1:n_observations) for a in 1:n_actions) .<= -1*node.value[s_index])
+
 		end
-		@expression(lpmodel, sumc, sum(sum(sum(c[a,z,n] for n in keys(nodes)) for z in 1:n_observations) for a in 1:n_actions))
-		@constraint(lpmodel, con_sum,  sumc == 1)
-		#@constraint(lpmodel, canz_prob[a=1:n_actions, z=1:n_observations, n=1:n_nodes], 0 <= c[a,z,n] <= 1)
-		#print(lpmodel)
+		#sum canz over n,z = ca
+		@constraint(lpmodel, sum_ca[a_index=1:n_actions], sum(sum(canz[a_index,z,n] for n in keys(nodes)) for z in 1:n_observations) == ca[a_index])
+		#sum ca over a = 1
+		@constraint(lpmodel, con_sum, sum(ca[a] for a in 1:n_actions) == 1)
+		if debug[] == true
+			print(lpmodel)
+		end
 		optimize!(lpmodel)
 
 
 		if JuMP.value(e) >= -1e-14
 			changed = true
 			#@deb("Good so far")
-			new_edges = Dict{A, Dict{W,Dict{Int64, Float64}}}()
+			new_edges = Dict{A, Dict{W,Dict{Node, Float64}}}()
 			new_actions = Dict{A, Float64}()
 			#@deb("New structures created")
 			for action_index in 1:n_actions
-				ca = 0
-				new_obs = Dict{W, Dict{Int64, Float64}}()
-				for obs_index in 1:n_observations
-					new_edge_dict = Dict{Int64, Float64}()
-					for (nz_id, nz) in nodes
-						prob = JuMP.value(c[action_index, obs_index, nz_id])
-						if abs(prob) < 1e-15
-							@deb("Set prob to 0 even though it was negative")
-							prob = 0
-						end
-						if prob < 0 || prob > 1
-							error("Probability outside of bounds: $prob")
-						end
-						if prob > 1-minval
-							prob = 1
-						end
-						if prob > minval
-							@deb("New edge: $(action_index), $(obs_index) -> $nz_id, $prob")
-							new_edge_dict[nz] = prob
-							ca+=prob
-						end
-					end
-					if length(new_edge_dict) != 0
-						new_obs[observations[obs_index]] = new_edge_dict
-						#update incoming edge vector for other node
-						#set should handle duplicates
-						for (next, prob) in new_edge_dict
-							next.incomingEdgeDicts[node] = new_edge_dict
-						end
-					end
+				ca_v = JuMP.value(ca[action_index])
+				if ca_v > 1-minval
+					ca_v = 1.0
 				end
-				if length(keys(new_obs)) != 0
-					#re-normalize c(a,n,z)
-					for (obs, dict) in new_obs
-						for (next, prob) in dict
-							#FIXME *n_obs is a quick fix to have sum of prob for each obs = 1
-							dict[next] = prob/ca
-							@deb("renormalized: $dict[next]), ca = $ca")
+				if ca_v > minval
+					new_obs = Dict{W, Dict{Node, Float64}}()
+					for obs_index in 1:n_observations
+						new_edge_dict = Dict{Node, Float64}()
+						for (nz_id, nz) in nodes
+							prob = JuMP.value(canz[action_index, obs_index, nz_id])
+							if abs(prob) < 1e-15
+								@deb("Set prob to 0 even though it was negative")
+								prob = 0
+							end
+							if prob < 0 || prob > 1
+								error("Probability outside of bounds: $prob")
+							end
+							if prob > 1-minval
+								prob = 1
+							end
+							if prob > minval
+								@deb("New edge: $(action_index), $(obs_index) -> $nz_id, $prob")
+								new_edge_dict[nz] = prob/ca_v
+							end
+						end
+						if length(new_edge_dict) != 0
+							new_obs[observations[obs_index]] = new_edge_dict
+							#update incoming edge vector for other node
+							#set should handle duplicates
+							for (next, prob) in new_edge_dict
+								if haskey(next.incomingEdgeDicts, node)
+									push!(next.incomingEdgeDicts[node], new_edge_dict)
+								else
+									next.incomingEdgeDicts[node] = [new_edge_dict]
+								end
+							end
 						end
 					end
-					new_edges[actions[action_index]] = new_obs
-					new_actions[actions[action_index]] = ca
+					if length(keys(new_obs)) != 0
+						new_edges[actions[action_index]] = new_obs
+						new_actions[actions[action_index]] = ca_v
+					end
 				end
 			end
 			node.edges = new_edges
