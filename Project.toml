@@ -1,7 +1,7 @@
 # @Author: Ficarra Riccardo
 # @Date:   02-04-2019
 # @Last modified by:   Ficarra Riccardo
-# @Last modified time: 03-06-2019
+# @Last modified time: 03-26-2019
 
 
 
@@ -12,6 +12,7 @@ version = "0.1.0"
 
 [deps]
 BeliefUpdaters = "8bb6e9a1-7d73-552c-a44a-e5dc5634aac4"
+DataStructures = "864edb3b-99cc-5e75-8d2d-829cb0a9cfe8"
 GLPK = "60bf3e95-4087-53dc-ae20-288a0d20c6a6"
 IPOMDPs = "400b8fa6-c29f-11e8-147f-97038bb7f9c1"
 JuMP = "4076af6c-e467-56ae-b986-b466b2749572"
