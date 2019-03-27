@@ -53,10 +53,12 @@ IBPIPolicyUtils:
 				end
 			end
 		end
-		for (src_node, dict_vect) in node.incomingEdgeDicts
-			for dict in dict_vect
-				for (next, prob) in dict
-					println("from node $(src_node.id) p=$(prob) to node $(next.id)")
+		if debug[] == true
+			for (src_node, dict_vect) in node.incomingEdgeDicts
+				for dict in dict_vect
+					for (next, prob) in dict
+						println("from node $(src_node.id) p=$(prob) to node $(next.id)")
+					end
 				end
 			end
 		end
@@ -750,13 +752,13 @@ function partial_backup!(controller::Controller{A, W}, pomdpmodel::pomdpModel) w
 							if p_s_prime != 0.0
 								p_z = POMDPModelTools.pdf(POMDPs.observation(pomdp, action, s_prime), obs)
 								v_nz_sp = nz.value[POMDPs.stateindex(pomdp, s_prime)]
-								@deb("state = $s, action = $action, obs = $obs, nz = $(nz_id), s_prime = $s_prime")
+								#@deb("state = $s, action = $action, obs = $obs, nz = $(nz_id), s_prime = $s_prime")
 								#@deb("$p_s_prime $p_z $v_nz_sp")
 								s_prime_partial+= p_s_prime*p_z*v_nz_sp
 							end
 						end
 						M[a_index, obs_index, nz_id] = POMDPs.discount(pomdp)*s_prime_partial
-						@deb("M[$a_index, $obs_index, $nz_id] = $(M[a_index, obs_index, nz_id])")
+						#@deb("M[$a_index, $obs_index, $nz_id] = $(M[a_index, obs_index, nz_id])")
 
 					end
 				end
@@ -764,7 +766,7 @@ function partial_backup!(controller::Controller{A, W}, pomdpmodel::pomdpModel) w
 			@deb("state $s: $M")
 			@deb("state $s: $M_a")
 			#constraint on the big formula in table 2
-			@constraint(lpmodel,  e - M_a * ca - sum(sum(sum(canz[a, z, n] * M[a, z, n] for n in keys(nodes)) for z in 1:n_observations) for a in 1:n_actions) .<= -1*node.value[s_index])
+			@constraint(lpmodel,  e - sum( M_a[a] * ca[a] + sum(sum(canz[a, z, n] * M[a, z, n] for n in keys(nodes)) for z in 1:n_observations) for a in 1:n_actions) .<= -1*node.value[s_index])
 
 		end
 		#sum canz over n,z = ca
@@ -785,34 +787,54 @@ function partial_backup!(controller::Controller{A, W}, pomdpmodel::pomdpModel) w
 			#@deb("New structures created")
 			for action_index in 1:n_actions
 				ca_v = JuMP.value(ca[action_index])
-				if ca_v > 1-minval
+				@deb("ca $(actions[action_index])= $ca_v")
+				if ca_v > 1.0-minval
 					ca_v = 1.0
 				end
 				if ca_v > minval
 					new_obs = Dict{W, Dict{Node, Float64}}()
 					for obs_index in 1:n_observations
-						new_edge_dict = Dict{Node, Float64}()
+						obs_normalize = 0.0
+						#fill a temporary edge dict with unnormalized probs
+						temp_edge_dict = Dict{Node, Float64}()
 						for (nz_id, nz) in nodes
-							prob = JuMP.value(canz[action_index, obs_index, nz_id])
-							if abs(prob) < 1e-15
+							prob = JuMP.value(canz[action_index, obs_index, nz_id])/ca_v
+							obs_normalize+= prob
+							@deb("canz $(observations[obs_index]) -> $nz_id = $prob")
+							if prob < 0.0
 								@deb("Set prob to 0 even though it was negative")
-								prob = 0
+								prob = 0.0
 							end
-							if prob < 0 || prob > 1
+							if prob > 1.0 && prob < 1.0+minval
+								@deb("Set prob slightly greater than 1 to 1")
+								prob = 1.0
+							end
+							if prob < 0.0 || prob > 1.0
 								error("Probability outside of bounds: $prob")
 							end
-							if prob > 1-minval
-								prob = 1
-							end
-							if prob > minval
-								@deb("New edge: $(action_index), $(obs_index) -> $nz_id, $prob")
-								new_edge_dict[nz] = prob/ca_v
+							if prob > 0.0
+								@deb("New edge: $(action_index), $(obs_index) -> $nz_id, $(prob)")
+								temp_edge_dict[nz] = prob
 							end
 						end
+						if obs_normalize == 0.0
+							error("sum of prob for obs $(observations[obs_index]) == 0")
+						end
+						new_edge_dict = Dict{Node, Float64}()
+						for (next, prob) in temp_edge_dict
+							normalized_prob = prob/obs_normalize
+							@deb("normalized prob: $normalized_prob")
+							if normalized_prob >= 1.0-minval
+								new_edge_dict[next] = 1.0
+							elseif normalized_prob > minval
+								new_edge_dict[next] = normalized_prob
+							end
+							#do not add anything if prob < minval
+						end
+						@deb("length of dict for obs $(observations[obs_index]) = $(length(new_edge_dict))")
 						if length(new_edge_dict) != 0
 							new_obs[observations[obs_index]] = new_edge_dict
 							#update incoming edge vector for other node
-							#set should handle duplicates
 							for (next, prob) in new_edge_dict
 								if haskey(next.incomingEdgeDicts, node)
 									push!(next.incomingEdgeDicts[node], new_edge_dict)
