@@ -535,7 +535,7 @@ IBPIPolicyUtils:
 	        #@deb("$(length(new_nodes))")
 	        lpmodel = JuMP.Model(with_optimizer(GLPK.Optimizer))
 	        #define variables for LP. c(i)
-	        @variable(lpmodel, c[i=keys(new_nodes)] >= 0)
+	        @variable(lpmodel, 0.0 <= c[i=keys(new_nodes)] <= 1.0)
 	        #e to maximize
 	        @variable(lpmodel, e)
 	        @objective(lpmodel, Max, e)
@@ -727,8 +727,8 @@ function partial_backup!(controller::Controller{A, W}, pomdpmodel::pomdpModel) w
 	for (n_id, node) in nodes
 		lpmodel = JuMP.Model(with_optimizer(GLPK.Optimizer))
 		#define variables for LP. c(a, n, z)
-		@variable(lpmodel, canz[a=1:n_actions, z=1:n_observations, n=keys(nodes)] >= 0)
-		@variable(lpmodel, ca[a=1:n_actions] >= 0)
+		@variable(lpmodel, 0.0 <= canz[a=1:n_actions, z=1:n_observations, n=keys(nodes)] <= 1.0)
+		#@variable(lpmodel, ca[a=1:n_actions] >= 0)
 		#e to maximize
 		@variable(lpmodel, e)
 		@objective(lpmodel, Max, e)
@@ -766,13 +766,13 @@ function partial_backup!(controller::Controller{A, W}, pomdpmodel::pomdpModel) w
 			@deb("state $s: $M")
 			@deb("state $s: $M_a")
 			#constraint on the big formula in table 2
-			@constraint(lpmodel,  e - sum( M_a[a] * ca[a] + sum(sum(canz[a, z, n] * M[a, z, n] for n in keys(nodes)) for z in 1:n_observations) for a in 1:n_actions) .<= -1*node.value[s_index])
-
+			#@expression(lpmodel, ca_t[a=1:n_actions], sum(sum(canz[a, z, n] for n in keys(nodes)) for z in 1:n_observations))
+			@constraint(lpmodel,  e - sum( M_a[a] * sum(sum(canz[a, z, n] for n in keys(nodes)) for z in 1:n_observations) + sum(sum(canz[a, z, n] * M[a, z, n] for n in keys(nodes)) for z in 1:n_observations) for a in 1:n_actions) .<= -1*node.value[s_index])
 		end
 		#sum canz over n,z = ca
-		@constraint(lpmodel, sum_ca[a_index=1:n_actions], sum(sum(canz[a_index,z,n] for n in keys(nodes)) for z in 1:n_observations) == ca[a_index])
+		@constraint(lpmodel, sum_ca[a_index=1:n_actions], sum(sum(canz[a_index,z,n] for n in keys(nodes)) for z in 1:n_observations) == sum(sum(canz[a_index, z, n] for n in keys(nodes)) for z in 1:n_observations))
 		#sum ca over a = 1
-		@constraint(lpmodel, con_sum, sum(ca[a] for a in 1:n_actions) == 1)
+		@constraint(lpmodel, con_sum, sum( sum(sum(canz[a, z, n] for n in keys(nodes)) for z in 1:n_observations) for a in 1:n_actions) == 1)
 		if debug[] == true
 			print(lpmodel)
 		end
@@ -786,7 +786,12 @@ function partial_backup!(controller::Controller{A, W}, pomdpmodel::pomdpModel) w
 			new_actions = Dict{A, Float64}()
 			#@deb("New structures created")
 			for action_index in 1:n_actions
-				ca_v = JuMP.value(ca[action_index])
+				ca_v = 0.0
+				for obs_index in 1:n_observations
+					for nz_id in keys(nodes)
+						ca_v+= JuMP.value(canz[action_index, obs_index, nz_id])
+					end
+				end
 				@deb("ca $(actions[action_index])= $ca_v")
 				if ca_v > 1.0-minval
 					ca_v = 1.0
