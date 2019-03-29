@@ -725,9 +725,18 @@ function partial_backup!(controller::Controller{A, W}, pomdpmodel::pomdpModel) w
 	#dim = n_nodes*n_actions*n_observations
 	changed = false
 	for (n_id, node) in nodes
+		@deb("Node to be improved: $n_id")
+		temp_id = Dict{Int64, Int64}()
+		node_counter = 1
+		for real_id in keys(nodes)
+			if real_id != n_id
+				temp_id[real_id] = node_counter
+				node_counter+=1
+			end
+		end
 		lpmodel = JuMP.Model(with_optimizer(GLPK.Optimizer))
 		#define variables for LP. c(a, n, z)
-		@variable(lpmodel, 0.0 <= canz[a=1:n_actions, z=1:n_observations, n=keys(nodes)] <= 1.0)
+		@variable(lpmodel, canz[a=1:n_actions, z=1:n_observations, n=1:n_nodes-1] >= 0.0)
 		#@variable(lpmodel, ca[a=1:n_actions] >= 0)
 		#e to maximize
 		@variable(lpmodel, e)
@@ -737,15 +746,18 @@ function partial_backup!(controller::Controller{A, W}, pomdpmodel::pomdpModel) w
 			s = states[s_index]
 			M = zeros(n_actions, n_observations, n_nodes)
 			#line vector
-			M_a = zeros(1, n_actions)
+			#M_a = zeros(1, n_actions)
 			for a_index in 1:n_actions
 				action = actions[a_index]
-				M_a[1, a_index] = POMDPs.reward(pomdp, s, action)
+				r_s_a = POMDPs.reward(pomdp, s, action)
 				s_primes = POMDPs.transition(pomdp,s,action).vals
 				for obs_index in 1:n_observations
 					obs = observations[obs_index]
 					#array of edges given observation
 					for (nz_id, nz) in nodes
+						if nz_id == n_id
+							continue
+						end
 						s_prime_partial = 0.0
 						for s_prime in s_primes
 							p_s_prime =POMDPModelTools.pdf(POMDPs.transition(pomdp,s,action), s_prime)
@@ -757,27 +769,40 @@ function partial_backup!(controller::Controller{A, W}, pomdpmodel::pomdpModel) w
 								s_prime_partial+= p_s_prime*p_z*v_nz_sp
 							end
 						end
-						M[a_index, obs_index, nz_id] = POMDPs.discount(pomdp)*s_prime_partial
+						#@deb(" s_prime_partial = $s_prime_partial")
+						M[a_index, obs_index, temp_id[nz_id]] = r_s_a + POMDPs.discount(pomdp)*s_prime_partial
 						#@deb("M[$a_index, $obs_index, $nz_id] = $(M[a_index, obs_index, nz_id])")
-
 					end
 				end
 			end
-			@deb("state $s: $M")
-			@deb("state $s: $M_a")
+			if debug[] == true
+				for a in 1:n_actions
+					println("Action $(actions[a])")
+					for z in 1:n_observations
+						println("Obs $(observations[z])")
+						for nz in keys(nodes)
+							if nz == n_id
+								continue
+							end
+							println("Node $nz: $(M[a,z,temp_id[nz]])")
+						end
+					end
+				end
+			end
+			#@deb("state $s: $M_a")
 			#constraint on the big formula in table 2
-			#@expression(lpmodel, ca_t[a=1:n_actions], sum(sum(canz[a, z, n] for n in keys(nodes)) for z in 1:n_observations))
-			@constraint(lpmodel,  e - sum( M_a[a] * sum(sum(canz[a, z, n] for n in keys(nodes)) for z in 1:n_observations) + sum(sum(canz[a, z, n] * M[a, z, n] for n in keys(nodes)) for z in 1:n_observations) for a in 1:n_actions) .<= -1*node.value[s_index])
+			#@constraint(lpmodel,  e - M.*canz .<= -1*node.value[s_index])
+			#n are actually temp_ids here
+			@constraint(lpmodel,  e - sum(sum(sum( M[a, z, n] * canz[a, z, n] for n in 1:n_nodes-1) for z in 1:n_observations) for a in 1:n_actions) <= -1*node.value[s_index])
 		end
-		#sum canz over n,z = ca
-		@constraint(lpmodel, sum_ca[a_index=1:n_actions], sum(sum(canz[a_index,z,n] for n in keys(nodes)) for z in 1:n_observations) == sum(sum(canz[a_index, z, n] for n in keys(nodes)) for z in 1:n_observations))
-		#sum ca over a = 1
-		@constraint(lpmodel, con_sum, sum( sum(sum(canz[a, z, n] for n in keys(nodes)) for z in 1:n_observations) for a in 1:n_actions) == 1)
+		#sum canz over a,n,z = 1
+		@constraint(lpmodel, con_sum, sum( sum(sum(canz[a, z, n] for n in 1:n_nodes-1) for z in 1:n_observations) for a in 1:n_actions) == 1.0)
 		if debug[] == true
 			print(lpmodel)
 		end
 		optimize!(lpmodel)
 
+		@deb("eps = $(JuMP.value(e))")
 
 		if JuMP.value(e) >= -1e-14
 			changed = true
@@ -787,9 +812,14 @@ function partial_backup!(controller::Controller{A, W}, pomdpmodel::pomdpModel) w
 			#@deb("New structures created")
 			for action_index in 1:n_actions
 				ca_v = 0.0
+				@deb("Action $(actions[action_index])")
 				for obs_index in 1:n_observations
 					for nz_id in keys(nodes)
-						ca_v+= JuMP.value(canz[action_index, obs_index, nz_id])
+						if nz_id == n_id
+							continue
+						end
+						@deb("canz $(observations[obs_index]) -> $nz_id = $(JuMP.value(canz[action_index, obs_index, temp_id[nz_id]]))")
+						ca_v+= JuMP.value(canz[action_index, obs_index, temp_id[nz_id]])
 					end
 				end
 				@deb("ca $(actions[action_index])= $ca_v")
@@ -803,8 +833,10 @@ function partial_backup!(controller::Controller{A, W}, pomdpmodel::pomdpModel) w
 						#fill a temporary edge dict with unnormalized probs
 						temp_edge_dict = Dict{Node, Float64}()
 						for (nz_id, nz) in nodes
-							prob = JuMP.value(canz[action_index, obs_index, nz_id])/ca_v
-							obs_normalize+= prob
+							if nz_id == n_id
+								continue
+							end
+							prob = JuMP.value(canz[action_index, obs_index, temp_id[nz_id]])/ca_v
 							@deb("canz $(observations[obs_index]) -> $nz_id = $prob")
 							if prob < 0.0
 								@deb("Set prob to 0 even though it was negative")
@@ -818,12 +850,13 @@ function partial_backup!(controller::Controller{A, W}, pomdpmodel::pomdpModel) w
 								error("Probability outside of bounds: $prob")
 							end
 							if prob > 0.0
+								obs_normalize+= prob
 								@deb("New edge: $(action_index), $(obs_index) -> $nz_id, $(prob)")
 								temp_edge_dict[nz] = prob
 							end
 						end
 						if obs_normalize == 0.0
-							error("sum of prob for obs $(observations[obs_index]) == 0")
+							#error("sum of prob for obs $(observations[obs_index]) == 0")
 						end
 						new_edge_dict = Dict{Node, Float64}()
 						for (next, prob) in temp_edge_dict
@@ -857,6 +890,7 @@ function partial_backup!(controller::Controller{A, W}, pomdpmodel::pomdpModel) w
 			end
 			node.edges = new_edges
 			node.actionProb = new_actions
+			evaluate!(controller, pomdpmodel)
 		end
 	end
 	return changed
