@@ -724,19 +724,18 @@ function partial_backup!(controller::Controller{A, W}, pomdpmodel::pomdpModel) w
 	n_observations = POMDPs.n_observations(pomdp)
 	#dim = n_nodes*n_actions*n_observations
 	changed = false
+	node_counter = 1
+	temp_id = Dict{Int64, Int64}()
+
+	for real_id in keys(nodes)
+			temp_id[real_id] = node_counter
+			node_counter+=1
+	end
 	for (n_id, node) in nodes
 		@deb("Node to be improved: $n_id")
-		temp_id = Dict{Int64, Int64}()
-		node_counter = 1
-		for real_id in keys(nodes)
-			if real_id != n_id
-				temp_id[real_id] = node_counter
-				node_counter+=1
-			end
-		end
 		lpmodel = JuMP.Model(with_optimizer(GLPK.Optimizer))
 		#define variables for LP. c(a, n, z)
-		@variable(lpmodel, canz[a=1:n_actions, z=1:n_observations, n=1:n_nodes-1] >= 0.0)
+		@variable(lpmodel, canz[a=1:n_actions, z=1:n_observations, n=1:n_nodes] >= 0.0)
 		#@variable(lpmodel, ca[a=1:n_actions] >= 0)
 		#e to maximize
 		@variable(lpmodel, e)
@@ -755,9 +754,6 @@ function partial_backup!(controller::Controller{A, W}, pomdpmodel::pomdpModel) w
 					obs = observations[obs_index]
 					#array of edges given observation
 					for (nz_id, nz) in nodes
-						if nz_id == n_id
-							continue
-						end
 						s_prime_partial = 0.0
 						for s_prime in s_primes
 							p_s_prime =POMDPModelTools.pdf(POMDPs.transition(pomdp,s,action), s_prime)
@@ -781,9 +777,6 @@ function partial_backup!(controller::Controller{A, W}, pomdpmodel::pomdpModel) w
 					for z in 1:n_observations
 						println("Obs $(observations[z])")
 						for nz in keys(nodes)
-							if nz == n_id
-								continue
-							end
 							println("Node $nz: $(M[a,z,temp_id[nz]])")
 						end
 					end
@@ -793,10 +786,10 @@ function partial_backup!(controller::Controller{A, W}, pomdpmodel::pomdpModel) w
 			#constraint on the big formula in table 2
 			#@constraint(lpmodel,  e - M.*canz .<= -1*node.value[s_index])
 			#n are actually temp_ids here
-			@constraint(lpmodel,  e - sum(sum(sum( M[a, z, n] * canz[a, z, n] for n in 1:n_nodes-1) for z in 1:n_observations) for a in 1:n_actions) <= -1*node.value[s_index])
+			@constraint(lpmodel,  e - sum(sum(sum( M[a, z, n] * canz[a, z, n] for n in 1:n_nodes) for z in 1:n_observations) for a in 1:n_actions) <= -1*node.value[s_index])
 		end
 		#sum canz over a,n,z = 1
-		@constraint(lpmodel, con_sum, sum( sum(sum(canz[a, z, n] for n in 1:n_nodes-1) for z in 1:n_observations) for a in 1:n_actions) == 1.0)
+		@constraint(lpmodel, con_sum, sum( sum(sum(canz[a, z, n] for n in 1:n_nodes) for z in 1:n_observations) for a in 1:n_actions) == 1.0)
 		if debug[] == true
 			print(lpmodel)
 		end
@@ -815,9 +808,6 @@ function partial_backup!(controller::Controller{A, W}, pomdpmodel::pomdpModel) w
 				@deb("Action $(actions[action_index])")
 				for obs_index in 1:n_observations
 					for nz_id in keys(nodes)
-						if nz_id == n_id
-							continue
-						end
 						@deb("canz $(observations[obs_index]) -> $nz_id = $(JuMP.value(canz[action_index, obs_index, temp_id[nz_id]]))")
 						ca_v+= JuMP.value(canz[action_index, obs_index, temp_id[nz_id]])
 					end
