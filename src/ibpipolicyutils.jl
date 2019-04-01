@@ -570,13 +570,21 @@ IBPIPolicyUtils:
 									v = 1
 								end
 								if v > minval
-									@deb("Added edge from node $(src_node.id) to $(dst_node.id)")
-									dict[dst_node] = v*old_prob
-									#update incomingEdgeDicts for new dst node
-									if haskey(dst_node.incomingEdgeDicts, src_node)
-										push!(dst_node.incomingEdgeDicts[src_node], dict)
+									if haskey(dict, dst_node)
+										@deb("updated probability of edge from node $(src_node.id) to $(dst_node.id)")
+										dict[dst_node]+= v*old_prob
+										if dict[dst_node] > 1
+											error("probability > 1 after redirection!")
+										end
 									else
-										dst_node.incomingEdgeDicts[src_node] = [dict]
+										@deb("Added edge from node $(src_node.id) to $(dst_node.id)")
+										dict[dst_node] = v*old_prob
+										#update incomingEdgeDicts for new dst node
+										if haskey(dst_node.incomingEdgeDicts, src_node)
+											push!(dst_node.incomingEdgeDicts[src_node], dict)
+										else
+											dst_node.incomingEdgeDicts[src_node] = [dict]
+										end
 									end
 								end
 							end
@@ -653,6 +661,7 @@ IBPIPolicyUtils:
 						@deb("M[$n_id, $s][$n_id, $s] = 1")
 						s_primes = POMDPs.transition(pomdp,s,a).vals
 						possible_obs = keys(node.edges[a])  #only consider observations possible from current node/action combo
+						p_a_n = node.actionProb[a]
 						for obs in possible_obs
 							@deb("obs = $obs")
 							for s_prime_index in 1:length(s_primes)
@@ -661,7 +670,6 @@ IBPIPolicyUtils:
 								if p_s_prime == 0.0
 									continue
 								end
-								p_a_n = node.actionProb[a]
 								p_z = POMDPModelTools.pdf(POMDPs.observation(pomdp, a, s_prime), obs)
 								@deb("p_z = $p_z")
 								for (next, prob) in node.edges[a][obs]
@@ -669,7 +677,7 @@ IBPIPolicyUtils:
 										error("Node $(next.id) not present in nodes")
 									end
 									nz_index = temp_id[next.id]
-									c_a_nz = prob #CHECK THAT THIS IS THE RIGHT VALUE (page 5 of BPI paper)
+									c_a_nz = prob
 									M[composite_index([temp_id[n_id], s_index],[n_nodes, n_states]), composite_index([nz_index, s_prime_index],[n_nodes,n_states])]-= POMDPs.discount(pomdp)*p_s_prime*p_z*p_a_n*c_a_nz
 									@deb("M[$n_id, $s][$(next.id), $s_prime] = gamma=$(POMDPs.discount(pomdp))*ps'=$p_s_prime*pz=$p_z*pa=$p_a_n*pn'=$c_a_nz = $(M[composite_index([temp_id[n_id], s_index],[n_nodes, n_states]), composite_index([nz_index, s_prime_index],[n_nodes,n_states])])")
 								end
@@ -726,7 +734,6 @@ function partial_backup!(controller::Controller{A, W}, pomdpmodel::pomdpModel) w
 	changed = false
 	node_counter = 1
 	temp_id = Dict{Int64, Int64}()
-
 	for real_id in keys(nodes)
 			temp_id[real_id] = node_counter
 			node_counter+=1
@@ -797,7 +804,7 @@ function partial_backup!(controller::Controller{A, W}, pomdpmodel::pomdpModel) w
 
 		@deb("eps = $(JuMP.value(e))")
 
-		if JuMP.value(e) >= -1e-14
+		if JuMP.value(e) > minval
 			changed = true
 			#@deb("Good so far")
 			new_edges = Dict{A, Dict{W,Dict{Node, Float64}}}()
@@ -823,9 +830,6 @@ function partial_backup!(controller::Controller{A, W}, pomdpmodel::pomdpModel) w
 						#fill a temporary edge dict with unnormalized probs
 						temp_edge_dict = Dict{Node, Float64}()
 						for (nz_id, nz) in nodes
-							if nz_id == n_id
-								continue
-							end
 							prob = JuMP.value(canz[action_index, obs_index, temp_id[nz_id]])/ca_v
 							@deb("canz $(observations[obs_index]) -> $nz_id = $prob")
 							if prob < 0.0
@@ -880,7 +884,16 @@ function partial_backup!(controller::Controller{A, W}, pomdpmodel::pomdpModel) w
 			end
 			node.edges = new_edges
 			node.actionProb = new_actions
+			old_deb = debug[]
+			debug[] = false
 			evaluate!(controller, pomdpmodel)
+			debug[] = old_deb
+			if debug[] == true
+				println("Changed controller after eval")
+				for (n_id, node) in controller.nodes
+					println(node)
+				end
+			end
 		end
 	end
 	return changed
