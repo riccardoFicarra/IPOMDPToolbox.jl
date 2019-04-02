@@ -793,7 +793,7 @@ function partial_backup!(controller::Controller{A, W}, pomdpmodel::pomdpModel) w
 			#constraint on the big formula in table 2
 			#@constraint(lpmodel,  e - M.*canz .<= -1*node.value[s_index])
 			#n are actually temp_ids here
-			@constraint(lpmodel,  e - sum(sum(sum( M[a, z, n] * canz[a, z, n] for n in 1:n_nodes) for z in 1:n_observations) for a in 1:n_actions) <= -1*node.value[s_index])
+			@constraint(lpmodel,  e + node.value[s_index] <= sum(sum(sum( M[a, z, n] * canz[a, z, n] for n in 1:n_nodes) for z in 1:n_observations) for a in 1:n_actions))
 		end
 		#sum canz over a,n,z = 1
 		@constraint(lpmodel, con_sum, sum( sum(sum(canz[a, z, n] for n in 1:n_nodes) for z in 1:n_observations) for a in 1:n_actions) == 1.0)
