@@ -818,7 +818,7 @@ function partial_backup!(controller::Controller{A, W}, pomdpmodel::pomdpModel) w
 				if ca_v > minval
 					new_obs = Dict{W, Dict{Node, Float64}}()
 					for obs_index in 1:n_observations
-						obs_normalize = 0.0
+						obs_total = 0.0
 						#fill a temporary edge dict with unnormalized probs
 						temp_edge_dict = Dict{Node, Float64}()
 						for (nz_id, nz) in nodes
@@ -836,22 +836,21 @@ function partial_backup!(controller::Controller{A, W}, pomdpmodel::pomdpModel) w
 								error("Probability outside of bounds: $prob")
 							end
 							if prob > 0.0
-								obs_normalize+= prob
+								obs_total+= prob
 								@deb("New edge: $(action_index), $(obs_index) -> $nz_id, $(prob)")
 								temp_edge_dict[nz] = prob
 							end
 						end
-						if obs_normalize == 0.0
-							#error("sum of prob for obs $(observations[obs_index]) == 0")
+						if obs_total == 0.0
+							error("sum of prob for obs $(observations[obs_index]) == 0")
 						end
 						new_edge_dict = Dict{Node, Float64}()
 						for (next, prob) in temp_edge_dict
-							normalized_prob = prob/obs_normalize
 							@deb("normalized prob: $normalized_prob")
-							if normalized_prob >= 1.0-minval
+							if prob >= 1.0-minval
 								new_edge_dict[next] = 1.0
-							elseif normalized_prob > minval
-								new_edge_dict[next] = normalized_prob
+							elseif prob > minval
+								new_edge_dict[next] = prob
 							end
 							#do not add anything if prob < minval
 						end
