@@ -792,7 +792,7 @@ function partial_backup!(controller::Controller{A, W}, pomdpmodel::pomdpModel) w
 			@constraint(lpmodel,  e + node.value[s_index] <= sum( M_a[a]*ca[a]+sum(sum( M[a, z, n] * canz[a, z, n] for n in 1:n_nodes) for z in 1:n_observations) for a in 1:n_actions))
 		end
 		#sum canz over a,n,z = 1
-		@constraint(lpmodel, con_sum[a=1:n_actions], sum(sum(canz[a, z, n] for n in 1:n_nodes) for z in 1:n_observations) == ca[a])
+		@constraint(lpmodel, con_sum[a=1:n_actions, z=1:n_observations], sum(canz[a, z, n] for n in 1:n_nodes) == ca[a])
 		@constraint(lpmodel, ca_sum, sum(ca[a] for a in 1:n_actions) == 1.0)
 
 		if debug[] == true
