@@ -191,14 +191,11 @@ IBPIPolicyUtils:
 		edges = Dict{A, Dict{W, Dict{Node, Float64}}}(action => Dict{W, Dict{Node, Float64}}(observation => Dict{Node, Float64}(next_node=> 1.0)))
 		return Node(node_id, actionprob, edges, value, Dict{Node, Vector{Dict{Node, Float64}}}())
 	end
-	"""
-	Perform a full backup operation according to Pourpart and Boutilier's paper on Bounded finite state controllers
-	TODO: make this thing actually do a backup
-	"""
-	function full_backup_stochastic!(controller::Controller{A, W}, pomdpmodel::pomdpModel) where {A, W}
+
+	function full_backup_generate_nodes(controller::Controller{A, W}, pomdpmodel::pomdpModel, minval::Float64) where {A, W}
 		minval = 1e-10
 		pomdp = pomdpmodel.frame
-		belief = pomdpmodel.history.b
+		#belief = pomdpmodel.history.b
 		nodes = controller.nodes
 		observations = POMDPs.observations(pomdp)
 		#tentative from incpruning
@@ -238,7 +235,25 @@ IBPIPolicyUtils:
 			union!(new_nodes, new_nodes_a)
 		end
 		#all new nodes, final filtering
-		new_nodes = filterNodes(new_nodes, minval)
+		return filterNodes(new_nodes, minval)
+	end
+	"""
+	Perform a full backup operation according to Pourpart and Boutilier's paper on Bounded finite state controllers
+	TODO: make this thing actually do a backup
+	"""
+	function full_backup_stochastic!(controller::Controller{A, W}, pomdpmodel::pomdpModel) where {A, W}
+		minval = 1e-10
+		pomdp = pomdpmodel.frame
+		#belief = pomdpmodel.history.b
+		nodes = controller.nodes
+		observations = POMDPs.observations(pomdp)
+		#tentative from incpruning
+		#prder of it -> actions, obs
+		#for each a, z produce n new nodes (iterate on nodes)
+		#for each node iterate on s and s' to produce a new node
+		#new node is tied to old node?, action a and obs z
+		#with stochastic pruning we get the cis needed
+		new_nodes = full_backup_generate_nodes(controller, pomdpmodel, minval)
 		#before performing filtering with the old nodes update incomingEdge structure of old nodes
 		#also assign permanent ids
 		nodes_counter = controller.maxId+1
@@ -730,6 +745,8 @@ function partial_backup!(controller::Controller{A, W}, pomdpmodel::pomdpModel) w
 	n_actions = POMDPs.n_actions(pomdp)
 	observations = POMDPs.observations(pomdp)
 	n_observations = POMDPs.n_observations(pomdp)
+	#vector containing the tangent belief states for all modified nodes
+	tangent_b = Dict{Int64, Vector{Float64}}()
 	#dim = n_nodes*n_actions*n_observations
 	changed = false
 	node_counter = 1
@@ -790,6 +807,7 @@ function partial_backup!(controller::Controller{A, W}, pomdpmodel::pomdpModel) w
 			#@constraint(lpmodel,  e - M.*canz .<= -1*node.value[s_index])
 			#n are actually temp_ids here
 			@constraint(lpmodel,  e + node.value[s_index] <= sum( M_a[a]*ca[a]+sum(sum( M[a, z, n] * canz[a, z, n] for n in 1:n_nodes) for z in 1:n_observations) for a in 1:n_actions))
+			#JuMP.set_name(temp, "con_$s_index")
 		end
 		#sum canz over a,n,z = 1
 		@constraint(lpmodel, con_sum[a=1:n_actions, z=1:n_observations], sum(canz[a, z, n] for n in 1:n_nodes) == ca[a])
@@ -886,8 +904,111 @@ function partial_backup!(controller::Controller{A, W}, pomdpmodel::pomdpModel) w
 				end
 			end
 		end
+		constraint_list = JuMP.all_constraints(lpmodel, GenericAffExpr{Float64,VariableRef}, MOI.LessThan{Float64})
+		tangent_b[n_id] =  [-1*dual(constraint_list[s]) for s in 1:n_states]
 	end
-	return changed
+	return changed, tangent_b
+end
+
+function escape_optima_standard!(controller::Controller{A, W}, pomdpmodel::pomdpModel, tangent_b::Dict{Int64, Vector{Float64}}; add_all=false) where {A, W}
+	@deb("$tangent_b")
+	pomdp = pomdpmodel.frame
+	nodes = controller.nodes
+	n_nodes = length(keys(controller.nodes))
+	states = POMDPs.states(pomdp)
+	n_states = POMDPs.n_states(pomdp)
+	actions = POMDPs.actions(pomdp)
+	n_actions = POMDPs.n_actions(pomdp)
+	observations = POMDPs.observations(pomdp)
+	n_observations = POMDPs.n_observations(pomdp)
+	minval = 1e-14
+	if length(tangent_b) == 0
+		error("tangent_b was empty!")
+	end
+	#backed_up_controller = full_backup_stochastic!(deepcopy(controller), pomdpmodel)
+	old_deb = debug[]
+	debug[] = false
+	new_nodes = full_backup_generate_nodes(controller, pomdpmodel, minval)
+	debug[] = old_deb
+
+	escaped = false
+	#reachable_b = Set{Vector{Float64}}()
+	for (id, start_b) in tangent_b
+		@deb("$start_b")
+		for a in actions
+			for z in observations
+				new_b = Vector{Float64}(undef, n_states)
+				normalize = 0.0
+				for s_prime_index in 1:n_states
+					s_prime = states[s_prime_index]
+					sum_s = 0.0
+					p_z = POMDPModelTools.pdf(POMDPs.observation(pomdp, a, s_prime), z)
+					for s_index in 1:n_states
+						s = states[s_index]
+						p_s_prime =POMDPModelTools.pdf(POMDPs.transition(pomdp, s, a), s_prime)
+						sum_s+= p_s_prime*start_b[s_index]
+					end
+					new_b[s_prime_index] = p_z * sum_s
+					normalize += p_z * sum_s
+				end
+				for i in 1:n_states
+					new_b[i] = new_b[i] / normalize
+				end
+				@deb("from belief $start_b action $a and obs $z -> $new_b")
+				#push!(reachable_b, new_b)
+				#find the value of the current controller in the reachable belief state
+				best_old_node = nothing
+				best_old_value = 0.0
+				for (id,old_node) in controller.nodes
+					temp_value = new_b' * old_node.value
+					if best_old_node == nothing || best_old_value < temp_value
+						best_old_node = old_node
+						best_old_value = temp_value
+					end
+				end
+				#find the value of the backed up controller in the reachable belief state
+				best_new_node = nothing
+				best_new_value = 0.0
+				for new_node in new_nodes
+					new_value = new_b' * new_node.value
+					if best_new_node == nothing || best_new_value < new_value
+						best_new_node = new_node
+						best_new_value = new_value
+					end
+				end
+				if best_new_value - best_old_value > minval
+					@deb("in $new_b node $(best_new_node.id) has $best_new_value > $best_old_value")
+					controller.nodes[controller.maxId+1] = rework_node(controller, best_new_node)
+					controller.maxId+=1
+					@deb("Added node $(controller.maxId)")
+					escaped = true
+					if !add_all
+						return escaped
+					end
+				end
+			end
+		end
+	end
+	#@deb("$reachable_b")
+	return escaped
+end
+
+function rework_node(controller::Controller{A, W}, new_node::Node{A, W}) where {A, W}
+		id = controller.maxId+1
+		actionProb = copy(new_node.actionProb)
+		value = copy(new_node.value)
+		edges = Dict{A, Dict{W, Dict{Node, Float64}}}()
+		for (a, obs_dict) in new_node.edges
+			edges[a] = Dict{W, Dict{Node, Float64}}()
+			for (z, node_dict) in obs_dict
+				edges[a][z] = Dict{Node,Float64}()
+				for (node, prob) in node_dict
+					current_controller_node = controller.nodes[node.id]
+					edges[a][z][current_controller_node] = prob
+				end
+			end
+		end
+		return Node(id, actionProb,edges, value, Dict{Node, Vector{Dict{Node, Float64}}}())
 end
 
 include("bpigraph.jl")
