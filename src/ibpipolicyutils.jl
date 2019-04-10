@@ -910,7 +910,7 @@ function partial_backup!(controller::Controller{A, W}, pomdpmodel::pomdpModel) w
 	return changed, tangent_b
 end
 
-function escape_optima_standard!(controller::Controller{A, W}, pomdpmodel::pomdpModel, tangent_b::Dict{Int64, Vector{Float64}}; add_all=false) where {A, W}
+function escape_optima_standard!(controller::Controller{A, W}, pomdpmodel::pomdpModel, tangent_b::Dict{Int64, Vector{Float64}}; add_all=false, minval = 0.0) where {A, W}
 	@deb("$tangent_b")
 	pomdp = pomdpmodel.frame
 	nodes = controller.nodes
@@ -921,7 +921,6 @@ function escape_optima_standard!(controller::Controller{A, W}, pomdpmodel::pomdp
 	n_actions = POMDPs.n_actions(pomdp)
 	observations = POMDPs.observations(pomdp)
 	n_observations = POMDPs.n_observations(pomdp)
-	minval = 1e-14
 	if length(tangent_b) == 0
 		error("tangent_b was empty!")
 	end
@@ -929,12 +928,18 @@ function escape_optima_standard!(controller::Controller{A, W}, pomdpmodel::pomdp
 	old_deb = debug[]
 	debug[] = false
 	new_nodes = full_backup_generate_nodes(controller, pomdpmodel, minval)
+	if debug[] == true
+		println("new_nodes:")
+		for node in new_nodes
+			println(node)
+		end
+	end
 	debug[] = old_deb
 
 	escaped = false
-	#reachable_b = Set{Vector{Float64}}()
+	reachable_b = Set{Vector{Float64}}()
 	for (id, start_b) in tangent_b
-		@deb("$start_b")
+		#@deb("$start_b")
 		for a in actions
 			for z in observations
 				new_b = Vector{Float64}(undef, n_states)
@@ -955,37 +960,69 @@ function escape_optima_standard!(controller::Controller{A, W}, pomdpmodel::pomdp
 					new_b[i] = new_b[i] / normalize
 				end
 				@deb("from belief $start_b action $a and obs $z -> $new_b")
-				#push!(reachable_b, new_b)
+				push!(reachable_b, new_b)
 				#find the value of the current controller in the reachable belief state
-				best_old_node = nothing
-				best_old_value = 0.0
-				for (id,old_node) in controller.nodes
-					temp_value = new_b' * old_node.value
-					if best_old_node == nothing || best_old_value < temp_value
-						best_old_node = old_node
-						best_old_value = temp_value
+				if !add_all
+					best_old_node = nothing
+					best_old_value = 0.0
+					for (id,old_node) in controller.nodes
+						temp_value = new_b' * old_node.value
+						if best_old_node == nothing || best_old_value < temp_value
+							best_old_node = old_node
+							best_old_value = temp_value
+						end
+					end
+					#find the value of the backed up controller in the reachable belief state
+					best_new_node = nothing
+					best_new_value = 0.0
+					for new_node in new_nodes
+						new_value = new_b' * new_node.value
+						if best_new_node == nothing || best_new_value < new_value
+							best_new_node = new_node
+							best_new_value = new_value
+						end
+					end
+					if best_new_value - best_old_value > minval
+						@deb("in $new_b node $(best_new_node.id) has $best_new_value > $best_old_value")
+						controller.nodes[controller.maxId+1] = rework_node(controller, best_new_node)
+						controller.maxId+=1
+						@deb("Added node $(controller.maxId)")
+						escaped = true
+						if !add_all
+							return escaped
+						end
 					end
 				end
-				#find the value of the backed up controller in the reachable belief state
-				best_new_node = nothing
-				best_new_value = 0.0
-				for new_node in new_nodes
-					new_value = new_b' * new_node.value
-					if best_new_node == nothing || best_new_value < new_value
-						best_new_node = new_node
-						best_new_value = new_value
-					end
+			end
+		end
+	end
+	if add_all
+		for new_b in reachable_b
+			best_old_node = nothing
+			best_old_value = 0.0
+			for (id,old_node) in controller.nodes
+				temp_value = new_b' * old_node.value
+				if best_old_node == nothing || best_old_value < temp_value
+					best_old_node = old_node
+					best_old_value = temp_value
 				end
-				if best_new_value - best_old_value > minval
-					@deb("in $new_b node $(best_new_node.id) has $best_new_value > $best_old_value")
-					controller.nodes[controller.maxId+1] = rework_node(controller, best_new_node)
-					controller.maxId+=1
-					@deb("Added node $(controller.maxId)")
-					escaped = true
-					if !add_all
-						return escaped
-					end
+			end
+			#find the value of the backed up controller in the reachable belief state
+			best_new_node = nothing
+			best_new_value = 0.0
+			for new_node in new_nodes
+				new_value = new_b' * new_node.value
+				if best_new_node == nothing || best_new_value < new_value
+					best_new_node = new_node
+					best_new_value = new_value
 				end
+			end
+			if best_new_value - best_old_value > minval
+				@deb("in $new_b node $(best_new_node.id) has $best_new_value > $best_old_value")
+				controller.nodes[controller.maxId+1] = rework_node(controller, best_new_node)
+				controller.maxId+=1
+				@deb("Added node $(controller.maxId)")
+				escaped = true
 			end
 		end
 	end
