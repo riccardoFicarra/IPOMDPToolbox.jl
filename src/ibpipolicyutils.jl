@@ -1,7 +1,7 @@
 #=
 IBPIPolicyUtils:
 - Julia version: 1.1.0
-- Author: fiki9
+- Author: Riccardo Ficarra
 - Date: 2019-02-11
 =#
 	using LinearAlgebra
@@ -158,6 +158,72 @@ IBPIPolicyUtils:
 		newNode = InitialNode(pomdp, force)
 		Controller{A, W}(Dict(1 => newNode), 1)
 
+	end
+
+	function optimal_tiger_controller(pomdpmodel::pomdpModel)
+		pomdp = pomdpmodel.frame
+		controller = Controller(pomdp, 3)
+		controller.nodes[1].id = 1
+		#create the open left(2)- open right(3) nodes
+		controller.nodes[3] = InitialNode(pomdp, 1)
+		controller.nodes[3].id = 3
+		controller.nodes[2] = InitialNode(pomdp, 2)
+		controller.nodes[2].id = 2
+		for i in 5:10
+			controller.nodes[i] = InitialNode(pomdp, 3)
+			controller.nodes[i].id = i
+		end
+		controller.nodes[1].edges[:L][:GL] = Dict(controller.nodes[5] => 1.0)
+		controller.nodes[1].edges[:L][:GR] = Dict(controller.nodes[6] => 1.0)
+		controller.nodes[2].edges[:OR][:GL] = Dict(controller.nodes[1] => 1.0)
+		controller.nodes[2].edges[:OR][:GR] = Dict(controller.nodes[1] => 1.0)
+		controller.nodes[3].edges[:OL][:GL] = Dict(controller.nodes[1] => 1.0)
+		controller.nodes[3].edges[:OL][:GR] = Dict(controller.nodes[1] => 1.0)
+		controller.nodes[5].edges[:L][:GL] = Dict(controller.nodes[2] => 1.0)
+		controller.nodes[5].edges[:L][:GR] = Dict(controller.nodes[1] => 1.0)
+		controller.nodes[6].edges[:L][:GL] = Dict(controller.nodes[1] => 1.0)
+		controller.nodes[6].edges[:L][:GR] = Dict(controller.nodes[3] => 1.0)
+		controller.nodes[7].edges[:L][:GL] = Dict(controller.nodes[10] => 1.0)
+		controller.nodes[7].edges[:L][:GR] = Dict(controller.nodes[8] => 1.0)
+		controller.nodes[8].edges[:L][:GL] = Dict(controller.nodes[7] => 1.0)
+		controller.nodes[8].edges[:L][:GR] = Dict(controller.nodes[9] => 1.0)
+		controller.nodes[9].edges[:L][:GL] = Dict(controller.nodes[8] => 1.0)
+		controller.nodes[9].edges[:L][:GR] = Dict(controller.nodes[3] => 1.0)
+		controller.nodes[10].edges[:L][:GL] = Dict(controller.nodes[2] => 1.0)
+		controller.nodes[10].edges[:L][:GR] = Dict(controller.nodes[7] => 1.0)
+		controller.maxId = 10
+		old_deb = debug[]
+		debug[] = false
+		evaluate!(controller, pomdpmodel)
+		debug[] = old_deb
+		if debug[] == true
+			println("Optimal controller for tiger game:")
+			for (node_id, node) in controller.nodes
+			    println(node)
+			end
+		end
+		return controller
+	end
+
+	function example_controller(pomdpmodel::pomdpModel)
+		pomdp = pomdpmodel.frame
+		controller = Controller(pomdp, 1)
+		controller.nodes[1].id = 1
+		#create the open left(2)- open right(3) nodes
+		controller.nodes[2] = InitialNode(pomdp, 2)
+		controller.nodes[2].id = 2
+		controller.maxId = 2
+		old_deb = debug[]
+		debug[] = false
+		evaluate!(controller, pomdpmodel)
+		debug[] = old_deb
+		if debug[] == true
+			println("Optimal controller for tiger game:")
+			for (node_id, node) in controller.nodes
+			    println(node)
+			end
+		end
+		return controller
 	end
 
 	function build_node(node_id::Int64, actions::Vector{A}, actionProb::Vector{Float64}, observations::Vector{Vector{W}}, observation_prob::Vector{Vector{Float64}}, next_nodes::Vector{Vector{Node{A,W}}}, value::Vector{Float64}) where {A, W}
@@ -399,7 +465,7 @@ IBPIPolicyUtils:
 		Minval is the minimum probability that an edge can have. values below minval are treated as zero, values above 1-minval are treated as 1
 	"""
 	function filterNodes(nodes::Set{IPOMDPToolbox.Node}, minval::Float64)
-	    @deb("Called filterNodes, length(nodes) = $(length(nodes))")
+		@deb("Called filterNodes, length(nodes) = $(length(nodes))")
 		if length(nodes) == 0
 			error("called FilterNodes on empty set")
 		end
@@ -519,7 +585,7 @@ IBPIPolicyUtils:
 		This version of filterNodes analyzes new nodes before old nodes to avoid rewiring in case of nodes with equal values
 	"""
 	function filterNodes(nodes::OrderedSet{IPOMDPToolbox.Node}, minval::Float64)
-	    @deb("Called filterNodes, length(nodes) = $(length(nodes))")
+		@deb("Called filterNodes, length(nodes) = $(length(nodes))")
 		if length(nodes) == 0
 			error("called FilterNodes on empty set")
 		end
@@ -670,13 +736,13 @@ IBPIPolicyUtils:
 					s = POMDPs.states(pomdp)[s_index]
 					for a in actions
 						@deb("action = $a")
-						b[composite_index([temp_id[n_id], s_index],[n_nodes, n_states])] = POMDPs.reward(pomdp, s, a)*node.actionProb[a]
-						@deb("b($n_id, $s) = $(POMDPs.reward(pomdp, s, a)*node.actionProb[a])")
+						p_a_n = node.actionProb[a]
+						b[composite_index([temp_id[n_id], s_index],[n_nodes, n_states])] = POMDPs.reward(pomdp, s, a)*p_a_n
+						@deb("b($n_id, $s) = $(POMDPs.reward(pomdp, s, a)*p_a_n)")
 						M[composite_index([temp_id[n_id], s_index],[n_nodes, n_states]), composite_index([temp_id[n_id], s_index],[n_nodes, n_states])] = 1
 						@deb("M[$n_id, $s][$n_id, $s] = 1")
 						s_primes = POMDPs.transition(pomdp,s,a).vals
 						possible_obs = keys(node.edges[a])  #only consider observations possible from current node/action combo
-						p_a_n = node.actionProb[a]
 						for obs in possible_obs
 							@deb("obs = $obs")
 							for s_prime_index in 1:length(s_primes)
@@ -691,10 +757,8 @@ IBPIPolicyUtils:
 									if !haskey(controller.nodes, next.id)
 										error("Node $(next.id) not present in nodes")
 									end
-									nz_index = temp_id[next.id]
-									c_a_nz = prob
-									M[composite_index([temp_id[n_id], s_index],[n_nodes, n_states]), composite_index([nz_index, s_prime_index],[n_nodes,n_states])]-= POMDPs.discount(pomdp)*p_s_prime*p_z*p_a_n*c_a_nz
-									@deb("M[$n_id, $s][$(next.id), $s_prime] = gamma=$(POMDPs.discount(pomdp))*ps'=$p_s_prime*pz=$p_z*pa=$p_a_n*pn'=$c_a_nz = $(M[composite_index([temp_id[n_id], s_index],[n_nodes, n_states]), composite_index([nz_index, s_prime_index],[n_nodes,n_states])])")
+									M[composite_index([temp_id[n_id], s_index],[n_nodes, n_states]), composite_index([temp_id[next.id], s_prime_index],[n_nodes,n_states])]-= POMDPs.discount(pomdp)*p_s_prime*p_z*p_a_n*prob
+									@deb("M[$n_id, $s][$(next.id), $s_prime] = gamma=$(POMDPs.discount(pomdp))*ps'=$p_s_prime*pz=$p_z*pa=$p_a_n*pn'=$prob = $(M[composite_index([temp_id[n_id], s_index],[n_nodes, n_states]), composite_index([temp_id[next.id], s_prime_index],[n_nodes,n_states])])")
 								end
 							end
 						end
@@ -731,11 +795,10 @@ function composite_index(dimension::Vector{Int64}, lengths::Vector{Int64})
 	return index+1
 end
 
-function partial_backup!(controller::Controller{A, W}, pomdpmodel::pomdpModel) where {A, W}
+function partial_backup!(controller::Controller{A, W}, pomdpmodel::pomdpModel; minval = 0.0, add_one = false) where {A, W}
 	#this time the matrix form is a1x1+...+anxn = b1
 	#sum(a,s)[sum(nz)[canz*[R(s,a)+gamma*sum(s')p(s'|s, a)p(z|s', a)v(nz,s')]] -eps = V(n,s)
 	#number of variables is |A||Z||N|+1 (canz and eps)
-	minval = 1e-10
 	pomdp = pomdpmodel.frame
 	nodes = controller.nodes
 	n_nodes = length(keys(controller.nodes))
@@ -750,9 +813,14 @@ function partial_backup!(controller::Controller{A, W}, pomdpmodel::pomdpModel) w
 	#dim = n_nodes*n_actions*n_observations
 	changed = false
 	node_counter = 1
+	M_7_TR =  zeros(n_actions, n_observations, n_nodes)
+	M_7_TL =  zeros(n_actions, n_observations, n_nodes)
+	M_8_TR =  zeros(n_actions, n_observations, n_nodes)
+	M_8_TL =  zeros(n_actions, n_observations, n_nodes)
 	temp_id = Dict{Int64, Int64}()
 	for real_id in keys(nodes)
 			temp_id[real_id] = node_counter
+			@deb("Node $real_id becomes $node_counter")
 			node_counter+=1
 	end
 	for (n_id, node) in nodes
@@ -760,7 +828,7 @@ function partial_backup!(controller::Controller{A, W}, pomdpmodel::pomdpModel) w
 		lpmodel = JuMP.Model(with_optimizer(GLPK.Optimizer))
 		#define variables for LP. c(a, n, z)
 		@variable(lpmodel, canz[a=1:n_actions, z=1:n_observations, n=1:n_nodes] >= 0.0)
-		@variable(lpmodel, ca[a=1:n_actions] >= 0)
+		@variable(lpmodel, ca[a=1:n_actions] >= 0.0)
 		#e to maximize
 		@variable(lpmodel, e)
 		@objective(lpmodel, Max, e)
@@ -779,18 +847,54 @@ function partial_backup!(controller::Controller{A, W}, pomdpmodel::pomdpModel) w
 					for s_prime in s_primes
 						p_s_prime =POMDPModelTools.pdf(POMDPs.transition(pomdp,s,action), s_prime)
 						p_z = POMDPModelTools.pdf(POMDPs.observation(pomdp, action, s_prime), obs)
-						if p_s_prime != 0 && p_z != 0
+						if p_s_prime != 0.0 && p_z != 0.0
 							for (nz_id, nz) in nodes
 								v_nz_sp = nz.value[POMDPs.stateindex(pomdp, s_prime)]
-								#@deb("state = $s, action = $action, obs = $obs, nz = $(nz_id), s_prime = $s_prime")
-								#@deb("$p_s_prime $p_z $v_nz_sp")
-								M[a_index, obs_index, temp_id[nz_id]]+= POMDPs.discount(pomdp)*p_s_prime*p_z*v_nz_sp
+								#if n_id == 7 || n_id == 8
+									#@deb("state = $s, action = $action, obs = $obs, nz = $(nz_id), s_prime = $s_prime")
+									#@deb("$p_s_prime $p_z $v_nz_sp")
+								#end
+								M[a_index, obs_index, temp_id[nz_id]]+= p_s_prime*p_z*v_nz_sp
 							end
 						end
 						#@deb("M[$a_index, $obs_index, $nz_id] = $(M[a_index, obs_index, nz_id])")
 					end
 				end
 			end
+			if debug[] == true
+				if n_id == 7
+					if s_index == 1
+						M_7_TR = M
+					else
+						M_7_TL = M
+					end
+					#=
+					L = 3
+					GL = 1
+					GR = 2
+					TR = 1
+					TL = 2
+					println("correct vals")
+					correct_val = -1 + POMDPs.discount(pomdp)*(M[L, GL, temp_id[10]] +  M[L, GR, temp_id[8]]) - node.value[s_index]
+					println("e <= $correct_val")
+					=#
+				elseif n_id == 8
+					if s_index == 1
+						M_8_TR = M
+					else
+						M_8_TL = M
+					end
+					#=L = 3
+					GL = 1
+					GR = 2
+					TR = 1
+					TL = 2
+					correct_val = M_a[L] +POMDPs.discount(pomdp)*(M[L, GL, temp_id[7]] +  M[L, GR, temp_id[9]]) - node.value[s_index]
+					println("e <= $correct_val")
+					=#
+				end
+			end
+			#=
 			if debug[] == true
 				for a in 1:n_actions
 					println("Action $(actions[a])")
@@ -802,25 +906,77 @@ function partial_backup!(controller::Controller{A, W}, pomdpmodel::pomdpModel) w
 					end
 				end
 			end
+			=#
 			#@deb("state $s: $M_a")
 			#constraint on the big formula in table 2
 			#@constraint(lpmodel,  e - M.*canz .<= -1*node.value[s_index])
 			#n are actually temp_ids here
-			@constraint(lpmodel,  e + node.value[s_index] <= sum( M_a[a]*ca[a]+sum(sum( M[a, z, n] * canz[a, z, n] for n in 1:n_nodes) for z in 1:n_observations) for a in 1:n_actions))
+			@constraint(lpmodel,  e + node.value[s_index] <= sum( M_a[a]*ca[a]+POMDPs.discount(pomdp)*sum(sum( M[a, z, n] * canz[a, z, n] for n in 1:n_nodes) for z in 1:n_observations) for a in 1:n_actions))
 			#JuMP.set_name(temp, "con_$s_index")
 		end
 		#sum canz over a,n,z = 1
 		@constraint(lpmodel, con_sum[a=1:n_actions, z=1:n_observations], sum(canz[a, z, n] for n in 1:n_nodes) == ca[a])
 		@constraint(lpmodel, ca_sum, sum(ca[a] for a in 1:n_actions) == 1.0)
 
-		if debug[] == true
-			print(lpmodel)
-		end
+		#if debug[] == true
+		#	print(lpmodel)
+		#end
+
 		optimize!(lpmodel)
+		#@deb("$(termination_status(lpmodel))")
+		#@deb("$(primal_status(lpmodel))")
+		#@deb("$(dual_status(lpmodel))")
 
+		if debug[] == true && n_id == 7
+			L = 3
+			GL = 2
+			GR = 1
+			TR = 1
+			TL = 2
+			println("correct vals")
+			correct_val = -1 + POMDPs.discount(pomdp)*(M_7_TR[L, GL, temp_id[10]] +  M_7_TR[L, GR, temp_id[8]]) - node.value[TR]
+			println("e <= $correct_val")
+			correct_val = -1 +POMDPs.discount(pomdp)*(M_7_TL[L, GL, temp_id[10]] +  M_7_TL[L, GR, temp_id[8]]) - node.value[TL]
+			println("e <= $correct_val")
+
+			#actual_val = -1 + POMDPs.discount(pomdp)*(M_7_TR[L, GL, temp_id[10]]* JuMP.value(canz[L, GL, temp_id[10]]) +  M_7_TR[L, GR, temp_id[8]] * JuMP.value(canz[L, GR, temp_id[8]])+ M_7_TR[L, GR, temp_id[1]] * JuMP.value(canz[L, GR,temp_id[1]])) - node.value[TR]
+			actual_val = -1 + POMDPs.discount(pomdp)* sum(sum(sum( M_7_TR[a,z,n] * JuMP.value(canz[a,z,n])  for n in 1:n_nodes) for z in 1:n_observations) for a in 1:n_actions) - node.value[TR]
+			println("actual val")
+			println("e <= $actual_val")
+			#actual_val = -1 + POMDPs.discount(pomdp)*(M_7_TL[L, GL, temp_id[10]]* JuMP.value(canz[L, GL, temp_id[10]]) +  M_7_TL[L, GR, temp_id[8]] * JuMP.value(canz[L, GR, temp_id[8]])+ M_7_TL[L, GR, temp_id[1]] * JuMP.value(canz[L, GR, temp_id[1]])) - node.value[TL]
+			actual_val = -1 + POMDPs.discount(pomdp)* sum(sum(sum( M_7_TL[a,z,n]*JuMP.value(canz[a,z,n]) for n in 1:n_nodes) for z in 1:n_observations) for a in 1:n_actions) - node.value[TL]
+
+			println("e <= $actual_val")
+			for n_id in keys(nodes)
+
+				println("canz $n_id =  $(JuMP.value(canz[L, GR, temp_id[n_id]]))")
+				println("canz $n_id =  $(JuMP.value(canz[L, GL, temp_id[n_id]]))")
+
+			end
+		end
+		if debug[] == true && n_id == 8
+			L = 3
+			GL = 1
+			GR = 2
+			TR = 1
+			TL = 2
+			println("correct vals")
+			correct_val = -1 + POMDPs.discount(pomdp)*(M_8_TR[L, GL, temp_id[7]] +  M_8_TR[L, GR, temp_id[9]]) - node.value[TR]
+			println("e <= $correct_val")
+			correct_val = -1 + POMDPs.discount(pomdp)*(M_8_TL[L, GL, temp_id[7]] +  M_8_TL[L, GR, temp_id[9]]) - node.value[TL]
+			println("e <= $correct_val")
+
+			actual_val = -1 + POMDPs.discount(pomdp)*(M_8_TR[L, GL, temp_id[7]]* JuMP.value(canz[L, GL, temp_id[7]]) +  M_8_TR[L, GR, temp_id[9]] * JuMP.value(canz[L, GR, temp_id[9]])+ M_8_TR[L, GL, temp_id[1]] * JuMP.value(canz[L, GL, temp_id[1]])) - node.value[TR]
+			println("actual val")
+			println("e <= $actual_val")
+			actual_val = -1 + POMDPs.discount(pomdp)*(M_8_TL[L, GL, temp_id[7]]* JuMP.value(canz[L,GL,temp_id[7]]) +  M_8_TL[L, GR, temp_id[9]] * JuMP.value(canz[L, GR, temp_id[9]])+ M_8_TL[L, GL, temp_id[1]] * JuMP.value(canz[L, GL, temp_id[1]])) - node.value[TL]
+			println("e <= $actual_val")
+
+
+		end
 		@deb("eps = $(JuMP.value(e))")
-
-		if JuMP.value(e) > minval
+		@deb("Obj = $(objective_value(lpmodel))")
+		if JuMP.objective_value(lpmodel) > minval
 			changed = true
 			#@deb("Good so far")
 			new_edges = Dict{A, Dict{W,Dict{Node, Float64}}}()
@@ -841,7 +997,7 @@ function partial_backup!(controller::Controller{A, W}, pomdpmodel::pomdpModel) w
 						temp_edge_dict = Dict{Node, Float64}()
 						for (nz_id, nz) in nodes
 							prob = JuMP.value(canz[action_index, obs_index, temp_id[nz_id]])/ca_v
-							@deb("canz $(observations[obs_index]) -> $nz_id = $prob")
+							#@deb("canz $(observations[obs_index]) -> $nz_id = $prob")
 							if prob < 0.0
 								@deb("Set prob to 0 even though it was negative")
 								prob = 0.0
@@ -855,7 +1011,7 @@ function partial_backup!(controller::Controller{A, W}, pomdpmodel::pomdpModel) w
 							end
 							if prob > 0.0
 								obs_total+= prob
-								@deb("New edge: $(action_index), $(obs_index) -> $nz_id, $(prob)")
+								#@deb("New edge: $(action_index), $(obs_index) -> $nz_id, $(prob)")
 								temp_edge_dict[nz] = prob
 							end
 						end
@@ -864,7 +1020,7 @@ function partial_backup!(controller::Controller{A, W}, pomdpmodel::pomdpModel) w
 						end
 						new_edge_dict = Dict{Node, Float64}()
 						for (next, prob) in temp_edge_dict
-							@deb("normalized prob: $normalized_prob")
+							#@deb("normalized prob: $normalized_prob")
 							if prob >= 1.0-minval
 								new_edge_dict[next] = 1.0
 							elseif prob > minval
@@ -872,7 +1028,7 @@ function partial_backup!(controller::Controller{A, W}, pomdpmodel::pomdpModel) w
 							end
 							#do not add anything if prob < minval
 						end
-						@deb("length of dict for obs $(observations[obs_index]) = $(length(new_edge_dict))")
+						#@deb("length of dict for obs $(observations[obs_index]) = $(length(new_edge_dict))")
 						if length(new_edge_dict) != 0
 							new_obs[observations[obs_index]] = new_edge_dict
 							#update incoming edge vector for other node
@@ -893,15 +1049,25 @@ function partial_backup!(controller::Controller{A, W}, pomdpmodel::pomdpModel) w
 			end
 			node.edges = new_edges
 			node.actionProb = new_actions
-			old_deb = debug[]
-			debug[] = false
-			evaluate!(controller, pomdpmodel)
-			debug[] = old_deb
-			if debug[] == true
-				println("Changed controller after eval")
-				for (n_id, node) in controller.nodes
+			if !add_one
+				old_deb = debug[]
+				debug[] = false
+				evaluate!(controller, pomdpmodel)
+				debug[] = old_deb
+				if debug[] == true
+					println("Changed controller after eval")
+					for (n_id, node) in controller.nodes
+						println(node)
+					end
+				end
+			end
+			if add_one
+				#no need to update tangent points because they wont be used!
+				if debug[] == true
+					println("Changed node after eval")
 					println(node)
 				end
+				break
 			end
 		end
 		constraint_list = JuMP.all_constraints(lpmodel, GenericAffExpr{Float64,VariableRef}, MOI.LessThan{Float64})
@@ -911,7 +1077,7 @@ function partial_backup!(controller::Controller{A, W}, pomdpmodel::pomdpModel) w
 end
 
 function escape_optima_standard!(controller::Controller{A, W}, pomdpmodel::pomdpModel, tangent_b::Dict{Int64, Vector{Float64}}; add_all=false, minval = 0.0) where {A, W}
-	@deb("$tangent_b")
+	#@deb("$tangent_b")
 	pomdp = pomdpmodel.frame
 	nodes = controller.nodes
 	n_nodes = length(keys(controller.nodes))
@@ -924,22 +1090,37 @@ function escape_optima_standard!(controller::Controller{A, W}, pomdpmodel::pomdp
 	if length(tangent_b) == 0
 		error("tangent_b was empty!")
 	end
-	#backed_up_controller = full_backup_stochastic!(deepcopy(controller), pomdpmodel)
+#=
+	debug[] = false
+	backed_up_controller = deepcopy(controller)
+	full_backup_stochastic!(backed_up_controller, pomdpmodel)
+	debug[] = true
+	if debug[]
+		for (id,node) in backed_up_controller.nodes
+			println("$id $(node.value)")
+		end
+	end
+	=#
 	old_deb = debug[]
 	debug[] = false
+
 	new_nodes = full_backup_generate_nodes(controller, pomdpmodel, minval)
+	#new_nodes = collect(values(backed_up_controller.nodes))
+
+	debug[] = old_deb
 	if debug[] == true
 		println("new_nodes:")
 		for node in new_nodes
 			println(node)
 		end
 	end
-	debug[] = old_deb
+
 
 	escaped = false
 	reachable_b = Set{Vector{Float64}}()
 	for (id, start_b) in tangent_b
-		#@deb("$start_b")
+		#start_b = collect(values(tangent_b))[1]
+		@deb("$id - >$start_b")
 		for a in actions
 			for z in observations
 				new_b = Vector{Float64}(undef, n_states)
@@ -987,6 +1168,9 @@ function escape_optima_standard!(controller::Controller{A, W}, pomdpmodel::pomdp
 						controller.nodes[controller.maxId+1] = rework_node(controller, best_new_node)
 						controller.maxId+=1
 						@deb("Added node $(controller.maxId)")
+						if debug[] == true
+							println(controller.nodes[controller.maxId])
+						end
 						escaped = true
 						if !add_all
 							return escaped
@@ -998,6 +1182,7 @@ function escape_optima_standard!(controller::Controller{A, W}, pomdpmodel::pomdp
 	end
 	if add_all
 		for new_b in reachable_b
+			@deb("belief $(new_b[1]) $(new_b[2])")
 			best_old_node = nothing
 			best_old_value = 0.0
 			for (id,old_node) in controller.nodes
@@ -1012,17 +1197,21 @@ function escape_optima_standard!(controller::Controller{A, W}, pomdpmodel::pomdp
 			best_new_value = 0.0
 			for new_node in new_nodes
 				new_value = new_b' * new_node.value
-				if best_new_node == nothing || best_new_value < new_value
+				if best_new_node == nothing || best_new_value <= new_value
 					best_new_node = new_node
 					best_new_value = new_value
 				end
 			end
 			if best_new_value - best_old_value > minval
 				@deb("in $new_b node $(best_new_node.id) has $best_new_value > $best_old_value")
+				#@deb("$(best_new_node.value[1]) $(best_new_node.value[1])")
 				controller.nodes[controller.maxId+1] = rework_node(controller, best_new_node)
 				controller.maxId+=1
 				@deb("Added node $(controller.maxId)")
 				escaped = true
+				if debug[] == true
+					println(controller.nodes[controller.maxId])
+				end
 			end
 		end
 	end
@@ -1047,5 +1236,6 @@ function rework_node(controller::Controller{A, W}, new_node::Node{A, W}) where {
 		end
 		return Node(id, actionProb,edges, value, Dict{Node, Vector{Dict{Node, Float64}}}())
 end
+
 
 include("bpigraph.jl")
