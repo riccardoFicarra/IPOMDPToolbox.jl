@@ -206,6 +206,43 @@ IBPIPolicyUtils:
 		return controller
 	end
 
+	function optimal_tiger_controller_stochastic(pomdpmodel::pomdpModel)
+		pomdp = pomdpmodel.frame
+		controller = Controller(pomdp, 3)
+		controller.nodes[1].id = 1
+		#create the open left(2)- open right(3) nodes
+		controller.nodes[3] = InitialNode(pomdp, 1)
+		controller.nodes[3].id = 3
+		controller.nodes[2] = InitialNode(pomdp, 2)
+		controller.nodes[2].id = 2
+		for i in 5:6
+			controller.nodes[i] = InitialNode(pomdp, 3)
+			controller.nodes[i].id = i
+		end
+		controller.nodes[1].edges[:L][:GL] = Dict(controller.nodes[5] => 0.73,controller.nodes[1] => 0.27)
+		controller.nodes[1].edges[:L][:GR] = Dict(controller.nodes[6] => 1.0)
+		controller.nodes[2].edges[:OR][:GL] = Dict(controller.nodes[1] => 1.0)
+		controller.nodes[2].edges[:OR][:GR] = Dict(controller.nodes[1] => 1.0)
+		controller.nodes[3].edges[:OL][:GL] = Dict(controller.nodes[1] => 1.0)
+		controller.nodes[3].edges[:OL][:GR] = Dict(controller.nodes[1] => 1.0)
+		controller.nodes[5].edges[:L][:GL] = Dict(controller.nodes[2] => 1.0)
+		controller.nodes[5].edges[:L][:GR] = Dict(controller.nodes[1] => 1.0)
+		controller.nodes[6].edges[:L][:GL] = Dict(controller.nodes[1] => 1.0)
+		controller.nodes[6].edges[:L][:GR] = Dict(controller.nodes[3] => 0.69, controller.nodes[6] => 0.31)
+		controller.maxId = 6
+		old_deb = debug[]
+		debug[] = false
+		evaluate!(controller, pomdpmodel)
+		debug[] = old_deb
+		if debug[] == true
+			println("Optimal controller for tiger game:")
+			for (node_id, node) in controller.nodes
+			    println(node)
+			end
+		end
+		return controller
+	end
+
 	function example_controller(pomdpmodel::pomdpModel)
 		pomdp = pomdpmodel.frame
 		controller = Controller(pomdp, 1)
