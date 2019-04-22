@@ -149,16 +149,21 @@ IBPIPolicyUtils:
 
 
 	mutable struct Controller{A, W}
+		level::Int64
+		agent::Any
 		nodes::Dict{Int64, Node{A, W}}
 		maxId::Int64
 	end
 	"""
 	Initialize a controller with the initial node, start id counter from 2
 	"""
-	function Controller(pomdp::POMDP{A,W}, force::Int64) where {A, W}
+	function Controller(level::Int64, agent::Symbol, pomdp::POMDP{A,W}, force::Int64) where {A, W}
 		newNode = InitialNode(pomdp, force)
-		Controller{A, W}(Dict(1 => newNode), 1)
+		Controller{A, W}(level, agent, Dict(1 => newNode), 1)
+	end
 
+	function Controller(pomdp::POMDP{A,W}, force::Int64) where {A, W}
+		return Controller(0,:I, pomdp, force)
 	end
 
 	function optimal_tiger_controller(pomdpmodel::pomdpModel)
