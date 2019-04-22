@@ -4,7 +4,7 @@ ibpisolver.jl:
 - Author: fiki9
 - Date: 2019-02-11
 =#
-    include("ibpipolicyutils.jl")
+    include("bpipolicyutils.jl")
     struct IBPISolver
         # Here should go some settings
         timeout::Float64

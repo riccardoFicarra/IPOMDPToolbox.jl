@@ -8,7 +8,8 @@ IBPIPolicyUtils:
 	using DataStructures
 	using JuMP
 	using GLPK
-
+	#remove when done
+	using Debugger
 	"""
 	Structure used for policy nodes.
 	ActionDist specifies the probability of executing the action at the corresponding index in actions
@@ -795,7 +796,7 @@ function composite_index(dimension::Vector{Int64}, lengths::Vector{Int64})
 	return index+1
 end
 
-function partial_backup!(controller::Controller{A, W}, pomdpmodel::pomdpModel; minval = 0.0, add_one = false) where {A, W}
+function partial_backup!(controller::Controller{A, W}, pomdpmodel::pomdpModel; minval = 0.0, add_one = false, debug_node = 0) where {A, W}
 	#this time the matrix form is a1x1+...+anxn = b1
 	#sum(a,s)[sum(nz)[canz*[R(s,a)+gamma*sum(s')p(s'|s, a)p(z|s', a)v(nz,s')]] -eps = V(n,s)
 	#number of variables is |A||Z||N|+1 (canz and eps)
@@ -813,10 +814,8 @@ function partial_backup!(controller::Controller{A, W}, pomdpmodel::pomdpModel; m
 	#dim = n_nodes*n_actions*n_observations
 	changed = false
 	node_counter = 1
-	M_7_TR =  zeros(n_actions, n_observations, n_nodes)
-	M_7_TL =  zeros(n_actions, n_observations, n_nodes)
-	M_8_TR =  zeros(n_actions, n_observations, n_nodes)
-	M_8_TL =  zeros(n_actions, n_observations, n_nodes)
+	M_TR =  zeros(n_actions, n_observations, n_nodes)
+	M_TL =  zeros(n_actions, n_observations, n_nodes)
 	temp_id = Dict{Int64, Int64}()
 	for real_id in keys(nodes)
 			temp_id[real_id] = node_counter
@@ -862,11 +861,11 @@ function partial_backup!(controller::Controller{A, W}, pomdpmodel::pomdpModel; m
 				end
 			end
 			if debug[] == true
-				if n_id == 7
+				if n_id == debug_node
 					if s_index == 1
-						M_7_TR = M
+						M_TR = M
 					else
-						M_7_TL = M
+						M_TL = M
 					end
 					#=
 					L = 3
@@ -876,20 +875,6 @@ function partial_backup!(controller::Controller{A, W}, pomdpmodel::pomdpModel; m
 					TL = 2
 					println("correct vals")
 					correct_val = -1 + POMDPs.discount(pomdp)*(M[L, GL, temp_id[10]] +  M[L, GR, temp_id[8]]) - node.value[s_index]
-					println("e <= $correct_val")
-					=#
-				elseif n_id == 8
-					if s_index == 1
-						M_8_TR = M
-					else
-						M_8_TL = M
-					end
-					#=L = 3
-					GL = 1
-					GR = 2
-					TR = 1
-					TL = 2
-					correct_val = M_a[L] +POMDPs.discount(pomdp)*(M[L, GL, temp_id[7]] +  M[L, GR, temp_id[9]]) - node.value[s_index]
 					println("e <= $correct_val")
 					=#
 				end
@@ -927,24 +912,24 @@ function partial_backup!(controller::Controller{A, W}, pomdpmodel::pomdpModel; m
 		#@deb("$(primal_status(lpmodel))")
 		#@deb("$(dual_status(lpmodel))")
 
-		if debug[] == true && n_id == 7
+		if debug[] == true && n_id == debug_node
 			L = 3
 			GL = 2
 			GR = 1
 			TR = 1
 			TL = 2
 			println("correct vals")
-			correct_val = -1 + POMDPs.discount(pomdp)*(M_7_TR[L, GL, temp_id[10]] +  M_7_TR[L, GR, temp_id[8]]) - node.value[TR]
+			correct_val = -1 + POMDPs.discount(pomdp)*(M_TR[L, GL, temp_id[5]] +  M_TR[L, GR, temp_id[8]]) - node.value[TR]
 			println("e <= $correct_val")
-			correct_val = -1 +POMDPs.discount(pomdp)*(M_7_TL[L, GL, temp_id[10]] +  M_7_TL[L, GR, temp_id[8]]) - node.value[TL]
+			correct_val = -1 +POMDPs.discount(pomdp)*(M_TL[L, GL, temp_id[5]] +  M_TL[L, GR, temp_id[8]]) - node.value[TL]
 			println("e <= $correct_val")
 
 			#actual_val = -1 + POMDPs.discount(pomdp)*(M_7_TR[L, GL, temp_id[10]]* JuMP.value(canz[L, GL, temp_id[10]]) +  M_7_TR[L, GR, temp_id[8]] * JuMP.value(canz[L, GR, temp_id[8]])+ M_7_TR[L, GR, temp_id[1]] * JuMP.value(canz[L, GR,temp_id[1]])) - node.value[TR]
-			actual_val = -1 + POMDPs.discount(pomdp)* sum(sum(sum( M_7_TR[a,z,n] * JuMP.value(canz[a,z,n])  for n in 1:n_nodes) for z in 1:n_observations) for a in 1:n_actions) - node.value[TR]
+			actual_val = -1 + POMDPs.discount(pomdp)* sum(sum(sum( M_TR[a,z,n] * JuMP.value(canz[a,z,n])  for n in 1:n_nodes) for z in 1:n_observations) for a in 1:n_actions) - node.value[TR]
 			println("actual val")
 			println("e <= $actual_val")
 			#actual_val = -1 + POMDPs.discount(pomdp)*(M_7_TL[L, GL, temp_id[10]]* JuMP.value(canz[L, GL, temp_id[10]]) +  M_7_TL[L, GR, temp_id[8]] * JuMP.value(canz[L, GR, temp_id[8]])+ M_7_TL[L, GR, temp_id[1]] * JuMP.value(canz[L, GR, temp_id[1]])) - node.value[TL]
-			actual_val = -1 + POMDPs.discount(pomdp)* sum(sum(sum( M_7_TL[a,z,n]*JuMP.value(canz[a,z,n]) for n in 1:n_nodes) for z in 1:n_observations) for a in 1:n_actions) - node.value[TL]
+			actual_val = -1 + POMDPs.discount(pomdp)* sum(sum(sum( M_TL[a,z,n]*JuMP.value(canz[a,z,n]) for n in 1:n_nodes) for z in 1:n_observations) for a in 1:n_actions) - node.value[TL]
 
 			println("e <= $actual_val")
 			for n_id in keys(nodes)
@@ -954,7 +939,7 @@ function partial_backup!(controller::Controller{A, W}, pomdpmodel::pomdpModel; m
 
 			end
 		end
-		if debug[] == true && n_id == 8
+		#=if debug[] == true && n_id == 8 && haskey(controller.nodes, 9) && haskey(controller.nodes, 7)
 			L = 3
 			GL = 1
 			GR = 2
@@ -974,6 +959,7 @@ function partial_backup!(controller::Controller{A, W}, pomdpmodel::pomdpModel; m
 
 
 		end
+		=#
 		@deb("eps = $(JuMP.value(e))")
 		@deb("Obj = $(objective_value(lpmodel))")
 		if JuMP.objective_value(lpmodel) > minval
@@ -1052,7 +1038,7 @@ function partial_backup!(controller::Controller{A, W}, pomdpmodel::pomdpModel; m
 			if !add_one
 				old_deb = debug[]
 				debug[] = false
-				evaluate!(controller, pomdpmodel)
+				#evaluate!(controller, pomdpmodel)
 				debug[] = old_deb
 				if debug[] == true
 					println("Changed controller after eval")
@@ -1108,20 +1094,21 @@ function escape_optima_standard!(controller::Controller{A, W}, pomdpmodel::pomdp
 	#new_nodes = collect(values(backed_up_controller.nodes))
 
 	debug[] = old_deb
-	if debug[] == true
-		println("new_nodes:")
-		for node in new_nodes
-			println(node)
-		end
-	end
+	#if debug[] == true
+	#	println("new_nodes:")
+	#	for node in new_nodes
+	#		println(node)
+	#	end
+	#end
 
 
 	escaped = false
 	reachable_b = Set{Vector{Float64}}()
 	for (id, start_b) in tangent_b
-		#start_b = collect(values(tangent_b))[1]
+		#id = collect(keys(tangent_b))[1]
+		#start_b = tangent_b[id]
 		@deb("$id - >$start_b")
-		for a in actions
+		for a in keys(nodes[id].actionProb)
 			for z in observations
 				new_b = Vector{Float64}(undef, n_states)
 				normalize = 0.0
@@ -1143,76 +1130,48 @@ function escape_optima_standard!(controller::Controller{A, W}, pomdpmodel::pomdp
 				@deb("from belief $start_b action $a and obs $z -> $new_b")
 				push!(reachable_b, new_b)
 				#find the value of the current controller in the reachable belief state
-				if !add_all
-					best_old_node = nothing
-					best_old_value = 0.0
-					for (id,old_node) in controller.nodes
-						temp_value = new_b' * old_node.value
-						if best_old_node == nothing || best_old_value < temp_value
-							best_old_node = old_node
-							best_old_value = temp_value
-						end
+				best_old_node = nothing
+				best_old_value = 0.0
+				for (id,old_node) in controller.nodes
+					temp_value = new_b' * old_node.value
+					if best_old_node == nothing || best_old_value < temp_value
+						best_old_node = old_node
+						best_old_value = temp_value
 					end
-					#find the value of the backed up controller in the reachable belief state
-					best_new_node = nothing
-					best_new_value = 0.0
-					for new_node in new_nodes
-						new_value = new_b' * new_node.value
-						if best_new_node == nothing || best_new_value < new_value
-							best_new_node = new_node
-							best_new_value = new_value
-						end
+				end
+				#find the value of the backed up controller in the reachable belief state
+				best_new_node = nothing
+				best_new_value = 0.0
+				for new_node in new_nodes
+					new_value = new_b' * new_node.value
+					if best_new_node == nothing || best_new_value < new_value
+						best_new_node = new_node
+						best_new_value = new_value
 					end
-					if best_new_value - best_old_value > minval
-						@deb("in $new_b node $(best_new_node.id) has $best_new_value > $best_old_value")
-						controller.nodes[controller.maxId+1] = rework_node(controller, best_new_node)
-						controller.maxId+=1
-						@deb("Added node $(controller.maxId)")
-						if debug[] == true
-							println(controller.nodes[controller.maxId])
-						end
-						escaped = true
-						if !add_all
-							return escaped
-						end
+				end
+				if best_new_value - best_old_value > minval
+					@deb("in $new_b node $(best_new_node.id) has $best_new_value > $best_old_value")
+					reworked_node = rework_node(controller, best_new_node)
+					controller.nodes[reworked_node.id] = reworked_node
+					controller.maxId+=1
+					@deb("Added node $(reworked_node.id)")
+
+					#experimental: redirect edge of chosen node to newly added nodes
+					#=
+					old_prob = 1.0 #nodes[id].edges[a][z][best_old_node]
+					nodes[id].edges[a][z] = Dict(reworked_node => old_prob)
+					@deb("edge redirected from $(best_old_node.id) to $(reworked_node.id)")
+					=#
+
+					if debug[] == true
+						println(controller.nodes[reworked_node.id])
 					end
+					escaped = true
 				end
 			end
 		end
-	end
-	if add_all
-		for new_b in reachable_b
-			@deb("belief $(new_b[1]) $(new_b[2])")
-			best_old_node = nothing
-			best_old_value = 0.0
-			for (id,old_node) in controller.nodes
-				temp_value = new_b' * old_node.value
-				if best_old_node == nothing || best_old_value < temp_value
-					best_old_node = old_node
-					best_old_value = temp_value
-				end
-			end
-			#find the value of the backed up controller in the reachable belief state
-			best_new_node = nothing
-			best_new_value = 0.0
-			for new_node in new_nodes
-				new_value = new_b' * new_node.value
-				if best_new_node == nothing || best_new_value <= new_value
-					best_new_node = new_node
-					best_new_value = new_value
-				end
-			end
-			if best_new_value - best_old_value > minval
-				@deb("in $new_b node $(best_new_node.id) has $best_new_value > $best_old_value")
-				#@deb("$(best_new_node.value[1]) $(best_new_node.value[1])")
-				controller.nodes[controller.maxId+1] = rework_node(controller, best_new_node)
-				controller.maxId+=1
-				@deb("Added node $(controller.maxId)")
-				escaped = true
-				if debug[] == true
-					println(controller.nodes[controller.maxId])
-				end
-			end
+		if escaped && !add_all
+			return true
 		end
 	end
 	#@deb("$reachable_b")
