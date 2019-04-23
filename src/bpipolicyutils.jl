@@ -166,8 +166,7 @@ IBPIPolicyUtils:
 		return Controller(0,:I, pomdp, force)
 	end
 
-	function optimal_tiger_controller(pomdpmodel::pomdpModel)
-		pomdp = pomdpmodel.frame
+	function optimal_tiger_controller(pomdp::POMDP{A, W}) where {A, W}
 		controller = Controller(pomdp, 3)
 		controller.nodes[1].id = 1
 		#create the open left(2)- open right(3) nodes
@@ -200,7 +199,7 @@ IBPIPolicyUtils:
 		controller.maxId = 10
 		old_deb = debug[]
 		debug[] = false
-		evaluate!(controller, pomdpmodel)
+		evaluate!(controller, pomdp)
 		debug[] = old_deb
 		if debug[] == true
 			println("Optimal controller for tiger game:")
@@ -211,8 +210,7 @@ IBPIPolicyUtils:
 		return controller
 	end
 
-	function optimal_tiger_controller_stochastic(pomdpmodel::pomdpModel)
-		pomdp = pomdpmodel.frame
+	function optimal_tiger_controller_stochastic(pomdp::POMDP{A, W}) where {A, W}
 		controller = Controller(pomdp, 3)
 		controller.nodes[1].id = 1
 		#create the open left(2)- open right(3) nodes
@@ -237,7 +235,7 @@ IBPIPolicyUtils:
 		controller.maxId = 6
 		old_deb = debug[]
 		debug[] = false
-		evaluate!(controller, pomdpmodel)
+		evaluate!(controller, pomdp)
 		debug[] = old_deb
 		if debug[] == true
 			println("Optimal controller for tiger game:")
@@ -248,8 +246,7 @@ IBPIPolicyUtils:
 		return controller
 	end
 
-	function example_controller(pomdpmodel::pomdpModel)
-		pomdp = pomdpmodel.frame
+	function example_controller(pomdp::POMDP{A, W}) where {A, W}
 		controller = Controller(pomdp, 1)
 		controller.nodes[1].id = 1
 		#create the open left(2)- open right(3) nodes
@@ -258,7 +255,7 @@ IBPIPolicyUtils:
 		controller.maxId = 2
 		old_deb = debug[]
 		debug[] = false
-		evaluate!(controller, pomdpmodel)
+		evaluate!(controller, pomdp)
 		debug[] = old_deb
 		if debug[] == true
 			println("Optimal controller for tiger game:")
@@ -301,10 +298,8 @@ IBPIPolicyUtils:
 		return Node(node_id, actionprob, edges, value, Dict{Node, Vector{Dict{Node, Float64}}}())
 	end
 
-	function full_backup_generate_nodes(controller::Controller{A, W}, pomdpmodel::pomdpModel, minval::Float64) where {A, W}
+	function full_backup_generate_nodes(controller::Controller{A, W}, pomdp::POMDP{A, W}, minval::Float64) where {A, W}
 		minval = 1e-10
-		pomdp = pomdpmodel.frame
-		#belief = pomdpmodel.history.b
 		nodes = controller.nodes
 		observations = POMDPs.observations(pomdp)
 		#tentative from incpruning
@@ -350,10 +345,8 @@ IBPIPolicyUtils:
 	Perform a full backup operation according to Pourpart and Boutilier's paper on Bounded finite state controllers
 	TODO: make this thing actually do a backup
 	"""
-	function full_backup_stochastic!(controller::Controller{A, W}, pomdpmodel::pomdpModel) where {A, W}
+	function full_backup_stochastic!(controller::Controller{A, W}, pomdp::POMDP{A, W}) where {A, W}
 		minval = 1e-10
-		pomdp = pomdpmodel.frame
-		#belief = pomdpmodel.history.b
 		nodes = controller.nodes
 		observations = POMDPs.observations(pomdp)
 		#tentative from incpruning
@@ -362,7 +355,7 @@ IBPIPolicyUtils:
 		#for each node iterate on s and s' to produce a new node
 		#new node is tied to old node?, action a and obs z
 		#with stochastic pruning we get the cis needed
-		new_nodes = full_backup_generate_nodes(controller, pomdpmodel, minval)
+		new_nodes = full_backup_generate_nodes(controller, pomdp, minval)
 		#before performing filtering with the old nodes update incomingEdge structure of old nodes
 		#also assign permanent ids
 		nodes_counter = controller.maxId+1
@@ -752,10 +745,9 @@ IBPIPolicyUtils:
 	end
 
 
-	function evaluate!(controller::Controller{A,W}, pomdpmodel::pomdpModel) where {A, W}
+	function evaluate!(controller::Controller{A,W}, pomdp::POMDP{A, W}) where {A, W}
 			#solve V(n,s) = R(s, a(n)) + gamma*sumz(P(s'|s,a(n))Pr(z|s',a(n))V(beta(n,z), s'))
 			#R(s,a(n)) is the reward function
-			pomdp = pomdpmodel.frame
 			nodes = controller.nodes
 			n_nodes = length(keys(controller.nodes))
 			states = POMDPs.states(pomdp)
@@ -838,11 +830,10 @@ function composite_index(dimension::Vector{Int64}, lengths::Vector{Int64})
 	return index+1
 end
 
-function partial_backup!(controller::Controller{A, W}, pomdpmodel::pomdpModel; minval = 0.0, add_one = false, debug_node = 0) where {A, W}
+function partial_backup!(controller::Controller{A, W}, pomdp::POMDP{A, W}; minval = 0.0, add_one = false, debug_node = 0) where {A, W}
 	#this time the matrix form is a1x1+...+anxn = b1
 	#sum(a,s)[sum(nz)[canz*[R(s,a)+gamma*sum(s')p(s'|s, a)p(z|s', a)v(nz,s')]] -eps = V(n,s)
 	#number of variables is |A||Z||N|+1 (canz and eps)
-	pomdp = pomdpmodel.frame
 	nodes = controller.nodes
 	n_nodes = length(keys(controller.nodes))
 	states = POMDPs.states(pomdp)
@@ -1080,7 +1071,7 @@ function partial_backup!(controller::Controller{A, W}, pomdpmodel::pomdpModel; m
 			if !add_one
 				old_deb = debug[]
 				debug[] = false
-				#evaluate!(controller, pomdpmodel)
+				#evaluate!(controller, pomdp)
 				debug[] = old_deb
 				if debug[] == true
 					println("Changed controller after eval")
@@ -1104,9 +1095,8 @@ function partial_backup!(controller::Controller{A, W}, pomdpmodel::pomdpModel; m
 	return changed, tangent_b
 end
 
-function escape_optima_standard!(controller::Controller{A, W}, pomdpmodel::pomdpModel, tangent_b::Dict{Int64, Vector{Float64}}; add_all=false, minval = 0.0) where {A, W}
+function escape_optima_standard!(controller::Controller{A, W}, pomdp::POMDP{A, W}, tangent_b::Dict{Int64, Vector{Float64}}; add_all=false, minval = 0.0) where {A, W}
 	#@deb("$tangent_b")
-	pomdp = pomdpmodel.frame
 	nodes = controller.nodes
 	n_nodes = length(keys(controller.nodes))
 	states = POMDPs.states(pomdp)
@@ -1121,7 +1111,7 @@ function escape_optima_standard!(controller::Controller{A, W}, pomdpmodel::pomdp
 #=
 	debug[] = false
 	backed_up_controller = deepcopy(controller)
-	full_backup_stochastic!(backed_up_controller, pomdpmodel)
+	full_backup_stochastic!(backed_up_controller, pomdp)
 	debug[] = true
 	if debug[]
 		for (id,node) in backed_up_controller.nodes
@@ -1132,7 +1122,7 @@ function escape_optima_standard!(controller::Controller{A, W}, pomdpmodel::pomdp
 	old_deb = debug[]
 	debug[] = false
 
-	new_nodes = full_backup_generate_nodes(controller, pomdpmodel, minval)
+	new_nodes = full_backup_generate_nodes(controller, pomdp, minval)
 	#new_nodes = collect(values(backed_up_controller.nodes))
 
 	debug[] = old_deb
