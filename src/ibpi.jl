@@ -2,9 +2,11 @@ function init_controllers(ipomdp::IPOMDP{S,A,W}, maxlevel::Int64, force::Int64) 
     #hardcoded for now
     agents = [agent(ipomdp), agent(ipomdp)]
     controllers = Dict{Int64, Controller{A, W}}()
-    for l in 0:maxlevel
-        #alternate between agent I and J
-        controller = Controller(l, agents[l%2+1], force)
+    for i in 0:maxlevel
+        l = maxlevel-i
+        #alternate between agent I and J starting with I
+        agent = agents[i%2+1]
+        controller = Controller(l, agent, force)
         controllers[l] = controller
     end
     return controllers
@@ -37,75 +39,82 @@ function InitialNode(actions::Vector{A}, observations::Vector{W}, force::Int64) 
         return n
 end
 
-function evaluate!(controller::Controller{A,W}, ipomdp::IPOMDP{S, A, W}, l_controller::Controller(A, W)) where {S, A, W}
-        #solve V(n,s) = R(s, a(n)) + gamma*sumz(P(s'|s,a(n))Pr(z|s',a(n))V(beta(n,z), s'))
-        #R(s,a(n)) is the reward function
-        nodes = controller.nodes
-        n_nodes = length(controller.nodes)
-        nodes_l = l_controller.nodes
-        n_nodes_l = length(l_controller.nodes)
-        states = IPOMDPs.states(ipomdp)
-        n_states = length(states)
-        M = spzeros(n_states*n_nodes*n_nodes_l, n_states*n_nodes*n_nodes_l)
-        b = zeros(n_states*n_nodes*n_nodes_l)
+function evaluate!(controller::Controller{A,W},  controller_j::Controller{A, W}, ipomdp::IPOMDP{S, A, W},) where {S, A, W}
 
-        #dictionary used for recompacting ids
-        temp_id = Dict{Int64, Int64}()
-        for (node_id, node) in nodes
-            temp_id[node_id] = length(temp_id)+1
-        end
+    nodes = controller.nodes
+    n_nodes = length(controller.nodes)
+    nodes_j = controller_j.nodes
+    n_nodes_j = length(nodes_j)
+    states = IPOMDPs.states(ipomdp)
+    n_states = length(states)
+    #M[s, nj, ni, s', nj', ni']
+    M = zeros(n_states, n_nodes_j, n_nodes, n_states, n_nodes_j, n_nodes)
+    b = zeros(n_states, n_nodes_j, n_nodes)
 
-        #dictionary used for recompacting ids
-        temp_id_l = Dict{Int64, Int64}()
-        for (node_id, node) in nodes_l
-            temp_id_l[node_id] = length(temp_id_l)+1
-        end
+    #dictionary used for recompacting ids
+    temp_id = Dict{Int64, Int64}()
+    for (node_id, node) in nodes
+        temp_id[node_id] = length(temp_id)+1
+    end
 
-        #compute coefficients for sum(a)[R(s|a)*P(a|n)+gamma*sum(z, n', s')[P(s'|s,a)*P(z|s',a)*P(a|n)*P(n'|z)*V(nz, s')]]
-        for (n_id, node) in nodes
-            #M is the coefficient matrix (form x1 = a2x2+...+anxn+b)
-            #b is the constant term vector
-            #variables are all pairs of n,s
-            actions = getPossibleActions(node)
-            for s_index in 1:n_states
-                s = POMDPs.states(pomdp)[s_index]
-                for a in actions
-                    @deb("action = $a")
-                    p_a_n = node.actionProb[a]
-                    b[composite_index([temp_id[n_id], s_index],[n_nodes, n_states])] = POMDPs.reward(pomdp, s, a)*p_a_n
-                    @deb("b($n_id, $s) = $(POMDPs.reward(pomdp, s, a)*p_a_n)")
-                    M[composite_index([temp_id[n_id], s_index],[n_nodes, n_states]), composite_index([temp_id[n_id], s_index],[n_nodes, n_states])] = 1
-                    @deb("M[$n_id, $s][$n_id, $s] = 1")
-                    s_primes = POMDPs.transition(pomdp,s,a).vals
-                    possible_obs = keys(node.edges[a])  #only consider observations possible from current node/action combo
-                    for obs in possible_obs
-                        @deb("obs = $obs")
-                        for s_prime_index in 1:length(s_primes)
-                            s_prime = s_primes[s_prime_index]
-                            p_s_prime =POMDPModelTools.pdf(POMDPs.transition(pomdp,s,a), s_prime)
-                            if p_s_prime == 0.0
-                                continue
-                            end
-                            p_z = POMDPModelTools.pdf(POMDPs.observation(pomdp, a, s_prime), obs)
-                            @deb("p_z = $p_z")
-                            for (next, prob) in node.edges[a][obs]
-                                if !haskey(controller.nodes, next.id)
-                                    error("Node $(next.id) not present in nodes")
+    #dictionary used for recompacting ids
+    temp_id_j = Dict{Int64, Int64}()
+    for (node_id, node) in nodes_j
+        temp_id_j[node_id] = length(temp_id_j)+1
+    end
+
+    #compute coefficients for sum(a)[R(s|a)*P(a|n)+gamma*sum(z, n', s')[P(s'|s,a)*P(z|s',a)*P(a|n)*P(n'|z)*V(nz, s')]]
+    for (ni_id, ni) in nodes
+        #M is the coefficient matrix (form x1 = a2x2+...+anxn+b)
+        #b is the constant term vector
+        #variables are all pairs of n,s
+        for s_index in 1:n_states
+            s = states[s_index]
+            for (nj_id, nj) in nodes
+                M[s_index, temp_id_j[nj_id], temp_id[ni_id], s_index, temp_id_j[nj_id], temp_id[ni_id]] +=1
+                for (ai, p_ai) in ni.actionProb
+                    #@deb("ai = $ai")
+                    println("ai = $ai")
+                    for (aj, p_aj) in nj.actionProb
+                        #@deb("aj = $aj")
+                        println("aj = $aj")
+                        action_dict = Dict{Agent, Any}(IPOMDPs.agent(ipomdp) => ai, IPOMDPs.agent(emulated_frames(ipomdp)[1]) => aj)
+                        r = IPOMDPs.reward(ipomdp, IPOMDPs.IS(s, Vector{Model}(undef, 0)), action_dict)
+                        #@deb("r = $s")
+                        println("r = $r")
+                        b[s_index, temp_id_j[nj_id], temp_id[ni_id]] = p_ai * p_aj * r
+                        for (zi, obs_dict_i) in ni.edges[ai]
+                            println("zi = $zi")
+                            for s_prime_index in 1:n_states
+                                s_prime = states[s_prime_index]
+                                println("s_prime = $s_prime")
+                                transition_i = POMDPModelTools.pdf(IPOMDPs.transition(ipomdp, s, action_dict), s_prime)
+                                observation_i = POMDPModelTools.pdf(IPOMDPs.observation(ipomdp, s, action_dict), zi)
+                                println(transition_i)
+                                println(observation_i)
+                                for (zj, obs_dict_j) in nj.edges[aj]
+                                    println("zj = $zj")
+                                    observation_j = POMDPModelTools.pdf(IPOMDPs.observation(ipomdp, s, action_dict), zj)
+                                    for (n_prime_j, prob_j) in nj.edges[aj][zj]
+                                        for (n_prime_i, prob_i) in ni.edges[ai][zi]
+                                            M[s_index, temp_id_j[nj_id], temp_id[ni_id], s_prime_index, temp_id_j[n_prime_j.id], temp_id[n_prime_i.id]] -= p_ai * p_aj * IPOMDPs.discount(ipomdp) * transition_i * observation_i * observation_j * prob_j * prob_i
+                                        end
+                                    end
                                 end
-                                M[composite_index([temp_id[n_id], s_index],[n_nodes, n_states]), composite_index([temp_id[next.id], s_prime_index],[n_nodes,n_states])]-= POMDPs.discount(pomdp)*p_s_prime*p_z*p_a_n*prob
-                                @deb("M[$n_id, $s][$(next.id), $s_prime] = gamma=$(POMDPs.discount(pomdp))*ps'=$p_s_prime*pz=$p_z*pa=$p_a_n*pn'=$prob = $(M[composite_index([temp_id[n_id], s_index],[n_nodes, n_states]), composite_index([temp_id[next.id], s_prime_index],[n_nodes,n_states])])")
                             end
                         end
                     end
                 end
             end
         end
-        @deb("M = $M")
-        @deb("b = $b")
-        res = M \ b
-        #copy respective value functions in nodes
-        for (n_id, node) in nodes
-            node.value = copy(res[(temp_id[n_id]-1)*n_states+1 : temp_id[n_id]*n_states])
-            @deb("Value vector of node $n_id = $(nodes[n_id].value)")
-        end
+    end
+    M_2d = reshape(M,n_states* n_nodes_j* n_nodes, n_states* n_nodes_j* n_nodes)
+    b_1d = reshape(b, n_states* n_nodes_j* n_nodes)
+    res_1d = M_2d \ b_1d
+    res = reshape(res_1d, n_states, n_nodes_j, n_nodes)
+    #copy respective value functions in nodes
+    for (n_id, node) in nodes
+        node.value = copy(res[:, :, temp_id[n_id]])
+        #@deb("Value vector of node $n_id = $(nodes[n_id].value)")
+    end
 end
