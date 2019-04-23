@@ -25,7 +25,7 @@ IBPIPolicyUtils:
 		actionProb::Dict{A, Float64}
 		#action -> observation -> node -> prob
 		edges::Dict{A, Dict{W, Dict{Node, Float64}}}
-		value::Vector{Float64}
+		value::Array{Float64}
 		#needed to efficiently redirect edges during pruning
 		#srcNode -> vectors of dictionaries that contains edge to this node
 		incomingEdgeDicts::Dict{Node, Vector{Dict{Node, Float64}}}
@@ -777,7 +777,7 @@ IBPIPolicyUtils:
 						p_a_n = node.actionProb[a]
 						b[composite_index([temp_id[n_id], s_index],[n_nodes, n_states])] = POMDPs.reward(pomdp, s, a)*p_a_n
 						@deb("b($n_id, $s) = $(POMDPs.reward(pomdp, s, a)*p_a_n)")
-						M[composite_index([temp_id[n_id], s_index],[n_nodes, n_states]), composite_index([temp_id[n_id], s_index],[n_nodes, n_states])] = 1
+						M[composite_index([temp_id[n_id], s_index],[n_nodes, n_states]), composite_index([temp_id[n_id], s_index],[n_nodes, n_states])] += 1
 						@deb("M[$n_id, $s][$n_id, $s] = 1")
 						s_primes = POMDPs.transition(pomdp,s,a).vals
 						possible_obs = keys(node.edges[a])  #only consider observations possible from current node/action combo
