@@ -57,9 +57,10 @@ function evaluate!(controller::Controller{A,W},  controller_j::Controller{A, W},
         temp_id[node_id] = length(temp_id)+1
     end
 
-    #dictionary used for recompacting ids
+    #dictionary used for recompacting ids -> they are sorted!
+    #quick fix to have the values in some order
     temp_id_j = Dict{Int64, Int64}()
-    for (node_id, node) in nodes_j
+    for node_id in sort(collect(keys(nodes_j)))
         temp_id_j[node_id] = length(temp_id_j)+1
     end
 
@@ -74,27 +75,27 @@ function evaluate!(controller::Controller{A,W},  controller_j::Controller{A, W},
                 M[s_index, temp_id_j[nj_id], temp_id[ni_id], s_index, temp_id_j[nj_id], temp_id[ni_id]] +=1
                 for (ai, p_ai) in ni.actionProb
                     #@deb("ai = $ai")
-                    println("ai = $ai")
+                    @deb("ai = $ai")
                     for (aj, p_aj) in nj.actionProb
                         #@deb("aj = $aj")
-                        println("aj = $aj")
+                        @deb("aj = $aj")
                         action_dict = Dict{Agent, Any}(IPOMDPs.agent(ipomdp) => ai, IPOMDPs.agent(emulated_frames(ipomdp)[1]) => aj)
                         r = IPOMDPs.reward(ipomdp, IPOMDPs.IS(s, Vector{Model}(undef, 0)), action_dict)
                         #@deb("r = $s")
-                        println("r = $r")
+                        @deb("r = $r")
                         b[s_index, temp_id_j[nj_id], temp_id[ni_id]] = p_ai * p_aj * r
                         for (zi, obs_dict_i) in ni.edges[ai]
-                            println("zi = $zi")
+                            @deb("zi = $zi")
                             for s_prime_index in 1:n_states
                                 s_prime = states[s_prime_index]
-                                println("s_prime = $s_prime")
+                                @deb("s_prime = $s_prime")
                                 transition_i = POMDPModelTools.pdf(IPOMDPs.transition(ipomdp, s, action_dict), s_prime)
-                                observation_i = POMDPModelTools.pdf(IPOMDPs.observation(ipomdp, s, action_dict), zi)
-                                println(transition_i)
-                                println(observation_i)
+                                observation_i = POMDPModelTools.pdf(IPOMDPs.observation(ipomdp, s_prime, action_dict), zi)
+                                @deb(transition_i)
+                                @deb(observation_i)
                                 for (zj, obs_dict_j) in nj.edges[aj]
-                                    println("zj = $zj")
-                                    observation_j = POMDPModelTools.pdf(IPOMDPs.observation(ipomdp, s, action_dict), zj)
+                                    @deb("zj = $zj")
+                                    observation_j = POMDPModelTools.pdf(IPOMDPs.observation(ipomdp, s_prime, action_dict), zj)
                                     for (n_prime_j, prob_j) in nj.edges[aj][zj]
                                         for (n_prime_i, prob_i) in ni.edges[ai][zi]
                                             M[s_index, temp_id_j[nj_id], temp_id[ni_id], s_prime_index, temp_id_j[n_prime_j.id], temp_id[n_prime_i.id]] -= p_ai * p_aj * IPOMDPs.discount(ipomdp) * transition_i * observation_i * observation_j * prob_j * prob_i
