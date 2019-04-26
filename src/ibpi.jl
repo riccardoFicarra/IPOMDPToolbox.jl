@@ -1,20 +1,27 @@
-function init_controllers(ipomdp::IPOMDP{S,A,W}, maxlevel::Int64, force::Int64) where {S, A, W}
-    #hardcoded for now
-    agents = [agent(ipomdp), agent(ipomdp)]
-    controllers = Dict{Int64, Controller{A, W}}()
-    for i in 0:maxlevel
-        l = maxlevel-i
-        #alternate between agent I and J starting with I
-        agent = agents[i%2+1]
-        controller = Controller(l, agent, force)
+#include("./agents.jl")
+
+
+mutable struct InteractiveController{S, A, W} <: AbstractController
+	level::Int64
+	ipomdp::IPOMDP{S, A, W}
+	nodes::Dict{Int64, Node{A, W}}
+	maxId::Int64
+end
+
+function init_controllers(ipomdp::IPOMDP{S,A,W}, pomdp::POMDP{A, W},maxlevel::Int64, force::Int64) where {S, A, W}
+    #for now i assume i modeling another agent same as him.
+    controllers = Dict{Int64, AbstractController}()
+    for l in maxlevel:-1:1
+        controller = InteractiveController(l, ipomdp, force)
         controllers[l] = controller
     end
+	controllers[0] = Controller(0, pomdp, force)
     return controllers
 end
 
-function Controller(level::Int64, agent::Agent{S, A, W}, force::Int64) where {S, A, W}
-    newNode = InitialNode(actions_agent(agent), observations_agent(agent), force)
-    Controller{A, W}(level, agent, Dict(1 => newNode), 1)
+function InteractiveController(level::Int64, ipomdp::IPOMDP{S, A, W}, force::Int64) where {S, A, W}
+    newNode = InitialNode(actions_agent(ipomdp), observations_agent(ipomdp), force)
+    return InteractiveController{S, A, W}(level, ipomdp, Dict(1 => newNode), 1)
 end
 #no need to init value vectors here, they will be set by evaluate.
 function InitialNode(actions::Vector{A}, observations::Vector{W}, force::Int64) where {S, A, W}
@@ -38,14 +45,15 @@ function InitialNode(actions::Vector{A}, observations::Vector{W}, force::Int64) 
         n.value = []
         return n
 end
-
-function evaluate!(controller::Controller{A,W},  controller_j::Controller{A, W}, ipomdp::IPOMDP{S, A, W},) where {S, A, W}
-
+# interactive -> interactive version
+function evaluate!(controller::InteractiveController{A,W},  controller_j::InteractiveController{A, W}) where {S, A, W}
+	ipomdp_i = controller.ipomdp
+	ipomdp_j = controller_j.ipomdp
     nodes = controller.nodes
     n_nodes = length(controller.nodes)
     nodes_j = controller_j.nodes
     n_nodes_j = length(nodes_j)
-    states = IPOMDPs.states(ipomdp)
+    states = IPOMDPs.states(ipomdp_i)
     n_states = length(states)
     #M[s, nj, ni, s', nj', ni']
     M = zeros(n_states, n_nodes_j, n_nodes, n_states, n_nodes_j, n_nodes)
@@ -79,8 +87,7 @@ function evaluate!(controller::Controller{A,W},  controller_j::Controller{A, W},
                     for (aj, p_aj) in nj.actionProb
                         #@deb("aj = $aj")
                         @deb("aj = $aj")
-                        action_dict = Dict{Agent, Any}(IPOMDPs.agent(ipomdp) => ai, IPOMDPs.agent(emulated_frames(ipomdp)[1]) => aj)
-                        r = IPOMDPs.reward(ipomdp, IPOMDPs.IS(s, Vector{Model}(undef, 0)), action_dict)
+                        r = IPOMDPs.reward(ipomdp_i, s, ai, aj)
                         #@deb("r = $s")
                         @deb("r = $r")
                         b[s_index, temp_id_j[nj_id], temp_id[ni_id]] = p_ai * p_aj * r
@@ -89,16 +96,16 @@ function evaluate!(controller::Controller{A,W},  controller_j::Controller{A, W},
                             for s_prime_index in 1:n_states
                                 s_prime = states[s_prime_index]
                                 @deb("s_prime = $s_prime")
-                                transition_i = POMDPModelTools.pdf(IPOMDPs.transition(ipomdp, s, action_dict), s_prime)
-                                observation_i = POMDPModelTools.pdf(IPOMDPs.observation(ipomdp, s_prime, action_dict), zi)
+                                transition_i = POMDPModelTools.pdf(IPOMDPs.transition(ipomdp_i, s, ai, aj), s_prime)
+                                observation_i = POMDPModelTools.pdf(IPOMDPs.observation(ipomdp_i, s_prime, ai, aj), zi)
                                 @deb(transition_i)
                                 @deb(observation_i)
                                 for (zj, obs_dict_j) in nj.edges[aj]
                                     @deb("zj = $zj")
-                                    observation_j = POMDPModelTools.pdf(IPOMDPs.observation(ipomdp, s_prime, action_dict), zj)
+                                    observation_j = POMDPModelTools.pdf(IPOMDPs.observation(ipomdp_j, s_prime, ai, aj), zj)
                                     for (n_prime_j, prob_j) in nj.edges[aj][zj]
                                         for (n_prime_i, prob_i) in ni.edges[ai][zi]
-                                            M[s_index, temp_id_j[nj_id], temp_id[ni_id], s_prime_index, temp_id_j[n_prime_j.id], temp_id[n_prime_i.id]] -= p_ai * p_aj * IPOMDPs.discount(ipomdp) * transition_i * observation_i * observation_j * prob_j * prob_i
+                                            M[s_index, temp_id_j[nj_id], temp_id[ni_id], s_prime_index, temp_id_j[n_prime_j.id], temp_id[n_prime_i.id]] -= p_ai * p_aj * IPOMDPs.discount(ipomdp_i) * transition_i * observation_i * observation_j * prob_j * prob_i
                                         end
                                     end
                                 end
@@ -352,4 +359,137 @@ function partial_backup!(controller::IPOMDPToolbox.Controller{A, W}, controller_
 		tangent_b[n_id] =  [-1*dual(constraint_list[s]) for s in 1:n_states]
 	end
 	return changed, tangent_b
+end
+
+function escape_optima_standard!(controller::Controller{A, W}, pomdp::POMDP{A, W}, tangent_b::Dict{Int64, Vector{Float64}}; add_all=false, minval = 0.0) where {A, W}
+	#@deb("$tangent_b")
+	nodes = controller.nodes
+	n_nodes = length(keys(controller.nodes))
+	states = POMDPs.states(pomdp)
+	n_states = POMDPs.n_states(pomdp)
+	actions = POMDPs.actions(pomdp)
+	n_actions = POMDPs.n_actions(pomdp)
+	observations = POMDPs.observations(pomdp)
+	n_observations = POMDPs.n_observations(pomdp)
+	if length(tangent_b) == 0
+		error("tangent_b was empty!")
+	end
+#=
+	debug[] = false
+	backed_up_controller = deepcopy(controller)
+	full_backup_stochastic!(backed_up_controller, pomdp)
+	debug[] = true
+	if debug[]
+		for (id,node) in backed_up_controller.nodes
+			println("$id $(node.value)")
+		end
+	end
+	=#
+	old_deb = debug[]
+	debug[] = false
+
+	new_nodes = full_backup_generate_nodes(controller, pomdp, minval)
+	#new_nodes = collect(values(backed_up_controller.nodes))
+
+	debug[] = old_deb
+	#if debug[] == true
+	#	println("new_nodes:")
+	#	for node in new_nodes
+	#		println(node)
+	#	end
+	#end
+
+
+	escaped = false
+	reachable_b = Set{Vector{Float64}}()
+	for (id, start_b) in tangent_b
+		#id = collect(keys(tangent_b))[1]
+		#start_b = tangent_b[id]
+		@deb("$id - >$start_b")
+		for a in keys(nodes[id].actionProb)
+			for z in observations
+				new_b = Vector{Float64}(undef, n_states)
+				normalize = 0.0
+				for s_prime_index in 1:n_states
+					s_prime = states[s_prime_index]
+					sum_s = 0.0
+					p_z = POMDPModelTools.pdf(POMDPs.observation(pomdp, a, s_prime), z)
+					for s_index in 1:n_states
+						s = states[s_index]
+						p_s_prime =POMDPModelTools.pdf(POMDPs.transition(pomdp, s, a), s_prime)
+						sum_s+= p_s_prime*start_b[s_index]
+					end
+					new_b[s_prime_index] = p_z * sum_s
+					normalize += p_z * sum_s
+				end
+				for i in 1:n_states
+					new_b[i] = new_b[i] / normalize
+				end
+				@deb("from belief $start_b action $a and obs $z -> $new_b")
+				push!(reachable_b, new_b)
+				#find the value of the current controller in the reachable belief state
+				best_old_node = nothing
+				best_old_value = 0.0
+				for (id,old_node) in controller.nodes
+					temp_value = new_b' * old_node.value
+					if best_old_node == nothing || best_old_value < temp_value
+						best_old_node = old_node
+						best_old_value = temp_value
+					end
+				end
+				#find the value of the backed up controller in the reachable belief state
+				best_new_node = nothing
+				best_new_value = 0.0
+				for new_node in new_nodes
+					new_value = new_b' * new_node.value
+					if best_new_node == nothing || best_new_value < new_value
+						best_new_node = new_node
+						best_new_value = new_value
+					end
+				end
+				if best_new_value - best_old_value > minval
+					@deb("in $new_b node $(best_new_node.id) has $best_new_value > $best_old_value")
+					reworked_node = rework_node(controller, best_new_node)
+					controller.nodes[reworked_node.id] = reworked_node
+					controller.maxId+=1
+					@deb("Added node $(reworked_node.id)")
+
+					#experimental: redirect edge of chosen node to newly added nodes
+					#=
+					old_prob = 1.0 #nodes[id].edges[a][z][best_old_node]
+					nodes[id].edges[a][z] = Dict(reworked_node => old_prob)
+					@deb("edge redirected from $(best_old_node.id) to $(reworked_node.id)")
+					=#
+
+					if debug[] == true
+						println(controller.nodes[reworked_node.id])
+					end
+					escaped = true
+				end
+			end
+		end
+		if escaped && !add_all
+			return true
+		end
+	end
+	#@deb("$reachable_b")
+	return escaped
+end
+
+function rework_node(controller::Controller{A, W}, new_node::Node{A, W}) where {A, W}
+		id = controller.maxId+1
+		actionProb = copy(new_node.actionProb)
+		value = copy(new_node.value)
+		edges = Dict{A, Dict{W, Dict{Node, Float64}}}()
+		for (a, obs_dict) in new_node.edges
+			edges[a] = Dict{W, Dict{Node, Float64}}()
+			for (z, node_dict) in obs_dict
+				edges[a][z] = Dict{Node,Float64}()
+				for (node, prob) in node_dict
+					current_controller_node = controller.nodes[node.id]
+					edges[a][z][current_controller_node] = prob
+				end
+			end
+		end
+		return Node(id, actionProb,edges, value, Dict{Node, Vector{Dict{Node, Float64}}}())
 end

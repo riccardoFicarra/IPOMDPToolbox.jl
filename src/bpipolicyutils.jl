@@ -148,22 +148,18 @@ IBPIPolicyUtils:
 	end
 
 
-	mutable struct Controller{A, W}
+	mutable struct Controller{A, W} <: AbstractController
 		level::Int64
-		agent::Any
+		pomdp::POMDP{A, W}
 		nodes::Dict{Int64, Node{A, W}}
 		maxId::Int64
 	end
 	"""
 	Initialize a controller with the initial node, start id counter from 2
 	"""
-	function Controller(level::Int64, agent::Symbol, pomdp::POMDP{A,W}, force::Int64) where {A, W}
+	function Controller(level::Int64, pomdp::POMDP{A,W}, force::Int64) where {A, W}
 		newNode = InitialNode(pomdp, force)
-		Controller{A, W}(level, agent, Dict(1 => newNode), 1)
-	end
-
-	function Controller(pomdp::POMDP{A,W}, force::Int64) where {A, W}
-		return Controller(0,:I, pomdp, force)
+		Controller{A, W}(level, pomdp, Dict(1 => newNode), 1)
 	end
 
 	function optimal_tiger_controller(pomdp::POMDP{A, W}) where {A, W}
@@ -265,6 +261,14 @@ IBPIPolicyUtils:
 		end
 		return controller
 	end
+
+	struct BPIPolicy{A, W}
+        controller::Controller{A, W}
+    end
+
+    function BPIPolicy(pomdp::POMDP{A, W}, force::Int64) where {A, W}
+        BPIPolicy(Controller(pomdp, force))
+    end
 
 	function build_node(node_id::Int64, actions::Vector{A}, actionProb::Vector{Float64}, observations::Vector{Vector{W}}, observation_prob::Vector{Vector{Float64}}, next_nodes::Vector{Vector{Node{A,W}}}, value::Vector{Float64}) where {A, W}
 		if length(actions) != length(observations) || length(actions) != length(actionProb) || length(actions) != length(observation_prob) || length(actions) != length(next_nodes)

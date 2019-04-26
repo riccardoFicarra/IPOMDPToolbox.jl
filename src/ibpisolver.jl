@@ -4,6 +4,9 @@ ibpisolver.jl:
 - Author: fiki9
 - Date: 2019-02-11
 =#
+
+abstract type AbstractController end
+
     include("bpipolicyutils.jl")
     include("ibpi.jl")
     struct IBPISolver
@@ -11,24 +14,18 @@ ibpisolver.jl:
         timeout::Float64
     end
 
+
     struct IBPIPolicy{S, A, W}
         #so far it's controller level -> controller
         #level 0 is the pompdp, max level is the chosen agent controller
-        controllers::Dict{Int64, Controller{A, W}}
+        controllers::Dict{Int64, AbstractController}
     end
 
-    function IBPIPolicy(ipomdp::IPOMDP{S, A, W}, maxlevel::Int64; force = 0) where {S, A, W}
-        controllers = init_controllers(ipomdp, maxlevel, force)
+    function IBPIPolicy(ipomdp::IPOMDP{S, A, W}, pomdp::POMDP{A, W}, maxlevel::Int64; force = 0) where {S, A, W}
+        controllers = init_controllers(ipomdp, pomdp, maxlevel, force)
         return IBPIPolicy{S, A, W}(controllers)
     end
 
-    struct BPIPolicy{A, W}
-        controller::Controller{A, W}
-    end
-
-    function BPIPolicy(pomdp::POMDP{A, W}, force::Int64) where {A, W}
-        BPIPolicy(Controller(pomdp, force))
-    end
 
     function IPOMDPs.Model(pomdp::POMDP;depth=0, solvertype = :IBPI, force = 0)
         # Timeout
