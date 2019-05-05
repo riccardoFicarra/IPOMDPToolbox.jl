@@ -270,7 +270,7 @@ IBPIPolicyUtils:
         BPIPolicy(Controller(pomdp, force))
     end
 
-	function build_node(node_id::Int64, actions::Vector{A}, actionProb::Vector{Float64}, observations::Vector{Vector{W}}, observation_prob::Vector{Vector{Float64}}, next_nodes::Vector{Vector{Node{A,W}}}, value::Vector{Float64}) where {A, W}
+	function build_node(node_id::Int64, actions::Vector{A}, actionProb::Vector{Float64}, observations::Vector{Vector{W}}, observation_prob::Vector{Vector{Float64}}, next_nodes::Vector{Vector{Node{A,W}}}, value::Array{Float64}) where {A, W}
 		if length(actions) != length(observations) || length(actions) != length(actionProb) || length(actions) != length(observation_prob) || length(actions) != length(next_nodes)
 			error("Length of action-level arrays are different")
 		end
@@ -296,7 +296,7 @@ IBPIPolicyUtils:
 		end
 		return Node(node_id, d_actionprob, edges, value, Dict{Node, Vector{Dict{Node, Float64}}}())
 	end
-	function build_node(node_id::Int64, action::A, observation::W, next_node::Node{A, W}, value::Vector{Float64}) where {A, W}
+	function build_node(node_id::Int64, action::A, observation::W, next_node::Node{A, W}, value::Array{Float64}) where {A, W}
 		actionprob = Dict{A, Float64}(action => 1.0)
 		edges = Dict{A, Dict{W, Dict{Node, Float64}}}(action => Dict{W, Dict{Node, Float64}}(observation => Dict{Node, Float64}(next_node=> 1.0)))
 		return Node(node_id, actionprob, edges, value, Dict{Node, Vector{Dict{Node, Float64}}}())
@@ -504,7 +504,7 @@ IBPIPolicyUtils:
 		Filtering function to remove dominated nodes.
 		Minval is the minimum probability that an edge can have. values below minval are treated as zero, values above 1-minval are treated as 1
 	"""
-	function filterNodes(nodes::Set{IPOMDPToolbox.Node}, minval::Float64)
+	function filterNodes(nodes::Set{Node}, minval::Float64)
 		@deb("Called filterNodes, length(nodes) = $(length(nodes))")
 		if length(nodes) == 0
 			error("called FilterNodes on empty set")
@@ -624,7 +624,7 @@ IBPIPolicyUtils:
 		Minval is the minimum probability that an edge can have. values below minval are treated as zero, values above 1-minval are treated as 1
 		This version of filterNodes analyzes new nodes before old nodes to avoid rewiring in case of nodes with equal values
 	"""
-	function filterNodes(nodes::OrderedSet{IPOMDPToolbox.Node}, minval::Float64)
+	function filterNodes(nodes::OrderedSet{Node}, minval::Float64)
 		@deb("Called filterNodes, length(nodes) = $(length(nodes))")
 		if length(nodes) == 0
 			error("called FilterNodes on empty set")
@@ -633,7 +633,7 @@ IBPIPolicyUtils:
 			#if there is only one node it is useless to try and prune anything
 			return nodes
 		end
-	    new_nodes = Dict{Int64, IPOMDPToolbox.Node}()
+	    new_nodes = Dict{Int64, Node}()
 	    #careful, here dict key != node.id!!!!
 	    node_counter = 1
 	    for node in nodes
@@ -1214,7 +1214,7 @@ function escape_optima_standard!(controller::Controller{A, W}, pomdp::POMDP{A, W
 	return escaped
 end
 
-function rework_node(controller::Controller{A, W}, new_node::Node{A, W}) where {A, W}
+function rework_node(controller::AbstractController, new_node::Node{A, W}) where {A, W}
 		id = controller.maxId+1
 		actionProb = copy(new_node.actionProb)
 		value = copy(new_node.value)

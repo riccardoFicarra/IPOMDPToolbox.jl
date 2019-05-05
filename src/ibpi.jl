@@ -209,462 +209,6 @@ function evaluate!(controller::InteractiveController{A,W},  controller_j::Contro
     end
 end
 
-#=
-function build_node(node_id::Int64, action::A, observation::W, next_node::Node{A, W}, value::Vector{Float64}) where {A, W}
-	actionprob = Dict{A, Float64}(action => 1.0)
-	edges = Dict{A, Dict{W, Dict{Node, Float64}}}(action => Dict{W, Dict{Node, Float64}}(observation => Dict{Node, Float64}(next_node=> 1.0)))
-	return Node(node_id, actionprob, edges, value, Dict{Node, Vector{Dict{Node, Float64}}}())
-end
-
-function full_backup_generate_nodes(controller::Controller{A, W}, pomdp::POMDP{A, W}, minval::Float64) where {A, W}
-	minval = 1e-10
-	nodes = controller.nodes
-	observations = POMDPs.observations(pomdp)
-	#tentative from incpruning
-	#prder of it -> actions, obs
-	#for each a, z produce n new nodes (iterate on nodes)
-	#for each node iterate on s and s' to produce a new node
-	#new node is tied to old node?, action a and obs z
-	#with stochastic pruning we get the cis needed
-	new_nodes = Set{Node}()
-	#new nodes counter used mainly for debugging, counts backwards (gets overwritten eventually)
-	new_nodes_counter = -1
-	for a in POMDPs.actions(pomdp)
-		#this data structure has the set of nodes for each observation (new_nodes_z[obs] = Set{Nodes} generated from obs)
-		new_nodes_z = Vector{Set{Node}}(undef, length(observations))
-		for obs_index in 1:length(observations)
-			obs = observations[obs_index]
-			#this set contains all new nodes for action, obs for all nodes
-			new_nodes_a_z = Set{Node}()
-			for (n_id, node) in controller.nodes
-				new_v = node_value(node, a, obs, pomdp)
-				#do not set node id for now
-				#new_node = build_node(new_nodes_counter, [a], [1.0], [[obs]], [[1.0]], [[node]], new_v)
-				new_node = build_node(new_nodes_counter, a, obs, node, new_v)
-				push!(new_nodes_a_z, new_node)
-				new_nodes_counter -=1
-			end
-			if IPOMDPToolbox.debug[] == true
-				println("New nodes created:")
-				for node in new_nodes_a_z
-					println(node)
-				end
-			end
-			new_nodes_z[obs_index] = filterNodes(new_nodes_a_z, minval)
-		end
-		#set that contains all nodes generated from action a after incremental pruning
-		new_nodes_counter, new_nodes_a = incprune(new_nodes_z, new_nodes_counter, minval)
-		union!(new_nodes, new_nodes_a)
-	end
-	#all new nodes, final filtering
-	return filterNodes(new_nodes, minval)
-end
-"""
-Perform a full backup operation according to Pourpart and Boutilier's paper on Bounded finite state controllers
-TODO: make this thing actually do a backup
-"""
-function full_backup_stochastic!(controller::Controller{A, W}, pomdp::POMDP{A, W}) where {A, W}
-	minval = 1e-10
-	nodes = controller.nodes
-	observations = POMDPs.observations(pomdp)
-	#tentative from incpruning
-	#prder of it -> actions, obs
-	#for each a, z produce n new nodes (iterate on nodes)
-	#for each node iterate on s and s' to produce a new node
-	#new node is tied to old node?, action a and obs z
-	#with stochastic pruning we get the cis needed
-	new_nodes = full_backup_generate_nodes(controller, pomdp, minval)
-	#before performing filtering with the old nodes update incomingEdge structure of old nodes
-	#also assign permanent ids
-	nodes_counter = controller.maxId+1
-	for new_node in new_nodes
-		@deb("Node $(new_node.id) becomes node $(nodes_counter)")
-		new_node.id = nodes_counter
-		if debug[] == true
-			println(new_node)
-		end
-		nodes_counter+=1
-		for (action, observation_map) in new_node.edges
-			for (observation, edge_map) in observation_map
-				#@deb("Obs $observation")
-				for (next, prob) in edge_map
-					#@deb("adding incoming edge from $(new_node.id) to $(next.id) ($action, $observation)")
-					if haskey(next.incomingEdgeDicts, new_node)
-						#@deb("it was the $(length(next.incomingEdgeDicts[new_node])+1)th")
-						push!(next.incomingEdgeDicts[new_node], edge_map)
-					else
-						#@deb("it was the first edge for $(new_node.id)")
-						next.incomingEdgeDicts[new_node] = [edge_map]
-					end
-				end
-			end
-		end
-	end
-	new_max_id = nodes_counter-1
-	#add new nodes to controller
-	#i want to have the new nodes first, so in case there are two nodes with identical value the newer node is pruned and we skip rewiring
-	#no need to sort, just have new nodes examined before old nodes
-	#the inner union is needed to have an orderedset as first parameter, as the result of union({ordered}, {not ordered}) = {ordered}
-	orderedset = union(union(OrderedSet{Node}(), new_nodes), Set{Node}(oldnode for oldnode in values(nodes)))
-	all_nodes = filterNodes(orderedset, minval)
-	new_controller_nodes = Dict{Int64, Node}()
-	for node in all_nodes
-		#add nodes to the controller
-		new_controller_nodes[node.id] = node
-	end
-	controller.nodes = new_controller_nodes
-	controller.maxId = new_max_id
-end
-
-#using eq τ(n, a, z) from incremental pruning paper
-function node_value(node::Node{A, W}, action::A, observation::W, pomdp::POMDP) where {A, W}
-	states = POMDPs.states(pomdp)
-	n_states = length(states)
-	n_observations = POMDPs.n_observations(pomdp)
-	γ = POMDPs.discount(pomdp)
-	new_V = Vector{Float64}(undef, n_states)
-	for s_index in 1:n_states
-		state = states[s_index]
-		transition_dist = POMDPs.transition(pomdp, state, action)
-		#for efficiency only iterate in s' that can be originated from s, a
-		#else the p_s_prime would be zero
-		sum = 0.0
-		for s_prime in transition_dist.vals
-			s_prime_index = POMDPs.stateindex(pomdp, s_prime)
-			p_s_prime = POMDPModelTools.pdf(transition_dist, s_prime)
-			p_obs = POMDPModelTools.pdf(POMDPs.observation(pomdp, action, s_prime), observation)
-			@deb("$action, $state, $observation, $s_prime")
-			@deb("$(node.value[s_prime_index]) * $(p_obs) * $(p_s_prime)")
-			sum+= node.value[s_prime_index] * p_obs * p_s_prime
-		end
-		new_V[s_index] = (1/n_observations) * POMDPs.reward(pomdp, state, action) + γ*sum
-	end
-	return new_V
-end
-
-"""
-Perform incremental pruning on a set of nodes by computing the cross sum and filtering every time
-Follows Cassandra et al paper
-"""
-function incprune(nodeVec::Vector{Set{Node}}, startId::Int64, minval::Float64)
-	@deb("Called incprune, startId = $startId")
-	id = startId
-	id, xs = xsum(nodeVec[1], nodeVec[2], id)
-	res = filterNodes(xs, minval)
-	#=if debug[] == true
-		for node in res
-			println(node)
-		end
-	end
-	=#
-	for i = 3:length(nodeVec)
-		id, xs = xsum(nodeVec[1], nodeVec[2], id)
-		res = filterNodes(xs, minval)
-		#@deb("Length $i = $(length(nodeVec[i]))")
-	end
-	#@deb("returned ID = $id")
-	return id, res
-end
-
-function xsum(A::Set{Node}, B::Set{Node}, startId::Int64)
-	@deb("Called xsum, startId = $startId")
-	X = Set{Node}()
-	id = startId
-	for a in A, b in B
-		#each of the newly generated nodes only has one action!
-		@assert length(a.actionProb) == length(b.actionProb) == 1 "more than one action in freshly generated node"
-		a_action = collect(keys(a.actionProb))[1]
-		b_action = collect(keys(b.actionProb))[1]
-		@assert a_action == b_action "action mismatch"
-		c = mergeNode(a, b, a_action, id)
-		if IPOMDPToolbox.debug[] == true
-			println("nodes merged: $id<- $(a.id), $(b.id)")
-			println(c)
-		end
-		id-=1
-		push!(X, c)
-	end
-	#@deb("returned id = $id")
-	return id, X
-end
-
-function mergeNode(a::Node{A, W}, b::Node{A, W}, action::A, id::Int64) where {A, W}
-	a_observation_map = a.edges[action]
-	b_observation_map = b.edges[action]
-
-	#There is no way we have repeated observation because set[obs]
-	#only contains nodes with obs
-	actionProb = Dict{A, Float64}(action => 1.0)
-	edges = Dict{A, Dict{W, Dict{Node, Float64}}}(action => Dict{W, Dict{Node, Float64}}())
-	for (obs, node_map) in a_observation_map
-		edges[action][obs] = Dict{Node, Float64}()
-		for (node, prob) in node_map
-			edges[action][obs][node] = prob
-		end
-	end
-	for (obs, node_map) in b_observation_map
-		if haskey(edges[action], obs)
-			error("Observation already present")
-		end
-		edges[action][obs] = Dict{Node, Float64}()
-		for (node, prob) in node_map
-			edges[action][obs][node] = prob
-		end
-	end
-	return Node(id, actionProb, edges, a.value+b.value, Dict{Node, Vector{Dict{Node, Float64}}}())
-end
-
-"""
-	Filtering function to remove dominated nodes.
-	Minval is the minimum probability that an edge can have. values below minval are treated as zero, values above 1-minval are treated as 1
-"""
-function filterNodes(nodes::Set{IPOMDPToolbox.Node}, minval::Float64)
-	@deb("Called filterNodes, length(nodes) = $(length(nodes))")
-	if length(nodes) == 0
-		error("called FilterNodes on empty set")
-	end
-	if length(nodes) == 1
-		#if there is only one node it is useless to try and prune anything
-		return nodes
-	end
-	new_nodes = Dict{Int64, IPOMDPToolbox.Node}()
-	#careful, here dict key != node.id!!!!
-	node_counter = 1
-	for node in nodes
-		new_nodes[node_counter] = node
-		node_counter+=1
-	end
-	n_states = length(new_nodes[1].value)
-	for (temp_id, n) in new_nodes
-		#remove the node we're testing from the node set (else we always get that a node dominates itself!)
-		if length(new_nodes) == 1
-			#only one node in the set, no reason to keep pruning
-			break;
-		end
-		pop!(new_nodes, temp_id)
-		#@deb("$(length(new_nodes))")
-		lpmodel = JuMP.Model(with_optimizer(GLPK.Optimizer))
-		#define variables for LP. c(i)
-		@variable(lpmodel, c[i=keys(new_nodes)] >= 0)
-		#e to maximize
-		@variable(lpmodel, e)
-		@objective(lpmodel, Max, e)
-		@constraint(lpmodel, con[s_index=1:n_states], n.value[s_index] + e <= sum(c[ni_id]*ni.value[s_index] for (ni_id, ni) in new_nodes))
-		#this constraint is used to avoid having edges with extremely low probability
-		#@constraint(lpmodel, con_small[i=keys(new_nodes)], c[i]*(c[i]-minval) >= 0)
-		#not supported by solver =(
-		@constraint(lpmodel, con_sum, sum(c[i] for i in keys(new_nodes)) == 1)
-		optimize!(lpmodel)
-		if debug[] == true
-			println("node $(n.id) -> eps = $(JuMP.value(e))")
-		end
-		if JuMP.value(e) >= -1e-12
-			#rewiring function here!
-			if debug[] == true
-				for i in keys(new_nodes)
-					print("c$(new_nodes[i].id) = $(JuMP.value(c[i])) ")
-				end
-				println("")
-			end
-			#rewiring starts here!
-			#@deb("Start of rewiring")
-			for (src_node, dict_vect) in n.incomingEdgeDicts
-				#skip rewiring of edges from dominated node
-				if src_node != n
-					#@deb("length of dict_vect = $(length(dict_vect))")
-					for dict in dict_vect
-						#dict[n] is the probability of getting to the dominated node (n)
-						old_prob = dict[n]
-						for (dst_id,dst_node) in new_nodes
-							#remember that dst_id (positive) is != dst_node.id (negative)
-							#add new edges to edges structure
-							v = JuMP.value(c[dst_id])
-							#FIXME hack: sum of cis is no longer 1 (but it is really close)
-							if v >= 1-minval
-								v = 1
-							end
-							if v > minval
-								#@deb("Added edge from node $(src_node.id) to $(dst_node.id)")
-								dict[dst_node] = v*old_prob
-								#update incomingEdgeDicts for new dst node
-								if haskey(dst_node.incomingEdgeDicts, src_node)
-									push!(dst_node.incomingEdgeDicts[src_node], dict)
-								else
-									dst_node.incomingEdgeDicts[src_node] = [dict]
-								end
-							end
-						end
-						#remove edge of dominated node
-						#@deb("Removed edge from node $(src_node.id) to $(n.id)")
-						delete!(dict, n)
-						if length(dict) == 0
-							#only happens if n was the last node pointed by that node for that action/obs pair
-							#and all c[i]s = 0, which is impossible!
-							@deb("length of dict coming from $(src_node.id) == 0 after deletion, removing")
-						end
-					end
-				end
-			end
-			#@deb("End of rewiring")
-			#end of rewiring, do not readd dominated node
-			#remove incoming edge from pointed nodes
-			for (action, observation_map) in n.edges
-				for (observation, edge_map) in observation_map
-					for (next, prob) in edge_map
-						if haskey(next.incomingEdgeDicts, n)
-							#@deb("removed incoming edge vector from $(n.id) to $(next.id) ($action, $observation)")
-							delete!(next.incomingEdgeDicts, n)
-						end
-					end
-				end
-			end
-			if debug[] == true
-				println("Deleting node $(n.id): obj value = $(JuMP.value(e))")
-				println(n)
-			end
-			#set it to nothing just to be sure
-			n = nothing
-		else
-			#if node is not dominated readd it to the dict!
-			new_nodes[temp_id] = n
-		end
-	end
-
-	return Set{IPOMDPToolbox.Node}(node for node in values(new_nodes))
-end
-
-"""
-	Filtering function to remove dominated nodes.
-	Minval is the minimum probability that an edge can have. values below minval are treated as zero, values above 1-minval are treated as 1
-	This version of filterNodes analyzes new nodes before old nodes to avoid rewiring in case of nodes with equal values
-"""
-function filterNodes(nodes::OrderedSet{IPOMDPToolbox.Node}, minval::Float64)
-	@deb("Called filterNodes, length(nodes) = $(length(nodes))")
-	if length(nodes) == 0
-		error("called FilterNodes on empty set")
-	end
-	if length(nodes) == 1
-		#if there is only one node it is useless to try and prune anything
-		return nodes
-	end
-	new_nodes = Dict{Int64, IPOMDPToolbox.Node}()
-	#careful, here dict key != node.id!!!!
-	node_counter = 1
-	for node in nodes
-		new_nodes[node_counter] = node
-		#@deb("temp = $node_counter, id = $(node.id)")
-		node_counter+=1
-	end
-	n_states = length(new_nodes[1].value)
-	#since we know temp_ids are contiguous we can iterate in order
-	#this way new nodes are checked first without need for an ordered dict nor sorting
-	for temp_id in 1:length(new_nodes)
-		n = new_nodes[temp_id]
-		#@deb("temp_id = $temp_id, n.id = $(n.id)")
-		#remove the node we're testing from the node set (else we always get that a node dominates itself!)
-		if length(new_nodes) == 1
-			#only one node in the set, no reason to keep pruning
-			break;
-		end
-		pop!(new_nodes, temp_id)
-		#@deb("$(length(new_nodes))")
-		lpmodel = JuMP.Model(with_optimizer(GLPK.Optimizer))
-		#define variables for LP. c(i)
-		@variable(lpmodel, 0.0 <= c[i=keys(new_nodes)] <= 1.0)
-		#e to maximize
-		@variable(lpmodel, e)
-		@objective(lpmodel, Max, e)
-		@constraint(lpmodel, con[s_index=1:n_states], n.value[s_index] + e <= sum(c[ni_id]*ni.value[s_index] for (ni_id, ni) in new_nodes))
-		@constraint(lpmodel, con_sum, sum(c[i] for i in keys(new_nodes)) == 1)
-		optimize!(lpmodel)
-		if debug[] == true
-			println("node $(n.id) -> eps = $(JuMP.value(e))")
-		end
-		if JuMP.value(e) >= -1e-10
-			#rewiring function here!
-			if debug[] == true
-				for i in keys(new_nodes)
-					print("c$(new_nodes[i].id) = $(JuMP.value(c[i])) ")
-				end
-				println("")
-			end
-			#rewiring starts here!
-			@deb("Start of rewiring")
-			for (src_node, dict_vect) in n.incomingEdgeDicts
-				#skip rewiring of edges from dominated node
-				if src_node != n
-					#@deb("length of dict_vect = $(length(dict_vect))")
-					for dict in dict_vect
-						#dict[n] is the probability of getting to the dominated node (n)
-						old_prob = dict[n]
-						for (dst_id,dst_node) in new_nodes
-							#remember that dst_id (positive) is != dst_node.id (negative)
-							#add new edges to edges structure
-							v = JuMP.value(c[dst_id])
-							if v >= 1-minval
-								v = 1
-							end
-							if v > minval
-								if haskey(dict, dst_node)
-									@deb("updated probability of edge from node $(src_node.id) to $(dst_node.id)")
-									dict[dst_node]+= v*old_prob
-									if dict[dst_node] > 1
-										error("probability > 1 after redirection!")
-									end
-								else
-									@deb("Added edge from node $(src_node.id) to $(dst_node.id)")
-									dict[dst_node] = v*old_prob
-									#update incomingEdgeDicts for new dst node
-									if haskey(dst_node.incomingEdgeDicts, src_node)
-										push!(dst_node.incomingEdgeDicts[src_node], dict)
-									else
-										dst_node.incomingEdgeDicts[src_node] = [dict]
-									end
-								end
-							end
-						end
-						#remove edge of dominated node
-						@deb("Removed edge from node $(src_node.id) to $(n.id)")
-						delete!(dict, n)
-						if length(dict) == 0
-							#only happens if n was the last node pointed by that node for that action/obs pair
-							#and all c[i]s = 0, which is impossible!
-							@deb("length of dict coming from $(src_node.id) == 0 after deletion, removing")
-						end
-					end
-				end
-			end
-			@deb("End of rewiring")
-			#end of rewiring, do not readd dominated node
-			#remove incoming edge from pointed nodes
-			for (action, observation_map) in n.edges
-				for (observation, edge_map) in observation_map
-					for (next, prob) in edge_map
-						if haskey(next.incomingEdgeDicts, n)
-							@deb("removed incoming edge vector from $(n.id) to $(next.id) ($action, $observation)")
-							delete!(next.incomingEdgeDicts, n)
-						end
-					end
-				end
-			end
-			if debug[] == true
-				println("Deleting node $(n.id): obj value = $(JuMP.value(e))")
-				println(n)
-			end
-			#set it to nothing just to be sure
-			n = nothing
-		else
-			#if node is not dominated readd it to the dict!
-			new_nodes[temp_id] = n
-		end
-	end
-
-	return Set{IPOMDPToolbox.Node}(node for node in values(new_nodes))
-end
-=#
-
-
-
 
 function partial_backup!(controller::IPOMDPToolbox.InteractiveController{A, W}, controller_j::IPOMDPToolbox.InteractiveController{A, W}; minval = 0.0, add_one = false, debug_node = 0) where {S, A, W}
 	#this time the matrix form is a1x1+...+anxn = b1
@@ -686,7 +230,7 @@ function partial_backup!(controller::IPOMDPToolbox.InteractiveController{A, W}, 
 	observations_j = observations_agent(ipomdp)
 	n_observations = length(observations_i)
 	#vector containing the tangent belief states for all modified nodes
-	tangent_b = Dict{Int64, Vector{Float64}}()
+	tangent_b = Dict{Int64, Array{Float64}}()
 	#dim = n_nodes*n_actions*n_observations
 	changed = false
 	#M_TR =  zeros(n_actions, n_observations, n_nodes)
@@ -894,23 +438,388 @@ function partial_backup!(controller::IPOMDPToolbox.InteractiveController{A, W}, 
 			end
 		end
 		constraint_list = JuMP.all_constraints(lpmodel, GenericAffExpr{Float64,VariableRef}, MOI.LessThan{Float64})
-		tangent_b[n_id] =  [-1*dual(constraint_list[s]) for s in 1:n_states]
+		tangent_belief = Array{Float64}(undef, n_states, n_nodes_j)
+		for s in 1:n_states
+			for nj in 1:n_nodes_j
+				comp_i = (s-1)*n_nodes_j + nj
+				tangent_belief[s, nj] =  -1*dual(constraint_list[comp_i])
+			end
+		end
+		tangent_b[n_id] = tangent_belief
 	end
 	return changed, tangent_b
 end
 
-function escape_optima_standard!(controller::Controller{A, W}, pomdp::POMDP{A, W}, tangent_b::Dict{Int64, Vector{Float64}}; add_all=false, minval = 0.0) where {A, W}
-	#@deb("$tangent_b")
+#interactive -> non interactive version
+function partial_backup!(controller::IPOMDPToolbox.InteractiveController{A, W}, controller_j::IPOMDPToolbox.Controller{A, W}; minval = 0.0, add_one = false, debug_node = 0) where {S, A, W}
+	#this time the matrix form is a1x1+...+anxn = b1
+	#sum(a,s)[sum(nz)[canz*[R(s,a)+gamma*sum(s')p(s'|s, a)p(z|s', a)v(nz,s')]] -eps = V(n,s)
+	#number of variables is |A||Z||N|+1 (canz and eps)
+	ipomdp = controller.ipomdp
+	pomdp_j = controller_j.pomdp
 	nodes = controller.nodes
-	n_nodes = length(keys(controller.nodes))
-	states = POMDPs.states(pomdp)
-	n_states = POMDPs.n_states(pomdp)
-	actions = POMDPs.actions(pomdp)
-	n_actions = POMDPs.n_actions(pomdp)
-	observations = POMDPs.observations(pomdp)
-	n_observations = POMDPs.n_observations(pomdp)
+	nodes_j = controller_j.nodes
+	n_nodes = length(nodes)
+	#@deb(n_nodes)
+	n_nodes_j = length(nodes_j)
+	states = IPOMDPs.states(ipomdp)
+	n_states = length(states)
+	actions_i = actions_agent(ipomdp)
+	n_actions = length(actions_i)
+	actions_j = POMDPs.actions(pomdp_j)
+	observations_i = observations_agent(ipomdp)
+	observations_j = observations(pomdp_j)
+	n_observations = length(observations_i)
+	#vector containing the tangent belief states for all modified nodes
+	tangent_b = Dict{Int64, Array{Float64}}()
+	#dim = n_nodes*n_actions*n_observations
+	changed = false
+	#M_TR =  zeros(n_actions, n_observations, n_nodes)
+	#M_TL =  zeros(n_actions, n_observations, n_nodes)
+	temp_id = Dict{Int64, Int64}()
+	for real_id in keys(nodes)
+			temp_id[real_id] = length(temp_id)+1
+			#@deb("Node $real_id becomes $node_counter")
+	end
+	temp_id_j = Dict{Int64, Int64}()
+	for real_id in sort(collect(keys(nodes_j)))
+			temp_id_j[real_id] = length(temp_id_j)+1
+			#@deb("Node $real_id becomes $node_counter")
+	end
+	for (n_id, node) in nodes
+		@deb("Node to be improved: $n_id")
+		lpmodel = JuMP.Model(with_optimizer(GLPK.Optimizer))
+		#define variables for LP. c(a, n, z)
+		@variable(lpmodel, canz[a=1:n_actions, z=1:n_observations, n=1:n_nodes] >= 0.0)
+		@variable(lpmodel, ca[a=1:n_actions] >= 0.0)
+		#e to maximize
+		@variable(lpmodel, e)
+		@objective(lpmodel, Max, e)
+		#define constraints
+		for s_index in 1:n_states
+			s = states[s_index]
+			for (nj_id, nj) in nodes_j
+				M = zeros(n_actions, n_observations, n_nodes)
+				M_a = zeros(n_actions)
+				for ai_index in 1:n_actions
+					ai = actions_i[ai_index]
+					for (aj, p_aj) in nj.actionProb
+						r = IPOMDPs.reward(ipomdp, s, ai, aj)
+						M_a[ai_index] += r * p_aj
+						for zi_index in 1:n_observations
+							zi = observations_i[zi_index]
+							#array of edges given observation
+							for s_prime_index in 1:length(states)
+								s_prime = states[s_prime_index]
+								transition_i =POMDPModelTools.pdf(IPOMDPs.transition(ipomdp,s,ai, aj), s_prime)
+								observation_i = POMDPModelTools.pdf(IPOMDPs.observation(ipomdp, s_prime, ai, aj), zi)
+								if transition_i != 0.0 && observation_i != 0.0
+									for (zj, obs_dict_j) in nj.edges[aj]
+										observation_j = POMDPModelTools.pdf(POMDPs.observation(pomdp_j, s_prime, aj), zj)
+										if observation_j != 0.0
+											for (n_prime_j, prob_j) in obs_dict_j
+												for (n_prime_i_index, n_prime_i) in nodes
+													v_nz_sp = n_prime_i.value[s_prime_index,temp_id_j[n_prime_j.id]]
+													#if n_id == 7 || n_id == 8
+													@deb("state = $s, action_i = $ai, action_j = $aj, obs_i = $zi, obs_j = $zj n_prime_i = $(n_prime_i_index), s_prime = $s_prime")
+													@deb("$transition_i * $observation_i * $observation_j * $prob_j * $v_nz_sp")
+													#end
+													M[ai_index, zi_index, temp_id[n_prime_i_index]]+= transition_i * observation_i * observation_j * prob_j * v_nz_sp
+												end
+											end
+										end
+									end
+								end
+								#@deb("M[$a_index, $obs_index, $nz_id] = $(M[a_index, obs_index, nz_id])")
+							end
+						end
+					end
+					#@deb(M)
+
+				end
+				@deb(M)
+				@constraint(lpmodel,  e + node.value[s_index, temp_id_j[nj_id]] <= sum( M_a[a]*ca[a]+IPOMDPs.discount(ipomdp)*sum(sum( M[a, z, n] * canz[a, z, n] for n in 1:n_nodes) for z in 1:n_observations) for a in 1:n_actions))
+			end
+		end
+		#sum canz over a,n,z = 1
+		@constraint(lpmodel, con_sum[a=1:n_actions, z=1:n_observations], sum(canz[a, z, n] for n in 1:n_nodes) == ca[a])
+		@constraint(lpmodel, ca_sum, sum(ca[a] for a in 1:n_actions) == 1.0)
+
+		#if debug[] == true
+		#	print(lpmodel)
+		#end
+
+		optimize!(lpmodel)
+		@deb("$(termination_status(lpmodel))")
+		@deb("$(primal_status(lpmodel))")
+		@deb("$(dual_status(lpmodel))")
+		#=
+		if debug[] == true && n_id == debug_node
+			L = 3
+			GL = 2
+			GR = 1
+			TR = 1
+			TL = 2
+			@deb("correct vals")
+			correct_val = -1 + POMDPs.discount(pomdp)*(M_TR[L, GL, temp_id[5]] +  M_TR[L, GR, temp_id[8]]) - node.value[TR]
+			@deb("e <= $correct_val")
+			correct_val = -1 +POMDPs.discount(pomdp)*(M_TL[L, GL, temp_id[5]] +  M_TL[L, GR, temp_id[8]]) - node.value[TL]
+			@deb("e <= $correct_val")
+
+			#actual_val = -1 + POMDPs.discount(pomdp)*(M_7_TR[L, GL, temp_id[10]]* JuMP.value(canz[L, GL, temp_id[10]]) +  M_7_TR[L, GR, temp_id[8]] * JuMP.value(canz[L, GR, temp_id[8]])+ M_7_TR[L, GR, temp_id[1]] * JuMP.value(canz[L, GR,temp_id[1]])) - node.value[TR]
+			actual_val = -1 + POMDPs.discount(pomdp)* sum(sum(sum( M_TR[a,z,n] * JuMP.value(canz[a,z,n])  for n in 1:n_nodes) for z in 1:n_observations) for a in 1:n_actions) - node.value[TR]
+			println("actual val")
+			println("e <= $actual_val")
+			#actual_val = -1 + POMDPs.discount(pomdp)*(M_7_TL[L, GL, temp_id[10]]* JuMP.value(canz[L, GL, temp_id[10]]) +  M_7_TL[L, GR, temp_id[8]] * JuMP.value(canz[L, GR, temp_id[8]])+ M_7_TL[L, GR, temp_id[1]] * JuMP.value(canz[L, GR, temp_id[1]])) - node.value[TL]
+			actual_val = -1 + POMDPs.discount(pomdp)* sum(sum(sum( M_TL[a,z,n]*JuMP.value(canz[a,z,n]) for n in 1:n_nodes) for z in 1:n_observations) for a in 1:n_actions) - node.value[TL]
+
+			println("e <= $actual_val")
+			for n_id in keys(nodes)
+
+				println("canz $n_id =  $(JuMP.value(canz[L, GR, temp_id[n_id]]))")
+				println("canz $n_id =  $(JuMP.value(canz[L, GL, temp_id[n_id]]))")
+
+			end
+		end
+		=#
+		#@deb("eps = $(JuMP.value(e))")
+		@deb("Obj = $(objective_value(lpmodel))")
+		if JuMP.objective_value(lpmodel) > minval
+			changed = true
+			#@deb("Good so far")
+			new_edges = Dict{A, Dict{W,Dict{Node, Float64}}}()
+			new_actions = Dict{A, Float64}()
+			#@deb("New structures created")
+			for action_index in 1:n_actions
+				ca_v = JuMP.value(ca[action_index])
+				#@deb("Action $(actions[action_index])")
+				#@deb("ca $(actions[action_index])= $ca_v")
+				if ca_v > 1.0-minval
+					ca_v = 1.0
+				end
+				if ca_v > minval
+					new_obs = Dict{W, Dict{Node, Float64}}()
+					for obs_index in 1:n_observations
+						obs_total = 0.0
+						#fill a temporary edge dict with unnormalized probs
+						temp_edge_dict = Dict{Node, Float64}()
+						for (nz_id, nz) in nodes
+							prob = JuMP.value(canz[action_index, obs_index, temp_id[nz_id]])/ca_v
+							#@deb("canz $(observations[obs_index]) -> $nz_id = $prob")
+							if prob < 0.0
+								#@deb("Set prob to 0 even though it was negative")
+								prob = 0.0
+							end
+							if prob > 1.0 && prob < 1.0+minval
+								#@deb("Set prob slightly greater than 1 to 1")
+								prob = 1.0
+							end
+							if prob < 0.0 || prob > 1.0
+								error("Probability outside of bounds: $prob")
+							end
+							if prob > 0.0
+								obs_total+= prob
+								#@deb("New edge: $(action_index), $(obs_index) -> $nz_id, $(prob)")
+								temp_edge_dict[nz] = prob
+							end
+						end
+						if obs_total == 0.0
+							error("sum of prob for obs $(observations[obs_index]) == 0")
+						end
+						new_edge_dict = Dict{Node, Float64}()
+						for (next, prob) in temp_edge_dict
+							#@deb("normalized prob: $normalized_prob")
+							if prob >= 1.0-minval
+								new_edge_dict[next] = 1.0
+							elseif prob > minval
+								new_edge_dict[next] = prob
+							end
+							#do not add anything if prob < minval
+						end
+						#@deb("length of dict for obs $(observations[obs_index]) = $(length(new_edge_dict))")
+						if length(new_edge_dict) != 0
+							new_obs[observations[obs_index]] = new_edge_dict
+							#update incoming edge vector for other node
+							for (next, prob) in new_edge_dict
+								if haskey(next.incomingEdgeDicts, node)
+									push!(next.incomingEdgeDicts[node], new_edge_dict)
+								else
+									next.incomingEdgeDicts[node] = [new_edge_dict]
+								end
+							end
+						end
+					end
+					if length(keys(new_obs)) != 0
+						new_edges[actions[action_index]] = new_obs
+						new_actions[actions[action_index]] = ca_v
+					end
+				end
+			end
+			node.edges = new_edges
+			node.actionProb = new_actions
+			if !add_one
+				old_deb = debug[]
+				debug[] = false
+				#evaluate!(controller, pomdp)
+				debug[] = old_deb
+				if debug[] == true
+					@deb("Changed controller after eval")
+					for (n_id, node) in controller.nodes
+						@deb(node)
+					end
+				end
+			end
+			if add_one
+				#no need to update tangent points because they wont be used!
+				if debug[] == true
+					@deb("Changed node after eval")
+					@deb(node)
+				end
+				break
+			end
+		end
+		#check that they are retrieved in the correct order!
+		constraint_list = JuMP.all_constraints(lpmodel, GenericAffExpr{Float64,VariableRef}, MOI.LessThan{Float64})
+		tangent_belief = Array{Float64}(undef, n_states, n_nodes_j)
+		for s in 1:n_states
+			for nj in 1:n_nodes_j
+				comp_i = (s-1)*n_nodes_j + nj
+				tangent_belief[s, nj] =  -1*dual(constraint_list[comp_i])
+			end
+		end
+		tangent_b[n_id] = tangent_belief
+	end
+	return changed, tangent_b
+end
+
+function full_backup_generate_nodes(controller::InteractiveController{A, W}, controller_j::InteractiveController{A, W}, minval::Float64) where {A, W}
+	minval = 1e-10
+	ipomdp = controller.ipomdp
+	ipomdp_j = controller_j.ipomdp
+	nodes = controller.nodes
+	nodes_j = controller_j.nodes
+	n_nodes = length(nodes)
+	#@deb(n_nodes)
+	n_nodes_j = length(nodes_j)
+	states = IPOMDPs.states(ipomdp)
+	n_states = length(states)
+	actions_i = actions_agent(ipomdp)
+	n_actions = length(actions_i)
+	observations_i = observations_agent(ipomdp)
+	n_observations = length(observations_i)
+	#tentative from incpruning
+	#prder of it -> actions, obs
+	#for each a, z produce n new nodes (iterate on nodes)
+	#for each node iterate on s and s' to produce a new node
+	#new node is tied to old node?, action a and obs z
+	#with stochastic pruning we get the cis needed
+
+	temp_id_j = Dict{Int64, Int64}()
+	for real_id in sort(collect(keys(nodes_j)))
+			temp_id_j[real_id] = length(temp_id_j)+1
+			#@deb("Node $real_id becomes $node_counter")
+	end
+
+	new_nodes = Set{Node}()
+	#new nodes counter used mainly for debugging, counts backwards (gets overwritten eventually)
+	new_nodes_counter = -1
+	for ai in actions_i
+		#this data structure has the set of nodes for each observation (new_nodes_z[obs] = Set{Nodes} generated from obs)
+		new_nodes_z = Vector{Set{Node}}(undef, length(observations_i))
+		for zi_index in 1:length(observations_i)
+			zi = observations_i[zi_index]
+			#this set contains all new nodes for action, obs for all nodes
+			new_nodes_a_z = Set{Node}()
+			for (ni_id, ni) in nodes
+				new_v = node_value(ni, ai, zi, controller_j, ipomdp, temp_id_j)
+				#do not set node id for now
+				#new_node = build_node(new_nodes_counter, [a], [1.0], [[obs]], [[1.0]], [[node]], new_v)
+				new_node = build_node(new_nodes_counter, ai, zi, ni, new_v)
+				push!(new_nodes_a_z, new_node)
+				new_nodes_counter -=1
+			end
+			if IPOMDPToolbox.debug[] == true
+				println("New nodes created:")
+				for node in new_nodes_a_z
+					println(node)
+				end
+			end
+			new_nodes_z[zi_index] = filterNodes(new_nodes_a_z, minval)
+		end
+		#set that contains all nodes generated from action a after incremental pruning
+		new_nodes_counter, new_nodes_a = incprune(new_nodes_z, new_nodes_counter, minval)
+		union!(new_nodes, new_nodes_a)
+	end
+	#all new nodes, final filtering
+	return filterNodes(new_nodes, minval)
+end
+#using eq τ(n, a, z) from incremental pruning paper
+function node_value(ni::Node{A, W}, ai::A, zi::W, controller_j::InteractiveController{A, W}, ipomdp::IPOMDP, temp_id_j::Dict{Int64, Int64}) where {A, W}
+	states = IPOMDPs.states(ipomdp)
+	ipomdp_j = controller_j.ipomdp
+	nodes_j = controller_j.nodes
+	n_states = length(states)
+	n_observations = length(observations_agent(ipomdp))
+	γ = IPOMDPs.discount(ipomdp)
+	new_V = zeros(Float64,n_states, length(nodes_j))
+	for s_index in 1:n_states
+		s = states[s_index]
+		for (nj_id, nj) in nodes_j
+			for (aj, aj_prob) in nj.actionProb
+				r = IPOMDPs.reward(ipomdp, s, ai, aj)
+				sum = 0.0
+				for s_prime_index in 1:n_states
+					s_prime = states[s_prime_index]
+					transition_i =POMDPModelTools.pdf(IPOMDPs.transition(ipomdp,s,ai, aj), s_prime)
+					observation_i = POMDPModelTools.pdf(IPOMDPs.observation(ipomdp, s_prime, ai, aj), zi)
+					if transition_i != 0.0 && observation_i != 0.0
+						for (zj, obs_dict_j) in nj.edges[aj]
+							observation_j = POMDPModelTools.pdf(IPOMDPs.observation(ipomdp_j, s_prime, ai, aj), zj)
+							for (nj_prime, prob_nj_prime) in obs_dict_j
+								#@deb("$action, $state, $observation, $s_prime")
+								#@deb("$(node.value[s_prime_index]) * $(p_obs) * $(p_s_prime)")
+								sum+= ni.value[s_prime_index, temp_id_j[nj_prime.id]] *  aj_prob * transition_i * observation_i * observation_j * prob_nj_prime
+							end
+						end
+					end
+				end
+				new_V[s_index, temp_id_j[nj_id]] = (1/n_observations) * IPOMDPs.reward(ipomdp, s, ai, aj) + γ*sum
+			end
+
+
+		end
+	end
+	return new_V
+end
+
+function escape_optima_standard!(controller::InteractiveController{A, W}, controller_j:: InteractiveController{A, W}, tangent_b::Dict{Int64, Array{Float64}}; add_all=false, minval = 0.0) where {A, W}
+	#@deb("$tangent_b")
+	ipomdp = controller.ipomdp
+	ipomdp_j = controller_j.ipomdp
+	nodes = controller.nodes
+	nodes_j = controller_j.nodes
+	n_nodes_j = length(nodes_j)
+	n_nodes = length(nodes)
+	#@deb(n_nodes)
+	n_nodes_j = length(nodes_j)
+	states = IPOMDPs.states(ipomdp)
+	n_states = length(states)
+	actions_i = actions_agent(ipomdp)
+	n_actions = length(actions_i)
+	actions_j = actions_agent(ipomdp_j)
+	observations_i = observations_agent(ipomdp)
+	observations_j = observations_agent(ipomdp)
+	n_observations = length(observations_i)
+
 	if length(tangent_b) == 0
 		error("tangent_b was empty!")
+	end
+
+
+	temp_id_j = Dict{Int64, Int64}()
+	for real_id in sort(collect(keys(nodes_j)))
+			temp_id_j[real_id] = length(temp_id_j)+1
+			#@deb("Node $real_id becomes $node_counter")
 	end
 #=
 	debug[] = false
@@ -926,7 +835,7 @@ function escape_optima_standard!(controller::Controller{A, W}, pomdp::POMDP{A, W
 	old_deb = debug[]
 	debug[] = false
 
-	new_nodes = full_backup_generate_nodes(controller, pomdp, minval)
+	new_nodes = full_backup_generate_nodes(controller, controller_j, minval)
 	#new_nodes = collect(values(backed_up_controller.nodes))
 
 	debug[] = old_deb
@@ -939,37 +848,43 @@ function escape_optima_standard!(controller::Controller{A, W}, pomdp::POMDP{A, W
 
 
 	escaped = false
-	reachable_b = Set{Vector{Float64}}()
+	reachable_b = Set{Array{Float64}}()
 	for (id, start_b) in tangent_b
 		#id = collect(keys(tangent_b))[1]
 		#start_b = tangent_b[id]
 		@deb("$id - >$start_b")
-		for a in keys(nodes[id].actionProb)
-			for z in observations
+		for ai in keys(nodes[id].actionProb)
+			for zi in observations_i
 				new_b = Vector{Float64}(undef, n_states)
 				normalize = 0.0
 				for s_prime_index in 1:n_states
 					s_prime = states[s_prime_index]
-					sum_s = 0.0
-					p_z = POMDPModelTools.pdf(POMDPs.observation(pomdp, a, s_prime), z)
 					for s_index in 1:n_states
 						s = states[s_index]
-						p_s_prime =POMDPModelTools.pdf(POMDPs.transition(pomdp, s, a), s_prime)
-						sum_s+= p_s_prime*start_b[s_index]
+						for (nj_id, nj) in nodes_j
+							for (aj, aj_prob) in nj.actionProb
+								transition_i = POMDPModelTools.pdf(IPOMDPs.transition(ipomdp, s, ai, aj), s_prime)
+								observation_i = POMDPModelTools.pdf(IPOMDPs.observation(ipomdp, s_prime, ai, aj), zi)
+								for (zj, obs_dict) in nj.edges[aj]
+									observation_j = POMDPModelTools.pdf(IPOMDPs.observation(ipomdp, s_prime, ai, aj), zj)
+									for (n_prime_j, prob_j) in obs_dict
+										#FIXME is this the right prob to use? last element of 1.8
+										new_b[s_prime_index, temp_id_j[n_prime_j.id]] += start_b[s_index] * aj_prob * transition_i* observation_i * observation_j * prob_j
+										normalize += new_b[s_prime_index, temp_id_j[n_prime_j.id]] = start_b[s_index] * aj_prob * transition_i* observation_i * observation_j * prob_j
+									end
+								end
+							end
+						end
 					end
-					new_b[s_prime_index] = p_z * sum_s
-					normalize += p_z * sum_s
 				end
-				for i in 1:n_states
-					new_b[i] = new_b[i] / normalize
-				end
-				@deb("from belief $start_b action $a and obs $z -> $new_b")
+				new_b = new_b  ./ normalize
+				@deb("from belief $start_b action $ai and obs $zi -> $new_b")
 				push!(reachable_b, new_b)
 				#find the value of the current controller in the reachable belief state
 				best_old_node = nothing
 				best_old_value = 0.0
 				for (id,old_node) in controller.nodes
-					temp_value = new_b' * old_node.value
+					temp_value = sum(sum(new_b[s, n] * old_node.value[s, n] for s in 1:n_states) for n in 1:n_nodes_j)
 					if best_old_node == nothing || best_old_value < temp_value
 						best_old_node = old_node
 						best_old_value = temp_value
@@ -979,7 +894,7 @@ function escape_optima_standard!(controller::Controller{A, W}, pomdp::POMDP{A, W
 				best_new_node = nothing
 				best_new_value = 0.0
 				for new_node in new_nodes
-					new_value = new_b' * new_node.value
+					new_value =  sum(sum(new_b[s, n] * new_node.value[s, n] for s in 1:n_states) for n in 1:n_nodes_j)
 					if best_new_node == nothing || best_new_value < new_value
 						best_new_node = new_node
 						best_new_value = new_value
