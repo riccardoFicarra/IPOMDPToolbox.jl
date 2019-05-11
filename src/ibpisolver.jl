@@ -72,3 +72,18 @@ abstract type AbstractController end
         #end
         return IBPIPolicy(ipomdp)
     end
+
+    function eval_and_improve!(policy::IBPIPolicy, level::Int64)
+    	improved = false
+    	if level >= 1
+    		improved = eval_and_improve!(policy, level-1)
+    	end
+    	if level == 0
+    		evaluate!(policy.controllers[0], policy.controllers[0].pomdp)
+    		improved = partial_backup!(policy.controllers[0], policy.controllers[0].pomdp)
+    	else
+    		evaluate!(policy.controllers[level], policy.controllers[level-1])
+    		improved = partial_backup!(policy.controllers[level], policy.controllers[level-1])
+    	end
+    	return improved
+    end
