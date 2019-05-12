@@ -79,7 +79,7 @@ function evaluate!(controller::InteractiveController{A,W},  controller_j::Intera
         #variables are all pairs of n,s
         for s_index in 1:n_states
             s = states[s_index]
-            for (nj_id, nj) in nodes
+            for (nj_id, nj) in nodes_j
                 M[s_index, temp_id_j[nj_id], temp_id[ni_id], s_index, temp_id_j[nj_id], temp_id[ni_id]] +=1
                 for (ai, p_ai) in ni.actionProb
                     #@deb("ai = $ai")
@@ -397,7 +397,7 @@ function partial_backup!(controller::IPOMDPToolbox.InteractiveController{A, W}, 
 						end
 						#@deb("length of dict for obs $(observations[obs_index]) = $(length(new_edge_dict))")
 						if length(new_edge_dict) != 0
-							new_obs[observations[obs_index]] = new_edge_dict
+							new_obs[observations_i[obs_index]] = new_edge_dict
 							#update incoming edge vector for other node
 							for (next, prob) in new_edge_dict
 								if haskey(next.incomingEdgeDicts, node)
@@ -409,8 +409,8 @@ function partial_backup!(controller::IPOMDPToolbox.InteractiveController{A, W}, 
 						end
 					end
 					if length(keys(new_obs)) != 0
-						new_edges[actions[action_index]] = new_obs
-						new_actions[actions[action_index]] = ca_v
+						new_edges[actions_i[action_index]] = new_obs
+						new_actions[actions_i[action_index]] = ca_v
 					end
 				end
 			end

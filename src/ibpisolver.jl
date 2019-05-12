@@ -14,6 +14,12 @@ abstract type AbstractController end
         timeout::Float64
     end
 
+    function Base.println(controller::AbstractController)
+        for (id,node) in controller.nodes
+            println(node)
+        end
+    end
+
 
     struct IBPIPolicy{S, A, W}
         #so far it's controller level -> controller
@@ -74,10 +80,12 @@ abstract type AbstractController end
     end
 
     function eval_and_improve!(policy::IBPIPolicy, level::Int64)
-    	improved = false
+        #println("called @level $level")
+        improved = false
     	if level >= 1
     		improved = eval_and_improve!(policy, level-1)
     	end
+        #println("evaluating level $level")
     	if level == 0
     		evaluate!(policy.controllers[0], policy.controllers[0].pomdp)
     		improved = partial_backup!(policy.controllers[0], policy.controllers[0].pomdp)
@@ -86,4 +94,22 @@ abstract type AbstractController end
     		improved = partial_backup!(policy.controllers[level], policy.controllers[level-1])
     	end
     	return improved
+    end
+    function ibpi(policy::IBPIPolicy, maxlevel::Int64, max_iterations::Int64)
+        iterations = 0
+        escaped = true
+        while escaped  && iterations <= max_iterations
+            escaped = false
+            improved = true
+            tangent_b = nothing
+            while improved && iterations <= max_iterations
+                println("Iteration $iterations / $max_iterations")
+                improved, tangent_b = IPOMDPToolbox.eval_and_improve!(policy, maxlevel)
+                iterations += 1
+            end
+            for l in maxlevel:-1:1
+                IPOMDPToolbox.evaluate!(policy.controllers[l], policy.controllers[l-1])
+                escaped = escaped || IPOMDPToolbox.escape_optima_standard!(policy.controllers[l], policy.controllers[l-1], tangent_b; minval = 1e-10)
+            end
+        end
     end
