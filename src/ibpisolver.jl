@@ -79,21 +79,37 @@ abstract type AbstractController end
         return IBPIPolicy(ipomdp)
     end
 
-    function eval_and_improve!(policy::IBPIPolicy, level::Int64)
+    function eval_and_improve!(policy::IBPIPolicy, level::Int64, maxlevel::Int64)
         #println("called @level $level")
         improved = false
     	if level >= 1
-    		improved = eval_and_improve!(policy, level-1)
+    		improved, tangent_b_vec = eval_and_improve!(policy, level-1, maxlevel)
     	end
         #println("evaluating level $level")
     	if level == 0
-    		evaluate!(policy.controllers[0], policy.controllers[0].pomdp)
-    		improved = partial_backup!(policy.controllers[0], policy.controllers[0].pomdp)
+            tangent_b_vec = Vector{Dict{Int64, Array{Float64}}}(undef, maxlevel+1)
+            println("Level 0")
+
+    		evaluate!(policy.controllers[0], policy.controllers[0].frame)
+            println(policy.controllers[0])
+
+    		improved, tangent_b_vec[1] = partial_backup!(policy.controllers[0], policy.controllers[0].frame, ; minval = 1e-10)
+            if improved
+                println("Improved level 0")
+                println(policy.controllers[0])
+            end
     	else
+            println("Level $level")
     		evaluate!(policy.controllers[level], policy.controllers[level-1])
-    		improved = partial_backup!(policy.controllers[level], policy.controllers[level-1])
+            println(policy.controllers[level])
+
+    		improved, tangent_b_vec[level+1] = partial_backup!(policy.controllers[level], policy.controllers[level-1]; minval = 1e-10)
+            if improved
+                println("Improved level $level")
+                println(policy.controllers[level])
+            end
     	end
-    	return improved
+    	return improved, tangent_b_vec
     end
     function ibpi(policy::IBPIPolicy, maxlevel::Int64, max_iterations::Int64)
         iterations = 0
@@ -101,15 +117,27 @@ abstract type AbstractController end
         while escaped  && iterations <= max_iterations
             escaped = false
             improved = true
-            tangent_b = nothing
+            tangent_b_vec = nothing
             while improved && iterations <= max_iterations
                 println("Iteration $iterations / $max_iterations")
-                improved, tangent_b = IPOMDPToolbox.eval_and_improve!(policy, maxlevel)
+                improved, tangent_b_vec = IPOMDPToolbox.eval_and_improve!(policy, maxlevel, maxlevel)
                 iterations += 1
             end
-            for l in maxlevel:-1:1
-                IPOMDPToolbox.evaluate!(policy.controllers[l], policy.controllers[l-1])
-                escaped = escaped || IPOMDPToolbox.escape_optima_standard!(policy.controllers[l], policy.controllers[l-1], tangent_b; minval = 1e-10)
+            for level in maxlevel:-1:1
+                IPOMDPToolbox.evaluate!(policy.controllers[level], policy.controllers[level-1])
+                escaped = escaped || IPOMDPToolbox.escape_optima_standard!(policy.controllers[level], policy.controllers[level-1], tangent_b_vec[level+1]; minval = 1e-10)
+                if escaped
+                    println("Level $level: escaped")
+                    println(policy.controllers[level])
+                    println(" ")
+
+                end
+            end
+            escaped = IPOMDPToolbox.escape_optima_standard!(policy.controllers[0], policy.controllers[0].frame, tangent_b_vec[1]; minval = 1e-10)
+            if escaped
+                println("Level 0: escaped")
+                println(policy.controllers[0])
+                println(" ")
             end
         end
     end

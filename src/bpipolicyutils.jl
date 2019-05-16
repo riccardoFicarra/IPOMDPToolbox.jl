@@ -150,7 +150,7 @@ IBPIPolicyUtils:
 
 	mutable struct Controller{A, W} <: AbstractController
 		level::Int64
-		pomdp::POMDP{A, W}
+		frame::POMDP{A, W}
 		nodes::Dict{Int64, Node{A, W}}
 		maxId::Int64
 	end
@@ -444,7 +444,7 @@ IBPIPolicyUtils:
 		end
 		=#
 		for i = 3:length(nodeVec)
-			id, xs = xsum(nodeVec[1], nodeVec[2], id)
+			id, xs = xsum(xs, nodeVec[i], id)
 			res = filterNodes(xs, minval)
 			#@deb("Length $i = $(length(nodeVec[i]))")
 		end
@@ -1099,7 +1099,7 @@ function partial_backup!(controller::Controller{A, W}, pomdp::POMDP{A, W}; minva
 	return changed, tangent_b
 end
 
-function escape_optima_standard!(controller::Controller{A, W}, pomdp::POMDP{A, W}, tangent_b::Dict{Int64, Vector{Float64}}; add_all=false, minval = 0.0) where {A, W}
+function escape_optima_standard!(controller::Controller{A, W}, pomdp::POMDP{A, W}, tangent_b::Dict{Int64, Array{Float64}}; add_all=false, minval = 0.0) where {A, W}
 	#@deb("$tangent_b")
 	nodes = controller.nodes
 	n_nodes = length(keys(controller.nodes))

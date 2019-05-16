@@ -3,7 +3,7 @@
 
 mutable struct InteractiveController{S, A, W} <: AbstractController
 	level::Int64
-	ipomdp::IPOMDP{S, A, W}
+	frame::IPOMDP{S, A, W}
 	nodes::Dict{Int64, Node{A, W}}
 	maxId::Int64
 end
@@ -45,10 +45,21 @@ function InitialNode(actions::Vector{A}, observations::Vector{W}, force::Int64) 
         n.value = []
         return n
 end
+
+function observation(frame::Any, s_prime::S, ai::A, aj::A) where {S, A}
+	if typeof(frame) <: POMDP
+		return POMDPs.observation(frame, aj, s_prime)
+	elseif typeof(frame) <: IPOMDP
+		return IPOMDPs.observation(frame, s_prime, ai, aj)
+	else
+		error("Wrong frame type in observation function call")
+	end
+end
+
 # interactive -> interactive version
-function evaluate!(controller::InteractiveController{A,W},  controller_j::InteractiveController{A, W}) where {S, A, W}
-	ipomdp_i = controller.ipomdp
-	ipomdp_j = controller_j.ipomdp
+function evaluate!(controller::InteractiveController{A,W},  controller_j::AbstractController) where {S, A, W}
+	ipomdp_i = controller.frame
+	frame_j = controller_j.frame
     nodes = controller.nodes
     n_nodes = length(controller.nodes)
     nodes_j = controller_j.nodes
@@ -102,7 +113,7 @@ function evaluate!(controller::InteractiveController{A,W},  controller_j::Intera
                                 @deb(observation_i)
                                 for (zj, obs_dict_j) in nj.edges[aj]
                                     @deb("zj = $zj")
-                                    observation_j = POMDPModelTools.pdf(IPOMDPs.observation(ipomdp_j, s_prime, ai, aj), zj)
+                                    observation_j = POMDPModelTools.pdf(observation(frame_j, s_prime, ai, aj), zj)
                                     for (n_prime_j, prob_j) in nj.edges[aj][zj]
                                         for (n_prime_i, prob_i) in ni.edges[ai][zi]
                                             M[s_index, temp_id_j[nj_id], temp_id[ni_id], s_prime_index, temp_id_j[n_prime_j.id], temp_id[n_prime_i.id]] -= p_ai * p_aj * IPOMDPs.discount(ipomdp_i) * transition_i * observation_i * observation_j * prob_j * prob_i
@@ -126,11 +137,11 @@ function evaluate!(controller::InteractiveController{A,W},  controller_j::Intera
         @deb("Value vector of node $n_id = $(nodes[n_id].value)")
     end
 end
-
+#=
 #interactive -> not interactive version
 function evaluate!(controller::InteractiveController{A,W},  controller_j::Controller{A, W}) where {S, A, W}
-	ipomdp_i = controller.ipomdp
-	pomdp_j = controller_j.pomdp
+	ipomdp_i = controller.frame
+	pomdp_j = controller_j.frame
     nodes = controller.nodes
     n_nodes = length(controller.nodes)
     nodes_j = controller_j.nodes
@@ -161,7 +172,7 @@ function evaluate!(controller::InteractiveController{A,W},  controller_j::Contro
         #variables are all pairs of n,s
         for s_index in 1:n_states
             s = states[s_index]
-            for (nj_id, nj) in nodes
+            for (nj_id, nj) in nodes_j
                 M[s_index, temp_id_j[nj_id], temp_id[ni_id], s_index, temp_id_j[nj_id], temp_id[ni_id]] +=1
                 for (ai, p_ai) in ni.actionProb
                     #@deb("ai = $ai")
@@ -208,26 +219,44 @@ function evaluate!(controller::InteractiveController{A,W},  controller_j::Contro
         @deb("Value vector of node $n_id = $(nodes[n_id].value)")
     end
 end
+=#
+function observations(frame::Any)
+	if typeof(frame) <: POMDP
+		return POMDPs.observations(frame)
+	elseif typeof(frame) <: IPOMDP
+		return IPOMDPs.observations_agent(frame)
+	else
+		error("Wrong frame type in observation function call")
+	end
+end
 
-
-function partial_backup!(controller::IPOMDPToolbox.InteractiveController{A, W}, controller_j::IPOMDPToolbox.InteractiveController{A, W}; minval = 0.0, add_one = false, debug_node = 0) where {S, A, W}
+function actions(frame::Any)
+	if typeof(frame) <: POMDP
+		return POMDPs.actions(frame)
+	elseif typeof(frame) <: IPOMDP
+		return IPOMDPs.actions_agent(frame)
+	else
+		error("Wrong frame type in observation function call")
+	end
+end
+function partial_backup!(controller::IPOMDPToolbox.InteractiveController{A, W}, controller_j::IPOMDPToolbox.AbstractController; minval = 0.0, add_one = false, debug_node = 0) where {S, A, W}
 	#this time the matrix form is a1x1+...+anxn = b1
 	#sum(a,s)[sum(nz)[canz*[R(s,a)+gamma*sum(s')p(s'|s, a)p(z|s', a)v(nz,s')]] -eps = V(n,s)
 	#number of variables is |A||Z||N|+1 (canz and eps)
-	ipomdp = controller.ipomdp
-	ipomdp_j = controller_j.ipomdp
+	frame = controller.frame
+	frame_j = controller_j.frame
 	nodes = controller.nodes
 	nodes_j = controller_j.nodes
 	n_nodes = length(nodes)
 	#@deb(n_nodes)
 	n_nodes_j = length(nodes_j)
-	states = IPOMDPs.states(ipomdp)
+	states = IPOMDPs.states(frame)
 	n_states = length(states)
-	actions_i = actions_agent(ipomdp)
+	actions_i = actions(frame)
 	n_actions = length(actions_i)
-	actions_j = actions_agent(ipomdp_j)
-	observations_i = observations_agent(ipomdp)
-	observations_j = observations_agent(ipomdp)
+	actions_j = actions(frame_j)
+	observations_i = observations(frame)
+	observations_j = observations(frame)
 	n_observations = length(observations_i)
 	#vector containing the tangent belief states for all modified nodes
 	tangent_b = Dict{Int64, Array{Float64}}()
@@ -263,18 +292,18 @@ function partial_backup!(controller::IPOMDPToolbox.InteractiveController{A, W}, 
 				for ai_index in 1:n_actions
 					ai = actions_i[ai_index]
 					for (aj, p_aj) in nj.actionProb
-						r = IPOMDPs.reward(ipomdp, s, ai, aj)
+						r = IPOMDPs.reward(frame, s, ai, aj)
 						M_a[ai_index] += r * p_aj
 						for zi_index in 1:n_observations
 							zi = observations_i[zi_index]
 							#array of edges given observation
 							for s_prime_index in 1:length(states)
 								s_prime = states[s_prime_index]
-								transition_i =POMDPModelTools.pdf(IPOMDPs.transition(ipomdp,s,ai, aj), s_prime)
-								observation_i = POMDPModelTools.pdf(IPOMDPs.observation(ipomdp, s_prime, ai, aj), zi)
+								transition_i =POMDPModelTools.pdf(IPOMDPs.transition(frame,s,ai, aj), s_prime)
+								observation_i = POMDPModelTools.pdf(observation(frame, s_prime, ai, aj), zi)
 								if transition_i != 0.0 && observation_i != 0.0
 									for (zj, obs_dict_j) in nj.edges[aj]
-										observation_j = POMDPModelTools.pdf(IPOMDPs.observation(ipomdp_j, s_prime, ai, aj), zj)
+										observation_j = POMDPModelTools.pdf(observation(frame_j, s_prime, ai, aj), zj)
 										if observation_j != 0.0
 											for (n_prime_j, prob_j) in obs_dict_j
 												for (n_prime_i_index, n_prime_i) in nodes
@@ -297,7 +326,7 @@ function partial_backup!(controller::IPOMDPToolbox.InteractiveController{A, W}, 
 
 				end
 				@deb(M)
-				@constraint(lpmodel,  e + node.value[s_index, temp_id_j[nj_id]] <= sum( M_a[a]*ca[a]+IPOMDPs.discount(ipomdp)*sum(sum( M[a, z, n] * canz[a, z, n] for n in 1:n_nodes) for z in 1:n_observations) for a in 1:n_actions))
+				@constraint(lpmodel,  e + node.value[s_index, temp_id_j[nj_id]] <= sum( M_a[a]*ca[a]+IPOMDPs.discount(frame)*sum(sum( M[a, z, n] * canz[a, z, n] for n in 1:n_nodes) for z in 1:n_observations) for a in 1:n_actions))
 			end
 		end
 		#sum canz over a,n,z = 1
@@ -449,14 +478,14 @@ function partial_backup!(controller::IPOMDPToolbox.InteractiveController{A, W}, 
 	end
 	return changed, tangent_b
 end
-
+#=
 #interactive -> non interactive version
 function partial_backup!(controller::IPOMDPToolbox.InteractiveController{A, W}, controller_j::IPOMDPToolbox.Controller{A, W}; minval = 0.0, add_one = false, debug_node = 0) where {S, A, W}
 	#this time the matrix form is a1x1+...+anxn = b1
 	#sum(a,s)[sum(nz)[canz*[R(s,a)+gamma*sum(s')p(s'|s, a)p(z|s', a)v(nz,s')]] -eps = V(n,s)
 	#number of variables is |A||Z||N|+1 (canz and eps)
-	ipomdp = controller.ipomdp
-	pomdp_j = controller_j.pomdp
+	ipomdp = controller.frame
+	pomdp_j = controller_j.frame
 	nodes = controller.nodes
 	nodes_j = controller_j.nodes
 	n_nodes = length(nodes)
@@ -691,21 +720,22 @@ function partial_backup!(controller::IPOMDPToolbox.InteractiveController{A, W}, 
 	end
 	return changed, tangent_b
 end
+=#
 
-function full_backup_generate_nodes(controller::InteractiveController{A, W}, controller_j::InteractiveController{A, W}, minval::Float64) where {A, W}
+function full_backup_generate_nodes(controller::InteractiveController{A, W}, controller_j::AbstractController, minval::Float64) where {A, W}
 	minval = 1e-10
-	ipomdp = controller.ipomdp
-	ipomdp_j = controller_j.ipomdp
+	frame = controller.frame
+	frame_j = controller_j.frame
 	nodes = controller.nodes
 	nodes_j = controller_j.nodes
 	n_nodes = length(nodes)
 	#@deb(n_nodes)
 	n_nodes_j = length(nodes_j)
-	states = IPOMDPs.states(ipomdp)
+	states = IPOMDPs.states(frame)
 	n_states = length(states)
-	actions_i = actions_agent(ipomdp)
+	actions_i = actions(frame)
 	n_actions = length(actions_i)
-	observations_i = observations_agent(ipomdp)
+	observations_i = observations(frame)
 	n_observations = length(observations_i)
 	#tentative from incpruning
 	#prder of it -> actions, obs
@@ -731,7 +761,7 @@ function full_backup_generate_nodes(controller::InteractiveController{A, W}, con
 			#this set contains all new nodes for action, obs for all nodes
 			new_nodes_a_z = Set{Node}()
 			for (ni_id, ni) in nodes
-				new_v = node_value(ni, ai, zi, controller_j, ipomdp, temp_id_j)
+				new_v = node_value(ni, ai, zi, controller_j, frame, temp_id_j)
 				#do not set node id for now
 				#new_node = build_node(new_nodes_counter, [a], [1.0], [[obs]], [[1.0]], [[node]], new_v)
 				new_node = build_node(new_nodes_counter, ai, zi, ni, new_v)
@@ -751,12 +781,20 @@ function full_backup_generate_nodes(controller::InteractiveController{A, W}, con
 		union!(new_nodes, new_nodes_a)
 	end
 	#all new nodes, final filtering
-	return filterNodes(new_nodes, minval)
+	filtered_nodes = filterNodes(new_nodes, minval)
+	for new_node in new_nodes
+		for (a, a_dict) in new_node.edges
+			if length(a_dict) != n_observations
+				error("Invalid node produced!")
+			end
+		end
+	end
+	return filtered_nodes
 end
 #using eq τ(n, a, z) from incremental pruning paper
-function node_value(ni::Node{A, W}, ai::A, zi::W, controller_j::InteractiveController{A, W}, ipomdp::IPOMDP, temp_id_j::Dict{Int64, Int64}) where {A, W}
+function node_value(ni::Node{A, W}, ai::A, zi::W, controller_j::AbstractController, ipomdp::IPOMDP, temp_id_j::Dict{Int64, Int64}) where {A, W}
 	states = IPOMDPs.states(ipomdp)
-	ipomdp_j = controller_j.ipomdp
+	frame_j = controller_j.frame
 	nodes_j = controller_j.nodes
 	n_states = length(states)
 	n_observations = length(observations_agent(ipomdp))
@@ -774,7 +812,7 @@ function node_value(ni::Node{A, W}, ai::A, zi::W, controller_j::InteractiveContr
 					observation_i = POMDPModelTools.pdf(IPOMDPs.observation(ipomdp, s_prime, ai, aj), zi)
 					if transition_i != 0.0 && observation_i != 0.0
 						for (zj, obs_dict_j) in nj.edges[aj]
-							observation_j = POMDPModelTools.pdf(IPOMDPs.observation(ipomdp_j, s_prime, ai, aj), zj)
+							observation_j = POMDPModelTools.pdf(observation(frame_j, s_prime, ai, aj), zj)
 							for (nj_prime, prob_nj_prime) in obs_dict_j
 								#@deb("$action, $state, $observation, $s_prime")
 								#@deb("$(node.value[s_prime_index]) * $(p_obs) * $(p_s_prime)")
@@ -791,10 +829,10 @@ function node_value(ni::Node{A, W}, ai::A, zi::W, controller_j::InteractiveContr
 	end
 	return new_V
 end
-
+#=
 function node_value(ni::Node{A, W}, ai::A, zi::W, controller_j::Controller{A, W}, ipomdp::IPOMDP, temp_id_j::Dict{Int64, Int64}) where {A, W}
 	states = IPOMDPs.states(ipomdp)
-	pomdp_j = controller_j.pomdp
+	pomdp_j = controller_j.frame
 	nodes_j = controller_j.nodes
 	n_states = length(states)
 	n_observations = length(observations_agent(ipomdp))
@@ -829,24 +867,25 @@ function node_value(ni::Node{A, W}, ai::A, zi::W, controller_j::Controller{A, W}
 	end
 	return new_V
 end
+=#
 
-function escape_optima_standard!(controller::InteractiveController{A, W}, controller_j:: InteractiveController{A, W}, tangent_b::Dict{Int64, Array{Float64}}; add_all=false, minval = 0.0) where {A, W}
+function escape_optima_standard!(controller::InteractiveController{A, W}, controller_j::AbstractController, tangent_b::Dict{Int64, Array{Float64}}; add_all=false, minval = 0.0) where {A, W}
 	#@deb("$tangent_b")
-	ipomdp = controller.ipomdp
-	ipomdp_j = controller_j.ipomdp
+	frame_i = controller.frame
+	frame_j = controller_j.frame
 	nodes = controller.nodes
 	nodes_j = controller_j.nodes
 	n_nodes_j = length(nodes_j)
 	n_nodes = length(nodes)
 	#@deb(n_nodes)
 	n_nodes_j = length(nodes_j)
-	states = IPOMDPs.states(ipomdp)
+	states = IPOMDPs.states(frame_i)
 	n_states = length(states)
-	actions_i = actions_agent(ipomdp)
+	actions_i = actions(frame_i)
 	n_actions = length(actions_i)
-	actions_j = actions_agent(ipomdp_j)
-	observations_i = observations_agent(ipomdp)
-	observations_j = observations_agent(ipomdp)
+	actions_j = actions(frame_j)
+	observations_i = observations(frame_i)
+	observations_j = observations(frame_j)
 	n_observations = length(observations_i)
 
 	if length(tangent_b) == 0
@@ -874,6 +913,8 @@ function escape_optima_standard!(controller::InteractiveController{A, W}, contro
 	debug[] = false
 
 	new_nodes = full_backup_generate_nodes(controller, controller_j, minval)
+
+
 	#new_nodes = collect(values(backed_up_controller.nodes))
 
 	debug[] = old_deb
@@ -893,7 +934,7 @@ function escape_optima_standard!(controller::InteractiveController{A, W}, contro
 		@deb("$id - >$start_b")
 		for ai in keys(nodes[id].actionProb)
 			for zi in observations_i
-				new_b = Vector{Float64}(undef, n_states)
+				new_b = Array{Float64}(undef, n_states, n_nodes_j)
 				normalize = 0.0
 				for s_prime_index in 1:n_states
 					s_prime = states[s_prime_index]
@@ -901,10 +942,10 @@ function escape_optima_standard!(controller::InteractiveController{A, W}, contro
 						s = states[s_index]
 						for (nj_id, nj) in nodes_j
 							for (aj, aj_prob) in nj.actionProb
-								transition_i = POMDPModelTools.pdf(IPOMDPs.transition(ipomdp, s, ai, aj), s_prime)
-								observation_i = POMDPModelTools.pdf(IPOMDPs.observation(ipomdp, s_prime, ai, aj), zi)
+								transition_i = POMDPModelTools.pdf(IPOMDPs.transition(frame_i, s, ai, aj), s_prime)
+								observation_i = POMDPModelTools.pdf(IPOMDPs.observation(frame_i, s_prime, ai, aj), zi)
 								for (zj, obs_dict) in nj.edges[aj]
-									observation_j = POMDPModelTools.pdf(IPOMDPs.observation(ipomdp, s_prime, ai, aj), zj)
+									observation_j = POMDPModelTools.pdf(observation(frame_i, s_prime, ai, aj), zj)
 									for (n_prime_j, prob_j) in obs_dict
 										#FIXME is this the right prob to use? last element of 1.8
 										new_b[s_prime_index, temp_id_j[n_prime_j.id]] += start_b[s_index] * aj_prob * transition_i* observation_i * observation_j * prob_j
@@ -966,11 +1007,11 @@ function escape_optima_standard!(controller::InteractiveController{A, W}, contro
 	#@deb("$reachable_b")
 	return escaped
 end
-
+#=
 function full_backup_generate_nodes(controller::InteractiveController{A, W}, controller_j::Controller{A, W}, minval::Float64) where {A, W}
 	minval = 1e-10
-	ipomdp = controller.ipomdp
-	pomdp_j = controller_j.pomdp
+	ipomdp = controller.frame
+	pomdp_j = controller_j.frame
 	nodes = controller.nodes
 	nodes_j = controller_j.nodes
 	n_nodes = length(nodes)
@@ -1028,11 +1069,13 @@ function full_backup_generate_nodes(controller::InteractiveController{A, W}, con
 	#all new nodes, final filtering
 	return filterNodes(new_nodes, minval)
 end
+=#
+#=
 
 function escape_optima_standard!(controller::InteractiveController{A, W}, controller_j:: Controller{A, W}, tangent_b::Dict{Int64, Array{Float64}}; add_all=false, minval = 0.0) where {A, W}
 	#@deb("$tangent_b")
-	ipomdp = controller.ipomdp
-	pomdp_j = controller_j.pomdp
+	ipomdp = controller.frame
+	pomdp_j = controller_j.frame
 	nodes = controller.nodes
 	nodes_j = controller_j.nodes
 	n_nodes_j = length(nodes_j)
@@ -1163,8 +1206,8 @@ function escape_optima_standard!(controller::InteractiveController{A, W}, contro
 	#@deb("$reachable_b")
 	return escaped
 end
-
-function rework_node(controller::Controller{A, W}, new_node::Node{A, W}) where {A, W}
+=#
+function rework_node(controller::AbstractController, new_node::Node{A, W}) where {A, W}
 		id = controller.maxId+1
 		actionProb = copy(new_node.actionProb)
 		value = copy(new_node.value)
