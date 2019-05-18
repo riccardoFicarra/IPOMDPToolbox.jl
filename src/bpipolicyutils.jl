@@ -847,7 +847,7 @@ function partial_backup!(controller::Controller{A, W}, pomdp::POMDP{A, W}; minva
 	observations = POMDPs.observations(pomdp)
 	n_observations = POMDPs.n_observations(pomdp)
 	#vector containing the tangent belief states for all modified nodes
-	tangent_b = Dict{Int64, Vector{Float64}}()
+	tangent_b = Dict{Int64, Array{Float64}}()
 	#dim = n_nodes*n_actions*n_observations
 	changed = false
 	node_counter = 1

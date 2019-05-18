@@ -125,8 +125,9 @@ abstract type AbstractController end
             end
             for level in maxlevel:-1:1
                 IPOMDPToolbox.evaluate!(policy.controllers[level], policy.controllers[level-1])
-                escaped = escaped || IPOMDPToolbox.escape_optima_standard!(policy.controllers[level], policy.controllers[level-1], tangent_b_vec[level+1]; minval = 1e-10)
-                if escaped
+                escaped_single = escape_optima_standard!(policy.controllers[level], policy.controllers[level-1], tangent_b_vec[level+1]; minval = 1e-10)
+                escaped = escaped || escaped_single
+                if escaped_single
                     println("Level $level: escaped")
                     println(policy.controllers[level])
                     println(" ")

@@ -270,8 +270,8 @@ function partial_backup!(controller::IPOMDPToolbox.InteractiveController{A, W}, 
 			#@deb("Node $real_id becomes $node_counter")
 	end
 	temp_id_j = Dict{Int64, Int64}()
-	for real_id in sort(collect(keys(nodes_j)))
-			temp_id_j[real_id] = length(temp_id_j)+1
+	for real_id_j in sort(collect(keys(nodes_j)))
+			temp_id_j[real_id_j] = length(temp_id_j)+1
 			#@deb("Node $real_id becomes $node_counter")
 	end
 	for (n_id, node) in nodes
@@ -326,10 +326,12 @@ function partial_backup!(controller::IPOMDPToolbox.InteractiveController{A, W}, 
 
 				end
 				@deb(M)
+				#node.value[s_index, temp_id_j[nj_id]] is V(n, is)
 				@constraint(lpmodel,  e + node.value[s_index, temp_id_j[nj_id]] <= sum( M_a[a]*ca[a]+IPOMDPs.discount(frame)*sum(sum( M[a, z, n] * canz[a, z, n] for n in 1:n_nodes) for z in 1:n_observations) for a in 1:n_actions))
 			end
 		end
 		#sum canz over a,n,z = 1
+
 		@constraint(lpmodel, con_sum[a=1:n_actions, z=1:n_observations], sum(canz[a, z, n] for n in 1:n_nodes) == ca[a])
 		@constraint(lpmodel, ca_sum, sum(ca[a] for a in 1:n_actions) == 1.0)
 
@@ -926,30 +928,43 @@ function escape_optima_standard!(controller::InteractiveController{A, W}, contro
 	#end
 
 
+
 	escaped = false
 	reachable_b = Set{Array{Float64}}()
 	for (id, start_b) in tangent_b
 		#id = collect(keys(tangent_b))[1]
 		#start_b = tangent_b[id]
+		println(start_b)
 		@deb("$id - >$start_b")
 		for ai in keys(nodes[id].actionProb)
 			for zi in observations_i
-				new_b = Array{Float64}(undef, n_states, n_nodes_j)
+				new_b = zeros(n_states, n_nodes_j)
 				normalize = 0.0
 				for s_prime_index in 1:n_states
 					s_prime = states[s_prime_index]
 					for s_index in 1:n_states
 						s = states[s_index]
 						for (nj_id, nj) in nodes_j
+							if start_b[s_index, temp_id_j[nj_id]] == 0.0
+								continue
+							end
 							for (aj, aj_prob) in nj.actionProb
 								transition_i = POMDPModelTools.pdf(IPOMDPs.transition(frame_i, s, ai, aj), s_prime)
 								observation_i = POMDPModelTools.pdf(IPOMDPs.observation(frame_i, s_prime, ai, aj), zi)
+								if transition_i == 0.0 || observation_i == 0.0 || aj_prob == 0.0
+									continue
+								end
 								for (zj, obs_dict) in nj.edges[aj]
 									observation_j = POMDPModelTools.pdf(observation(frame_i, s_prime, ai, aj), zj)
+									if observation_j == 0.0
+										continue
+									end
 									for (n_prime_j, prob_j) in obs_dict
 										#FIXME is this the right prob to use? last element of 1.8
-										new_b[s_prime_index, temp_id_j[n_prime_j.id]] += start_b[s_index] * aj_prob * transition_i* observation_i * observation_j * prob_j
-										normalize += new_b[s_prime_index, temp_id_j[n_prime_j.id]] = start_b[s_index] * aj_prob * transition_i* observation_i * observation_j * prob_j
+										println("start_b = $(start_b[s_index, temp_id_j[nj_id]])")
+										new_b[s_prime_index, temp_id_j[n_prime_j.id]] += start_b[s_index, temp_id_j[nj_id]] * aj_prob * transition_i* observation_i * observation_j * prob_j
+										normalize += start_b[s_index, temp_id_j[nj_id]] * aj_prob * transition_i* observation_i * observation_j * prob_j
+										#println("prova")
 									end
 								end
 							end
@@ -963,7 +978,10 @@ function escape_optima_standard!(controller::InteractiveController{A, W}, contro
 				best_old_node = nothing
 				best_old_value = 0.0
 				for (id,old_node) in controller.nodes
+					println("new_b = $new_b")
+					println("old value = $(old_node.value)")
 					temp_value = sum(sum(new_b[s, n] * old_node.value[s, n] for s in 1:n_states) for n in 1:n_nodes_j)
+					println("temp value = $temp_value")
 					if best_old_node == nothing || best_old_value < temp_value
 						best_old_node = old_node
 						best_old_value = temp_value
@@ -973,7 +991,10 @@ function escape_optima_standard!(controller::InteractiveController{A, W}, contro
 				best_new_node = nothing
 				best_new_value = 0.0
 				for new_node in new_nodes
+					println("new_b = $new_b")
+					println("new value = $(new_node.value)")
 					new_value =  sum(sum(new_b[s, n] * new_node.value[s, n] for s in 1:n_states) for n in 1:n_nodes_j)
+					println("new value tot= $new_value")
 					if best_new_node == nothing || best_new_value < new_value
 						best_new_node = new_node
 						best_new_value = new_value
