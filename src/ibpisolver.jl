@@ -4,8 +4,20 @@ ibpisolver.jl:
 - Author: fiki9
 - Date: 2019-02-11
 =#
-
+module IBPI
+using POMDPs
+	using IPOMDPs
+	using IPOMDPToolbox
+	
 abstract type AbstractController end
+    """
+    Snippet to have debug utility. Use @deb(String) to print debug info
+    Modulename.debug[] = true to enable, or just debug[] = true if you are in the module
+    """
+    global debug = [false]
+    macro deb(str)
+        :( debug[] && println($(esc(str))) )
+    end
 
     include("bpipolicyutils.jl")
     include("ibpi.jl")
@@ -142,3 +154,4 @@ abstract type AbstractController end
             end
         end
     end
+end

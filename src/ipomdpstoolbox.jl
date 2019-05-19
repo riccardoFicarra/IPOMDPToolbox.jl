@@ -13,14 +13,7 @@ struct pomdpModel{S,A,W,P} <: IPOMDPs.Model{A,W,P}
     policy::P
     depth::Int64
 end
-"""
-Snippet to have debug utility. Use @deb(String) to print debug info
-Modulename.debug[] = true to enable, or just debug[] = true if you are in the module
-"""
-global debug = [false]
-macro deb(str)
-    :( debug[] && println($(esc(str))) )
-end
+
 
 """
     Wrapper for reresenting the model of a IPOMDP frame
