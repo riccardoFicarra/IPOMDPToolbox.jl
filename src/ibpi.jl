@@ -239,7 +239,7 @@ function actions(frame::Any)
 		error("Wrong frame type in observation function call")
 	end
 end
-function partial_backup!(controller::IPOMDPToolbox.InteractiveController{A, W}, controller_j::IPOMDPToolbox.AbstractController; minval = 0.0, add_one = false, debug_node = 0) where {S, A, W}
+function partial_backup!(controller::InteractiveController{A, W}, controller_j::AbstractController; minval = 0.0, add_one = false, debug_node = 0) where {S, A, W}
 	#this time the matrix form is a1x1+...+anxn = b1
 	#sum(a,s)[sum(nz)[canz*[R(s,a)+gamma*sum(s')p(s'|s, a)p(z|s', a)v(nz,s')]] -eps = V(n,s)
 	#number of variables is |A||Z||N|+1 (canz and eps)
@@ -312,7 +312,7 @@ function partial_backup!(controller::IPOMDPToolbox.InteractiveController{A, W}, 
 													@deb("state = $s, action_i = $ai, action_j = $aj, obs_i = $zi, obs_j = $zj n_prime_i = $(n_prime_i_index), s_prime = $s_prime")
 													@deb("$transition_i * $observation_i * $observation_j * $prob_j * $v_nz_sp")
 													#end
-													M[ai_index, zi_index, temp_id[n_prime_i_index]]+= transition_i * observation_i * observation_j * prob_j * v_nz_sp
+													M[ai_index, zi_index, temp_id[n_prime_i_index]]+= p_aj* transition_i * observation_i * observation_j * prob_j * v_nz_sp
 												end
 											end
 										end
@@ -469,11 +469,16 @@ function partial_backup!(controller::IPOMDPToolbox.InteractiveController{A, W}, 
 			end
 		end
 		constraint_list = JuMP.all_constraints(lpmodel, GenericAffExpr{Float64,VariableRef}, MOI.LessThan{Float64})
+		println(constraint_list)
 		tangent_belief = Array{Float64}(undef, n_states, n_nodes_j)
 		for s in 1:n_states
 			for nj in 1:n_nodes_j
 				comp_i = (s-1)*n_nodes_j + nj
 				tangent_belief[s, nj] =  -1*dual(constraint_list[comp_i])
+				println("state $s node $nj")
+				println("c_i = $comp_i")
+				println(length(constraint_list))
+				println(-1*dual(constraint_list[comp_i]))
 			end
 		end
 		tangent_b[n_id] = tangent_belief
@@ -482,7 +487,7 @@ function partial_backup!(controller::IPOMDPToolbox.InteractiveController{A, W}, 
 end
 #=
 #interactive -> non interactive version
-function partial_backup!(controller::IPOMDPToolbox.InteractiveController{A, W}, controller_j::IPOMDPToolbox.Controller{A, W}; minval = 0.0, add_one = false, debug_node = 0) where {S, A, W}
+function partial_backup!(controller::InteractiveController{A, W}, controller_j::Controller{A, W}; minval = 0.0, add_one = false, debug_node = 0) where {S, A, W}
 	#this time the matrix form is a1x1+...+anxn = b1
 	#sum(a,s)[sum(nz)[canz*[R(s,a)+gamma*sum(s')p(s'|s, a)p(z|s', a)v(nz,s')]] -eps = V(n,s)
 	#number of variables is |A||Z||N|+1 (canz and eps)
@@ -770,7 +775,7 @@ function full_backup_generate_nodes(controller::InteractiveController{A, W}, con
 				push!(new_nodes_a_z, new_node)
 				new_nodes_counter -=1
 			end
-			if IPOMDPToolbox.debug[] == true
+			if debug[] == true
 				println("New nodes created:")
 				for node in new_nodes_a_z
 					println(node)
@@ -1075,7 +1080,7 @@ function full_backup_generate_nodes(controller::InteractiveController{A, W}, con
 				push!(new_nodes_a_z, new_node)
 				new_nodes_counter -=1
 			end
-			if IPOMDPToolbox.debug[] == true
+			if debug[] == true
 				println("New nodes created:")
 				for node in new_nodes_a_z
 					println(node)

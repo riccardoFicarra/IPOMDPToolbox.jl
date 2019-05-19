@@ -8,8 +8,8 @@ IBPIPolicyUtils:
 	using DataStructures
 	using JuMP
 	using GLPK
-	#remove when done
-	using Debugger
+	using SparseArrays
+
 	"""
 	Structure used for policy nodes.
 	ActionDist specifies the probability of executing the action at the corresponding index in actions
@@ -35,7 +35,7 @@ IBPIPolicyUtils:
 	Base.hash(n::Node) = hash(n.id)
 	Base.isequal(n1::Node, n2::Node) = Base.isequal(hash(n1), hash(n2))
 	#overload display function to avoid walls of text when printing nodes
-	Base.display(n::IPOMDPToolbox.Node) = println(n)
+	Base.display(n::Node) = println(n)
 
 	function Node(id::Int64,actions::Vector{A}, observations::Vector{W}) where {A, W}
 		actionProb = Dict{A, Float64}()
@@ -330,7 +330,7 @@ IBPIPolicyUtils:
 					push!(new_nodes_a_z, new_node)
 					new_nodes_counter -=1
 				end
-				if IPOMDPToolbox.debug[] == true
+				if debug[] == true
 					println("New nodes created:")
 					for node in new_nodes_a_z
 						println(node)
@@ -463,7 +463,7 @@ IBPIPolicyUtils:
 			b_action = collect(keys(b.actionProb))[1]
 			@assert a_action == b_action "action mismatch"
 			c = mergeNode(a, b, a_action, id)
-			if IPOMDPToolbox.debug[] == true
+			if debug[] == true
 				println("nodes merged: $id<- $(a.id), $(b.id)")
 				println(c)
 			end
@@ -513,7 +513,7 @@ IBPIPolicyUtils:
 			#if there is only one node it is useless to try and prune anything
 			return nodes
 		end
-	    new_nodes = Dict{Int64, IPOMDPToolbox.Node}()
+	    new_nodes = Dict{Int64, Node}()
 	    #careful, here dict key != node.id!!!!
 	    node_counter = 1
 	    for node in nodes
@@ -616,7 +616,7 @@ IBPIPolicyUtils:
 			end
 	    end
 
-	    return Set{IPOMDPToolbox.Node}(node for node in values(new_nodes))
+	    return Set{Node}(node for node in values(new_nodes))
 	end
 
 	"""
@@ -745,7 +745,7 @@ IBPIPolicyUtils:
 			end
 	    end
 
-	    return Set{IPOMDPToolbox.Node}(node for node in values(new_nodes))
+	    return Set{Node}(node for node in values(new_nodes))
 	end
 
 
@@ -756,7 +756,7 @@ IBPIPolicyUtils:
 			n_nodes = length(keys(controller.nodes))
 			states = POMDPs.states(pomdp)
 			n_states = POMDPs.n_states(pomdp)
-			M = spzeros(n_states*n_nodes, n_states*n_nodes)
+			M = zeros(n_states*n_nodes, n_states*n_nodes)
 			b = zeros(n_states*n_nodes)
 
 			#dictionary used for recompacting ids
@@ -1233,4 +1233,4 @@ function rework_node(controller::AbstractController, new_node::Node{A, W}) where
 end
 
 
-include("bpigraph.jl")
+#include("bpigraph.jl")
