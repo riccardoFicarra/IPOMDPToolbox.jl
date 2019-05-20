@@ -8,7 +8,7 @@ module IBPI
 using POMDPs
 	using IPOMDPs
 	using IPOMDPToolbox
-	
+
 abstract type AbstractController end
     """
     Snippet to have debug utility. Use @deb(String) to print debug info
@@ -126,6 +126,18 @@ abstract type AbstractController end
     function ibpi(policy::IBPIPolicy, maxlevel::Int64, max_iterations::Int64)
         iterations = 0
         escaped = true
+		evaluate!(policy.controllers[0], policy.controllers[0].frame)
+		for level in 1:maxlevel
+			evaluate!(policy.controllers[level], policy.controllers[level-1])
+		end
+		full_backup_stochastic!(policy.controllers[0], policy.controllers[0].frame)
+		println("Level0 after full backup")
+		println(policy.controllers[0])
+		for level in 1:maxlevel
+			println("Level $level after full backup")
+			full_backup_stochastic!(policy.controllers[level], policy.controllers[level-1])
+		end
+
         while escaped  && iterations <= max_iterations
             escaped = false
             improved = true
