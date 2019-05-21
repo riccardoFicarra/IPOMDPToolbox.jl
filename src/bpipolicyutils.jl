@@ -520,6 +520,7 @@ IBPIPolicyUtils:
 	        new_nodes[node_counter] = node
 	        node_counter+=1
 	    end
+		#this ensures that the value vector is flattened even if it has multiple dimension because of nodes/agents/frames
 	    n_states = length(new_nodes[1].value)
 	    for (temp_id, n) in new_nodes
 			#remove the node we're testing from the node set (else we always get that a node dominates itself!)
@@ -638,7 +639,8 @@ IBPIPolicyUtils:
 	    node_counter = 1
 	    for node in nodes
 	        new_nodes[node_counter] = node
-			#@deb("temp = $node_counter, id = $(node.id)")
+			@deb("temp = $node_counter, id = $(node.id)")
+			@deb(node)
 	        node_counter+=1
 	    end
 	    n_states = length(new_nodes[1].value)
@@ -1090,7 +1092,7 @@ function partial_backup!(controller::Controller{A, W}, pomdp::POMDP{A, W}; minva
 					println("Changed node after eval")
 					println(node)
 				end
-				break
+				return true, []
 			end
 		end
 		constraint_list = JuMP.all_constraints(lpmodel, GenericAffExpr{Float64,VariableRef}, MOI.LessThan{Float64})

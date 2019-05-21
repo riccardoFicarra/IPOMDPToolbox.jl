@@ -28,6 +28,5 @@ export
     include("gpomdp.jl")
     include("reductionsolver.jl")
     include("ipomdpstoolbox.jl")
-    #include("ibpisolver.jl")
     include("functions.jl")
 end

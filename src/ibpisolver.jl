@@ -126,29 +126,28 @@ abstract type AbstractController end
     function ibpi(policy::IBPIPolicy, maxlevel::Int64, max_iterations::Int64)
         iterations = 0
         escaped = true
+		#full backup part to speed up
 		evaluate!(policy.controllers[0], policy.controllers[0].frame)
-		for level in 1:maxlevel
-			evaluate!(policy.controllers[level], policy.controllers[level-1])
-		end
 		full_backup_stochastic!(policy.controllers[0], policy.controllers[0].frame)
 		println("Level0 after full backup")
 		println(policy.controllers[0])
 		for level in 1:maxlevel
 			println("Level $level after full backup")
+			evaluate!(policy.controllers[level], policy.controllers[level-1])
 			full_backup_stochastic!(policy.controllers[level], policy.controllers[level-1])
 		end
-
+		#start of the actual algorithm
         while escaped  && iterations <= max_iterations
             escaped = false
             improved = true
             tangent_b_vec = nothing
             while improved && iterations <= max_iterations
                 println("Iteration $iterations / $max_iterations")
-                improved, tangent_b_vec = IPOMDPToolbox.eval_and_improve!(policy, maxlevel, maxlevel)
+                improved, tangent_b_vec = eval_and_improve!(policy, maxlevel, maxlevel)
                 iterations += 1
             end
             for level in maxlevel:-1:1
-                IPOMDPToolbox.evaluate!(policy.controllers[level], policy.controllers[level-1])
+                evaluate!(policy.controllers[level], policy.controllers[level-1])
                 escaped_single = escape_optima_standard!(policy.controllers[level], policy.controllers[level-1], tangent_b_vec[level+1]; minval = 1e-10)
                 escaped = escaped || escaped_single
                 if escaped_single
@@ -158,7 +157,7 @@ abstract type AbstractController end
 
                 end
             end
-            escaped = IPOMDPToolbox.escape_optima_standard!(policy.controllers[0], policy.controllers[0].frame, tangent_b_vec[1]; minval = 1e-10)
+            escaped = escape_optima_standard!(policy.controllers[0], policy.controllers[0].frame, tangent_b_vec[1]; minval = 1e-10)
             if escaped
                 println("Level 0: escaped")
                 println(policy.controllers[0])
@@ -166,4 +165,5 @@ abstract type AbstractController end
             end
         end
     end
+	include("bpigraph.jl")
 end
