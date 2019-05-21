@@ -1,3 +1,4 @@
+#=
 using Plots
 #using GraphRecipes
 using SparseArrays
@@ -74,4 +75,15 @@ function draw_controller(controller::Controller{A, W}) where {A, W}
     end
     =#
     gplot(g, nodelabel = nodelabel, edgelabel = edgelabel)
+end
+
+=#
+
+function print_graph_latex(controller::AbstractController, name::String)
+    open("../pictures/controllers/$string.tex", "w") do file
+    # do stuff with the open file
+end
+
+
+    close(f)
 end
