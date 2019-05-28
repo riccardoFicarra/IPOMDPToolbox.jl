@@ -205,14 +205,17 @@ function partial_backup!(controller::InteractiveController{A, W}, controller_j::
 		#define constraints
 		for s_index in 1:n_states
 			s = states[s_index]
+			#@deb("state $s")
 			for (nj_id, nj) in nodes_j
 				M = zeros(n_actions, n_observations, n_nodes)
 				M_a = zeros(n_actions)
+			#	@deb("\tnode_j $nj_id ")
 				for ai_index in 1:n_actions
 					ai = actions_i[ai_index]
+			#		@deb("\t\tai = $ai ")
 					for (aj, p_aj) in nj.actionProb
 						r = IPOMDPs.reward(frame, s, ai, aj)
-						@deb("r = $r, p_aj = $p_aj")
+				#		@deb("\t\t\taj = $aj p_aj = $p_aj, r = $r")
 						M_a[ai_index] += r * p_aj
 						for zi_index in 1:n_observations
 							zi = observations_i[zi_index]
@@ -227,10 +230,11 @@ function partial_backup!(controller::InteractiveController{A, W}, controller_j::
 										if observation_j != 0.0
 											for (n_prime_j, prob_j) in obs_dict_j
 												for (n_prime_i_index, n_prime_i) in nodes
+													#n_prime_j is always n1 when you have two nodes!
 													v_nz_sp = n_prime_i.value[s_prime_index,temp_id_j[n_prime_j.id]]
 													#if n_id == 7 || n_id == 8
-													#println("state = $s, action_i = $ai, action_j = $aj, obs_i = $zi, obs_j = $zj n_prime_i = $(n_prime_i_index), s_prime = $s_prime")
-													#println("$transition_i * $observation_i * $observation_j * $prob_j * $v_nz_sp")
+													#@deb("state = $s, action_i = $ai, action_j = $aj, obs_i = $zi, obs_j = $zj n_prime_i = $(n_prime_i_index), s_prime = $s_prime")
+													#@deb("$transition_i * $observation_i * $observation_j * $prob_j * $v_nz_sp = $(p_aj* transition_i * observation_i * observation_j * prob_j * v_nz_sp)")
 													#end
 													M[ai_index, zi_index, temp_id[n_prime_i_index]]+= p_aj* transition_i * observation_i * observation_j * prob_j * v_nz_sp
 												end
@@ -242,15 +246,14 @@ function partial_backup!(controller::InteractiveController{A, W}, controller_j::
 							end
 						end
 					end
-					#experimental change to adapt to paper
-					M_a[ai_index] += sum(sum( M[ai_index, zi, ni] for zi in 1:n_observations) for ni in 1:n_nodes)
 				end
 				@deb("state $s, node $nj_id")
 				@deb(M)
 
-				@deb(M_a)
+				#@deb(M_a)
 				#node.value[s_index, temp_id_j[nj_id]] is V(n, is)
-				@constraint(lpmodel,  e + node.value[s_index, temp_id_j[nj_id]] <= sum( M_a[a]*ca[a]+ IPOMDPs.discount(frame)*sum(sum( M[a, z, n] * canz[a, z, n] for n in 1:n_nodes) for z in 1:n_observations) for a in 1:n_actions))
+				con = @constraint(lpmodel, e + node.value[s_index, temp_id_j[nj_id]] <= sum( M_a[a]*ca[a]+ IPOMDPs.discount(frame)*sum(sum( M[a, z, n] * canz[a, z, n] for n in 1:n_nodes) for z in 1:n_observations) for a in 1:n_actions))
+				set_name(con, "$(s_index)_$(temp_id_j[nj_id])")
 			end
 		end
 		#sum canz over a,n,z = 1
@@ -380,22 +383,25 @@ function partial_backup!(controller::InteractiveController{A, W}, controller_j::
 			end
 		end
 		println("no node improved")
-		constraint_list = JuMP.all_constraints(lpmodel, GenericAffExpr{Float64,VariableRef}, MOI.LessThan{Float64})
+		#constraint_list = JuMP.all_constraints(lpmodel, GenericAffExpr{Float64,VariableRef}, MOI.LessThan{Float64})
 		tangent_belief = Array{Float64}(undef, n_states, n_nodes_j)
-		for s in 1:n_states
-			for nj in 1:n_nodes_j
-				comp_i = (s-1)*n_nodes_j + nj
-				tangent_belief[s, nj] =  -1*dual(constraint_list[comp_i])
-				if debug[] == true
-					println(constraint_list[comp_i])
-				end
+		for s_index in 1:n_states
+			for nj_id in keys(nodes_j)
+				@deb("nj = $nj_id")
+				@deb("nj_temp = $(temp_id_j[nj_id])")
+				con = constraint_by_name(lpmodel, "$(s_index)_$(temp_id_j[nj_id])")
+				tangent_belief[s_index, temp_id_j[nj_id]] =  -1*dual(con)
+
+				#=
 				if tangent_belief[s, nj] <= 0.0
 					error("belief == $(tangent_belief[s, nj])")
 				end
-				@deb("state $s node $nj")
-				@deb("c_i = $comp_i")
-				@deb(length(constraint_list))
-				@deb(-1*dual(constraint_list[comp_i]))
+				=#
+				@deb("state $s_index node $nj_id")
+				if debug[] == true
+					println(con)
+				end
+				@deb(-1*dual(con))
 			end
 		end
 		tangent_b[n_id] = tangent_belief

@@ -935,16 +935,19 @@ function partial_backup!(controller::Controller{A, W}, pomdp::POMDP{A, W}; minva
 			#constraint on the big formula in table 2
 			#@constraint(lpmodel,  e - M.*canz .<= -1*node.value[s_index])
 			#n are actually temp_ids here
-			@constraint(lpmodel,  e + node.value[s_index] <= sum( M_a[a]*ca[a]+POMDPs.discount(pomdp)*sum(sum( M[a, z, n] * canz[a, z, n] for n in 1:n_nodes) for z in 1:n_observations) for a in 1:n_actions))
+			#@deb(M)
+			con = @constraint(lpmodel,  e + node.value[s_index] <= sum( M_a[a]*ca[a]+POMDPs.discount(pomdp)*sum(sum( M[a, z, n] * canz[a, z, n] for n in 1:n_nodes) for z in 1:n_observations) for a in 1:n_actions))
+			set_name(con, "$(s)")
+
 			#JuMP.set_name(temp, "con_$s_index")
 		end
 		#sum canz over a,n,z = 1
 		@constraint(lpmodel, con_sum[a=1:n_actions, z=1:n_observations], sum(canz[a, z, n] for n in 1:n_nodes) == ca[a])
 		@constraint(lpmodel, ca_sum, sum(ca[a] for a in 1:n_actions) == 1.0)
 
-		#if debug[] == true
-		#	print(lpmodel)
-		#end
+		if debug[] == true
+			print(lpmodel)
+		end
 
 		optimize!(lpmodel)
 		#@deb("$(termination_status(lpmodel))")
@@ -1095,8 +1098,8 @@ function partial_backup!(controller::Controller{A, W}, pomdp::POMDP{A, W}; minva
 				return true, []
 			end
 		end
-		constraint_list = JuMP.all_constraints(lpmodel, GenericAffExpr{Float64,VariableRef}, MOI.LessThan{Float64})
-		tangent_b[n_id] =  [-1*dual(constraint_list[s]) for s in 1:n_states]
+		#constraint_list = JuMP.all_constraints(lpmodel, GenericAffExpr{Float64,VariableRef}, MOI.LessThan{Float64})
+		tangent_b[n_id] =  [-1*dual(constraint_by_name(lpmodel, "$(s)")) for s in states]
 	end
 	return changed, tangent_b
 end
@@ -1236,3 +1239,10 @@ end
 
 
 #include("bpigraph.jl")
+
+function improveNode(controller::Controller{A,W}, old_node::Node{A, W}) where {A, W}
+	new_node = unconstrained_node_impro()
+	swap_nodes!(controller, old_node, new_node)
+	evaluate(controller, controller.frame)
+
+end
