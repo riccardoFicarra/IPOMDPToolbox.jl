@@ -135,6 +135,7 @@ abstract type AbstractController end
 			println("Level $level after full backup")
 			evaluate!(policy.controllers[level], policy.controllers[level-1])
 			full_backup_stochastic!(policy.controllers[level], policy.controllers[level-1])
+			println(policy.controllers[level])
 		end
 		#start of the actual algorithm
         while escaped  && iterations <= max_iterations

@@ -382,7 +382,6 @@ function partial_backup!(controller::InteractiveController{A, W}, controller_j::
 				return true, []
 			end
 		end
-		println("no node improved")
 		#constraint_list = JuMP.all_constraints(lpmodel, GenericAffExpr{Float64,VariableRef}, MOI.LessThan{Float64})
 		tangent_belief = Array{Float64}(undef, n_states, n_nodes_j)
 		for s_index in 1:n_states
