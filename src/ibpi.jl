@@ -581,7 +581,7 @@ function escape_optima_standard!(controller::InteractiveController{A, W}, contro
 	for (id, start_b) in tangent_b
 		#id = collect(keys(tangent_b))[1]
 		#start_b = tangent_b[id]
-		println(start_b)
+		@deb(start_b)
 		@deb("$id - >$start_b")
 		for ai in keys(nodes[id].actionProb)
 			for zi in observations_i
@@ -592,6 +592,7 @@ function escape_optima_standard!(controller::InteractiveController{A, W}, contro
 					for s_index in 1:n_states
 						s = states[s_index]
 						for (nj_id, nj) in nodes_j
+							@deb("$(start_b[s_index, temp_id_j[nj_id]])")
 							if start_b[s_index, temp_id_j[nj_id]] == 0.0
 								continue
 							end
@@ -601,22 +602,28 @@ function escape_optima_standard!(controller::InteractiveController{A, W}, contro
 								if transition_i == 0.0 || observation_i == 0.0 || aj_prob == 0.0
 									continue
 								end
+								@deb("\t $aj_prob $transition_i $observation_i")
 								for (zj, obs_dict) in nj.edges[aj]
-									observation_j = POMDPModelTools.pdf(observation(frame_i, s_prime, ai, aj), zj)
+									observation_j = POMDPModelTools.pdf(observation(frame_j, s_prime, ai, aj), zj)
 									if observation_j == 0.0
 										continue
 									end
+									@deb("\t\t $observation_j")
 									for (n_prime_j, prob_j) in obs_dict
 										#FIXME is this the right prob to use? last element of 1.8
-										println("start_b = $(start_b[s_index, temp_id_j[nj_id]])")
+										@deb("start_b = $(start_b[s_index, temp_id_j[nj_id]])")
+										@deb("adding $(start_b[s_index, temp_id_j[nj_id]]) * $aj_prob * $transition_i* $observation_i * $observation_j * $prob_j")
+										@deb("adding $(start_b[s_index, temp_id_j[nj_id]] * aj_prob * transition_i* observation_i * observation_j * prob_j)")
 										new_b[s_prime_index, temp_id_j[n_prime_j.id]] += start_b[s_index, temp_id_j[nj_id]] * aj_prob * transition_i* observation_i * observation_j * prob_j
 										normalize += start_b[s_index, temp_id_j[nj_id]] * aj_prob * transition_i* observation_i * observation_j * prob_j
-										#println("prova")
 									end
 								end
 							end
 						end
 					end
+				end
+				if normalize == 0.0
+					error("normalization constant is $normalize !")
 				end
 				new_b = new_b  ./ normalize
 				@deb("from belief $start_b action $ai and obs $zi -> $new_b")
@@ -625,10 +632,10 @@ function escape_optima_standard!(controller::InteractiveController{A, W}, contro
 				best_old_node = nothing
 				best_old_value = 0.0
 				for (id,old_node) in controller.nodes
-					println("new_b = $new_b")
-					println("old value = $(old_node.value)")
+					@deb("new_b = $new_b")
+					@deb("old value = $(old_node.value)")
 					temp_value = sum(sum(new_b[s, n] * old_node.value[s, n] for s in 1:n_states) for n in 1:n_nodes_j)
-					println("temp value = $temp_value")
+					@deb("temp value = $temp_value")
 					if best_old_node == nothing || best_old_value < temp_value
 						best_old_node = old_node
 						best_old_value = temp_value
@@ -638,10 +645,10 @@ function escape_optima_standard!(controller::InteractiveController{A, W}, contro
 				best_new_node = nothing
 				best_new_value = 0.0
 				for new_node in new_nodes
-					println("new_b = $new_b")
-					println("new value = $(new_node.value)")
+					@deb("new_b = $new_b")
+					@deb("new value = $(new_node.value)")
 					new_value =  sum(sum(new_b[s, n] * new_node.value[s, n] for s in 1:n_states) for n in 1:n_nodes_j)
-					println("new value tot= $new_value")
+					@deb("new value tot= $new_value")
 					if best_new_node == nothing || best_new_value < new_value
 						best_new_node = new_node
 						best_new_value = new_value
@@ -662,7 +669,7 @@ function escape_optima_standard!(controller::InteractiveController{A, W}, contro
 					=#
 
 					if debug[] == true
-						println(controller.nodes[reworked_node.id])
+						@deb(controller.nodes[reworked_node.id])
 					end
 					escaped = true
 				end
