@@ -54,6 +54,7 @@ IBPIPolicyUtils:
 				end
 			end
 		end
+		#=
 		if debug[] == true
 			for (src_node, dict_vect) in node.incomingEdgeDicts
 				for dict in dict_vect
@@ -63,6 +64,7 @@ IBPIPolicyUtils:
 				end
 			end
 		end
+		=#
 		println("Value vector = $(node.value)")
 	end
 
@@ -126,7 +128,6 @@ IBPIPolicyUtils:
 		next = chooseWithProbability(edges).next
 		@deb("Chosen $(next.id) as next node")
 		return next
-
 	end
 	"""
 	Given a dictionary in the form item => probability
@@ -149,7 +150,7 @@ IBPIPolicyUtils:
 
 
 	mutable struct Controller{A, W} <: AbstractController
-		level::Int64
+		#level::Int64
 		frame::POMDP{A, W}
 		nodes::Dict{Int64, Node{A, W}}
 		maxId::Int64
@@ -157,9 +158,9 @@ IBPIPolicyUtils:
 	"""
 	Initialize a controller with the initial node, start id counter from 2
 	"""
-	function Controller(level::Int64, pomdp::POMDP{A,W}, force::Int64) where {A, W}
+	function Controller(pomdp::POMDP{A,W}, force::Int64) where {A, W}
 		newNode = InitialNode(pomdp, force)
-		Controller{A, W}(level, pomdp, Dict(1 => newNode), 1)
+		Controller{A, W}(pomdp, Dict(1 => newNode), 1)
 	end
 
 	function optimal_tiger_controller(pomdp::POMDP{A, W}) where {A, W}
@@ -347,7 +348,6 @@ IBPIPolicyUtils:
 	end
 	"""
 	Perform a full backup operation according to Pourpart and Boutilier's paper on Bounded finite state controllers
-	TODO: make this thing actually do a backup
 	"""
 	function full_backup_stochastic!(controller::Controller{A, W}, pomdp::POMDP{A, W}) where {A, W}
 		minval = 1e-10
@@ -836,7 +836,7 @@ function composite_index(dimension::Vector{Int64}, lengths::Vector{Int64})
 	return index+1
 end
 
-function partial_backup!(controller::Controller{A, W}, pomdp::POMDP{A, W}; minval = 0.0, add_one = false, debug_node = 0) where {A, W}
+function partial_backup!(controller::Controller{A, W}, pomdp::POMDP{A, W}; minval = 0.0, add_one = true, debug_node = 0) where {A, W}
 	#this time the matrix form is a1x1+...+anxn = b1
 	#sum(a,s)[sum(nz)[canz*[R(s,a)+gamma*sum(s')p(s'|s, a)p(z|s', a)v(nz,s')]] -eps = V(n,s)
 	#number of variables is |A||Z||N|+1 (canz and eps)
@@ -938,8 +938,6 @@ function partial_backup!(controller::Controller{A, W}, pomdp::POMDP{A, W}; minva
 			#@deb(M)
 			con = @constraint(lpmodel,  e + node.value[s_index] <= sum( M_a[a]*ca[a]+POMDPs.discount(pomdp)*sum(sum( M[a, z, n] * canz[a, z, n] for n in 1:n_nodes) for z in 1:n_observations) for a in 1:n_actions))
 			set_name(con, "$(s)")
-
-			#JuMP.set_name(temp, "con_$s_index")
 		end
 		#sum canz over a,n,z = 1
 		@constraint(lpmodel, con_sum[a=1:n_actions, z=1:n_observations], sum(canz[a, z, n] for n in 1:n_nodes) == ca[a])
@@ -1095,16 +1093,26 @@ function partial_backup!(controller::Controller{A, W}, pomdp::POMDP{A, W}; minva
 					println("Changed node after eval")
 					println(node)
 				end
-				return true, []
+				return true, Dict{Int64, Array{Float64}}()
 			end
 		end
+
 		#constraint_list = JuMP.all_constraints(lpmodel, GenericAffExpr{Float64,VariableRef}, MOI.LessThan{Float64})
-		tangent_b[n_id] =  [-1*dual(constraint_by_name(lpmodel, "$(s)")) for s in states]
+		# temp_tangent_b = zeros(n_states)
+		# for s_index in 1:n_states
+		# 	temp_tangent_b[s_index] = -1*dual(constraint_list[s_index])
+		# 	s = states[s_index]
+		# 	if temp_tangent_b[s_index] !=  -1*dual(constraint_by_name(lpmodel, "$(s)"))
+		# 		println("Different value between two techniques")
+		# 	end
+		# end
+		# tangent_b[n_id] = temp_tangent_b
+		tangent_b[n_id] = [-1*dual(constraint_by_name(lpmodel, "$(s)")) for s in states]
 	end
 	return changed, tangent_b
 end
 
-function escape_optima_standard!(controller::Controller{A, W}, pomdp::POMDP{A, W}, tangent_b::Dict{Int64, Array{Float64}}; add_all=false, minval = 0.0) where {A, W}
+function escape_optima_standard!(controller::Controller{A, W}, pomdp::POMDP{A, W}, tangent_b::Dict{Int64, Array{Float64}}; add_one=false, minval = 0.0) where {A, W}
 	#@deb("$tangent_b")
 	nodes = controller.nodes
 	n_nodes = length(keys(controller.nodes))
@@ -1117,17 +1125,7 @@ function escape_optima_standard!(controller::Controller{A, W}, pomdp::POMDP{A, W
 	if length(tangent_b) == 0
 		error("tangent_b was empty!")
 	end
-#=
-	debug[] = false
-	backed_up_controller = deepcopy(controller)
-	full_backup_stochastic!(backed_up_controller, pomdp)
-	debug[] = true
-	if debug[]
-		for (id,node) in backed_up_controller.nodes
-			println("$id $(node.value)")
-		end
-	end
-	=#
+
 	old_deb = debug[]
 	debug[] = false
 
@@ -1207,11 +1205,14 @@ function escape_optima_standard!(controller::Controller{A, W}, pomdp::POMDP{A, W
 					if debug[] == true
 						println(controller.nodes[reworked_node.id])
 					end
+					if add_one
+						return true
+					end
 					escaped = true
 				end
 			end
 		end
-		if escaped && !add_all
+		if escaped && !add_one
 			return true
 		end
 	end
@@ -1244,5 +1245,4 @@ function improveNode(controller::Controller{A,W}, old_node::Node{A, W}) where {A
 	new_node = unconstrained_node_impro()
 	swap_nodes!(controller, old_node, new_node)
 	evaluate(controller, controller.frame)
-
 end
