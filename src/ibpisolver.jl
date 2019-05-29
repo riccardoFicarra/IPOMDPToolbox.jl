@@ -8,7 +8,6 @@ module IBPI
 using POMDPs
 	using IPOMDPs
 	using IPOMDPToolbox
-
 abstract type AbstractController end
     """
     Snippet to have debug utility. Use @deb(String) to print debug info
@@ -84,7 +83,7 @@ abstract type AbstractController end
     function IPOMDPs.solve(solver::IBPISolver, ipomdp::IPOMDP{S,A,W}) where {S,A,W}
         # Create the folder used by the action function
         #try
-        #mkdir("./tmp")
+        mkdir("./tmp")
         #catch
         # Already present
         #end
@@ -92,12 +91,12 @@ abstract type AbstractController end
     end
 
     function eval_and_improve!(policy::IBPIPolicy, level::Int64, maxlevel::Int64)
-        #println("called @level $level")
+        println("called @level $level")
         improved = false
     	if level >= 1
     		improved, tangent_b_vec = eval_and_improve!(policy, level-1, maxlevel)
     	end
-        #println("evaluating level $level")
+        println("evaluating level $level")
     	if level == 0
             tangent_b_vec = Vector{Dict{Int64, Array{Float64}}}(undef, maxlevel+1)
             println("Level 0")
@@ -105,7 +104,8 @@ abstract type AbstractController end
     		evaluate!(policy.controllers[0], policy.controllers[0].frame)
             println(policy.controllers[0])
 
-    		improved, tangent_b_vec[1] = partial_backup!(policy.controllers[0], policy.controllers[0].frame, ; minval = 1e-10)
+    		improved, tangent_b_vec[1]  = partial_backup!(policy.controllers[0], policy.controllers[0].frame ; minval = 1e-10)
+
             if improved
                 println("Improved level 0")
                 println(policy.controllers[0])
@@ -123,7 +123,7 @@ abstract type AbstractController end
     	end
     	return improved, tangent_b_vec
     end
-    function ibpi(policy::IBPIPolicy, maxlevel::Int64, max_iterations::Int64)
+    function ibpi!(policy::IBPIPolicy, maxlevel::Int64, max_iterations::Int64)
         iterations = 0
         escaped = true
 		#full backup part to speed up
