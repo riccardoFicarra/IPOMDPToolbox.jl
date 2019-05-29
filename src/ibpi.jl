@@ -15,7 +15,7 @@ function init_controllers(ipomdp::IPOMDP{S,A,W}, pomdp::POMDP{A, W},maxlevel::In
         controller = InteractiveController(l, ipomdp, force)
         controllers[l] = controller
     end
-	controllers[0] = Controller(0, pomdp, force)
+	controllers[0] = Controller(pomdp, force)
     return controllers
 end
 
@@ -379,7 +379,7 @@ function partial_backup!(controller::InteractiveController{A, W}, controller_j::
 					@deb("Changed node after eval")
 					@deb(node)
 				end
-				return true, []
+				return true, Dict{Int64, Array{Float64}}()
 			end
 		end
 		#constraint_list = JuMP.all_constraints(lpmodel, GenericAffExpr{Float64,VariableRef}, MOI.LessThan{Float64})
