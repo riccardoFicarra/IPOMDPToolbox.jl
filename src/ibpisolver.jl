@@ -5,23 +5,33 @@ ibpisolver.jl:
 - Date: 2019-02-11
 =#
 module IBPI
-using POMDPs
+	using POMDPs
 	using IPOMDPs
 	using IPOMDPToolbox
-abstract type AbstractController end
+	"""
+	Abstract type used for any controller, interactive or not.
+	"""
+	abstract type AbstractController end
     """
     Snippet to have debug utility. Use @deb(String) to print debug info
     Modulename.debug[] = true to enable, or just debug[] = true if you are in the module
     """
     global debug = [false]
     macro deb(str)
-        :( debug[] && println($(esc(str))) )
+        :( debug[] && println($(esc(str))))
     end
 
     include("bpipolicyutils.jl")
     include("ibpi.jl")
     struct IBPISolver
         # Here should go some settings
+		#TODO add solver parameters here and pass this to all functions (or find a way to make all functions see this object)
+		#minval
+		#force
+		#partial_backup_add_one
+		#escape_optima_add_one
+		#maxrep
+		#timeout
         timeout::Float64
     end
 
@@ -39,39 +49,14 @@ abstract type AbstractController end
     end
 
     function IBPIPolicy(ipomdp::IPOMDP{S, A, W}, pomdp::POMDP{A, W}, maxlevel::Int64; force = 0) where {S, A, W}
-        controllers = init_controllers(ipomdp, pomdp, maxlevel, force)
+		if force == 0
+			controllers = init_controllers(ipomdp, pomdp, maxlevel)
+		else
+			controllers = init_controllers(ipomdp, pomdp, maxlevel; force=force)
+		end
         return IBPIPolicy{S, A, W}(controllers)
     end
 
-
-    function IPOMDPs.Model(pomdp::POMDP;depth=0, solvertype = :IBPI, force = 0)
-        # Timeout
-        t = 10.0
-        for i = 1:depth
-            t = t/10
-        end
-        name = hash(pomdp)
-        policy = BPIPolicy(pomdp, force)
-        solver = IBPISolver(t)
-        updater = BeliefUpdaters.DiscreteUpdater(pomdp)
-        belief = BeliefUpdaters.uniform_belief(pomdp)
-
-        return pomdpModel(belief, pomdp, updater, policy, depth)
-    end
-    #=
-    function IPOMDPs.Model(ipomdp::IPOMDP;depth=0)
-        t = 10.0
-        for i = 1:depth
-            t = t/10
-        end
-        solver = ReductionSolver(t)
-        updater = DiscreteInteractiveUpdater(ipomdp)
-        policy = IPOMDPs.solve(solver, ipomdp)
-        belief = IPOMDPs.initialize_belief(updater; depth=depth)
-
-        return ipomdpModel(belief, ipomdp, updater, policy, depth)
-    end
-    =#
 
     """
         Return the policy type used by the solver. Since ReductionSolver is an online solver, the policy doesn't really exist.
@@ -81,12 +66,7 @@ abstract type AbstractController end
         ReductionPolicy{S,A,W}
     """
     function IPOMDPs.solve(solver::IBPISolver, ipomdp::IPOMDP{S,A,W}) where {S,A,W}
-        # Create the folder used by the action function
-        #try
-        mkdir("./tmp")
-        #catch
-        # Already present
-        #end
+        
         return IBPIPolicy(ipomdp)
     end
 
@@ -101,10 +81,10 @@ abstract type AbstractController end
             tangent_b_vec = Vector{Dict{Int64, Array{Float64}}}(undef, maxlevel+1)
             println("Level 0")
 
-    		evaluate!(policy.controllers[0], policy.controllers[0].frame)
+    		evaluate!(policy.controllers[0])
             println(policy.controllers[0])
 
-    		improved, tangent_b_vec[1]  = partial_backup!(policy.controllers[0], policy.controllers[0].frame ; minval = 1e-10)
+    		improved, tangent_b_vec[1]  = partial_backup!(policy.controllers[0] ; minval = 1e-10)
 
             if improved
                 println("Improved level 0")
@@ -127,8 +107,8 @@ abstract type AbstractController end
         iterations = 0
         escaped = true
 		#full backup part to speed up
-		evaluate!(policy.controllers[0], policy.controllers[0].frame)
-		full_backup_stochastic!(policy.controllers[0], policy.controllers[0].frame)
+		evaluate!(policy.controllers[0])
+		full_backup_stochastic!(policy.controllers[0])
 		println("Level0 after full backup")
 		println(policy.controllers[0])
 		for level in 1:maxlevel
@@ -158,7 +138,7 @@ abstract type AbstractController end
 
                 end
             end
-            escaped = escape_optima_standard!(policy.controllers[0], policy.controllers[0].frame, tangent_b_vec[1]; minval = 1e-10)
+            escaped = escape_optima_standard!(policy.controllers[0], tangent_b_vec[1]; minval = 1e-10)
             if escaped
                 println("Level 0: escaped")
                 println(policy.controllers[0])

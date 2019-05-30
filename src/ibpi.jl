@@ -8,43 +8,34 @@ mutable struct InteractiveController{S, A, W} <: AbstractController
 	maxId::Int64
 end
 
-function init_controllers(ipomdp::IPOMDP{S,A,W}, pomdp::POMDP{A, W},maxlevel::Int64, force::Int64) where {S, A, W}
+function init_controllers(ipomdp::IPOMDP{S,A,W}, pomdp::POMDP{A, W},maxlevel::Int64; force = 0) where {S, A, W}
     #for now i assume i modeling another agent same as him.
     controllers = Dict{Int64, AbstractController}()
     for l in maxlevel:-1:1
-        controller = InteractiveController(l, ipomdp, force)
+		if force == 0
+			controller = InteractiveController(l, ipomdp)
+		else
+			controller = InteractiveController(l, ipomdp; force=force)
+		end
         controllers[l] = controller
     end
-	controllers[0] = Controller(pomdp, force)
+	if force == 0
+		controllers[0] = Controller(pomdp)
+	else
+		controllers[0] = Controller(pomdp; force = force)
+	end
     return controllers
 end
 
-function InteractiveController(level::Int64, ipomdp::IPOMDP{S, A, W}, force::Int64) where {S, A, W}
-    newNode = InitialNode(actions_agent(ipomdp), observations_agent(ipomdp), force)
+function InteractiveController(level::Int64, ipomdp::IPOMDP{S, A, W}; force=0) where {S, A, W}
+	if force == 0
+		newNode = InitialNode(actions_agent(ipomdp), observations_agent(ipomdp))
+	else
+		newNode = InitialNode(actions_agent(ipomdp), observations_agent(ipomdp); force=force)
+	end
     return InteractiveController{S, A, W}(level, ipomdp, Dict(1 => newNode), 1)
 end
-#no need to init value vectors here, they will be set by evaluate.
-function InitialNode(actions::Vector{A}, observations::Vector{W}, force::Int64) where {S, A, W}
-        if force == 0
-            actionindex = rand(1:length(actions))
-        else
-            if force > length(actions)
-                error("forced action outside of action vector length")
-            end
-            actionindex = force
-        end
-        n = Node(1, [actions[actionindex]], observations)
-        obsdict = Dict{W, Dict{Node, Float64}}()
-        n.incomingEdgeDicts[n] = Vector{Dict{Node, Float64}}(undef, 0)
-        for obs in observations
-            edges = Dict{Node, Float64}(n => 1.0)
-            obsdict[obs] = edges
-            push!(n.incomingEdgeDicts[n], edges)
-        end
-        n.edges[actions[actionindex]] = obsdict
-        n.value = []
-        return n
-end
+
 
 function observation(frame::Any, s_prime::S, ai::A, aj::A) where {S, A}
 	if typeof(frame) <: POMDP
