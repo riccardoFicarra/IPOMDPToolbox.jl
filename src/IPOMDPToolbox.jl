@@ -23,10 +23,10 @@ export
 
     #temporary
     BPIPolicy
-
     include("interactivebelief.jl")
     include("gpomdp.jl")
     include("reductionsolver.jl")
+    include("ibpisolver.jl")
     include("ipomdpstoolbox.jl")
     include("functions.jl")
 end

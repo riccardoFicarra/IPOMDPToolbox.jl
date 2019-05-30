@@ -1,5 +1,3 @@
-#include("./agents.jl")
-
 
 mutable struct InteractiveController{S, A, W} <: AbstractController
 	level::Int64
@@ -252,7 +250,7 @@ function partial_backup!(controller::InteractiveController{A, W}, controller_j::
 		@constraint(lpmodel, con_sum[a=1:n_actions, z=1:n_observations], sum(canz[a, z, n] for n in 1:n_nodes) == ca[a])
 		@constraint(lpmodel, ca_sum, sum(ca[a] for a in 1:n_actions) == 1.0)
 
-		#if debug[] == true
+		#if :data in debug
 		#	print(lpmodel)
 		#end
 
@@ -260,36 +258,7 @@ function partial_backup!(controller::InteractiveController{A, W}, controller_j::
 		@deb("$(termination_status(lpmodel))")
 		@deb("$(primal_status(lpmodel))")
 		@deb("$(dual_status(lpmodel))")
-		#=
-		if debug[] == true && n_id == debug_node
-			L = 3
-			GL = 2
-			GR = 1
-			TR = 1
-			TL = 2
-			@deb("correct vals")
-			correct_val = -1 + POMDPs.discount(pomdp)*(M_TR[L, GL, temp_id[5]] +  M_TR[L, GR, temp_id[8]]) - node.value[TR]
-			@deb("e <= $correct_val")
-			correct_val = -1 +POMDPs.discount(pomdp)*(M_TL[L, GL, temp_id[5]] +  M_TL[L, GR, temp_id[8]]) - node.value[TL]
-			@deb("e <= $correct_val")
 
-			#actual_val = -1 + POMDPs.discount(pomdp)*(M_7_TR[L, GL, temp_id[10]]* JuMP.value(canz[L, GL, temp_id[10]]) +  M_7_TR[L, GR, temp_id[8]] * JuMP.value(canz[L, GR, temp_id[8]])+ M_7_TR[L, GR, temp_id[1]] * JuMP.value(canz[L, GR,temp_id[1]])) - node.value[TR]
-			actual_val = -1 + POMDPs.discount(pomdp)* sum(sum(sum( M_TR[a,z,n] * JuMP.value(canz[a,z,n])  for n in 1:n_nodes) for z in 1:n_observations) for a in 1:n_actions) - node.value[TR]
-			println("actual val")
-			println("e <= $actual_val")
-			#actual_val = -1 + POMDPs.discount(pomdp)*(M_7_TL[L, GL, temp_id[10]]* JuMP.value(canz[L, GL, temp_id[10]]) +  M_7_TL[L, GR, temp_id[8]] * JuMP.value(canz[L, GR, temp_id[8]])+ M_7_TL[L, GR, temp_id[1]] * JuMP.value(canz[L, GR, temp_id[1]])) - node.value[TL]
-			actual_val = -1 + POMDPs.discount(pomdp)* sum(sum(sum( M_TL[a,z,n]*JuMP.value(canz[a,z,n]) for n in 1:n_nodes) for z in 1:n_observations) for a in 1:n_actions) - node.value[TL]
-
-			println("e <= $actual_val")
-			for n_id in keys(nodes)
-
-				println("canz $n_id =  $(JuMP.value(canz[L, GR, temp_id[n_id]]))")
-				println("canz $n_id =  $(JuMP.value(canz[L, GL, temp_id[n_id]]))")
-
-			end
-		end
-		=#
-		#@deb("eps = $(JuMP.value(e))")
 		@deb("Obj = $(objective_value(lpmodel))")
 		if JuMP.objective_value(lpmodel) > minval
 			changed = true
@@ -366,7 +335,7 @@ function partial_backup!(controller::InteractiveController{A, W}, controller_j::
 			node.actionProb = new_actions
 			if add_one
 				#no need to update tangent points because they wont be used!
-				if debug[] == true
+				if :flow in debug
 					@deb("Changed node after eval")
 					@deb(node)
 				end
@@ -388,7 +357,7 @@ function partial_backup!(controller::InteractiveController{A, W}, controller_j::
 				end
 				=#
 				@deb("state $s_index node $nj_id")
-				if debug[] == true
+				if :data in debug
 					println(con)
 				end
 				@deb(-1*dual(con))
@@ -445,7 +414,7 @@ function full_backup_generate_nodes(controller::InteractiveController{A, W}, con
 				push!(new_nodes_a_z, new_node)
 				new_nodes_counter -=1
 			end
-			if debug[] == true
+			if :flow in debug
 				println("New nodes created:")
 				for node in new_nodes_a_z
 					println(node)
@@ -537,32 +506,19 @@ function escape_optima_standard!(controller::InteractiveController{A, W}, contro
 			temp_id_j[real_id] = length(temp_id_j)+1
 			#@deb("Node $real_id becomes $node_counter")
 	end
-#=
-	debug[] = false
-	backed_up_controller = deepcopy(controller)
-	full_backup_stochastic!(backed_up_controller, pomdp)
-	debug[] = true
-	if debug[]
-		for (id,node) in backed_up_controller.nodes
-			println("$id $(node.value)")
-		end
-	end
-	=#
+
 	old_deb = debug[]
 	debug[] = false
 
 	new_nodes = full_backup_generate_nodes(controller, controller_j, minval)
 
-
-	#new_nodes = collect(values(backed_up_controller.nodes))
-
 	debug[] = old_deb
-	#if debug[] == true
-	#	println("new_nodes:")
-	#	for node in new_nodes
-	#		println(node)
-	#	end
-	#end
+	if :data in debug
+		println("new_nodes:")
+		for node in new_nodes
+			println(node)
+		end
+	end
 
 
 
@@ -651,16 +607,7 @@ function escape_optima_standard!(controller::InteractiveController{A, W}, contro
 					controller.maxId+=1
 					@deb("Added node $(reworked_node.id)")
 
-					#experimental: redirect edge of chosen node to newly added nodes
-					#=
-					old_prob = 1.0 #nodes[id].edges[a][z][best_old_node]
-					nodes[id].edges[a][z] = Dict(reworked_node => old_prob)
-					@deb("edge redirected from $(best_old_node.id) to $(reworked_node.id)")
-					=#
-
-					if debug[] == true
-						@deb(controller.nodes[reworked_node.id])
-					end
+					@deb(controller.nodes[reworked_node.id])
 					escaped = true
 				end
 			end
@@ -692,10 +639,9 @@ function rework_node(controller::AbstractController, new_node::Node{A, W}) where
 end
 
 
-function full_backup_stochastic!(controller::InteractiveController{A, W}, controller_j::AbstractController) where {A, W}
-	minval = 1e-10
+function full_backup_stochastic!(controller::InteractiveController{A, W}, controller_j::AbstractController; minval = 0.0) where {A, W}
 	nodes = controller.nodes
-	observations = POMDPs.observations(pomdp)
+	# observations = observations(controller_i.frame)
 	#tentative from incpruning
 	#prder of it -> actions, obs
 	#for each a, z produce n new nodes (iterate on nodes)
@@ -709,7 +655,7 @@ function full_backup_stochastic!(controller::InteractiveController{A, W}, contro
 	for new_node in new_nodes
 		@deb("Node $(new_node.id) becomes node $(nodes_counter)")
 		new_node.id = nodes_counter
-		if debug[] == true
+		if :flow in debug
 			println(new_node)
 		end
 		nodes_counter+=1

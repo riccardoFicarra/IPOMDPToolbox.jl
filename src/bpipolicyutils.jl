@@ -52,7 +52,7 @@ IBPIPolicyUtils:
 			end
 		end
 		#=
-		if debug[] == true
+		if :data in debug
 			for (src_node, dict_vect) in node.incomingEdgeDicts
 				for dict in dict_vect
 					for (next, prob) in dict
@@ -150,7 +150,7 @@ IBPIPolicyUtils:
 		end
 		edges = node.edges[action][observation]
 		next = chooseWithProbability(edges).next
-		@deb("Chosen $(next.id) as next node")
+		@deb("Chosen $(next.id) as next node", :flow )
 		return next
 	end
 	"""
@@ -161,7 +161,7 @@ IBPIPolicyUtils:
 	"""
 	function chooseWithProbability(items::Dict)
 		randn = rand() #number in [0, 1)
-		@deb(randn)
+		@deb(randn, :data)
 		for i in keys(items)
 			if randn <= items[i]
 				return i
@@ -231,7 +231,7 @@ IBPIPolicyUtils:
 		debug[] = false
 		evaluate!(controller, pomdp)
 		debug[] = old_deb
-		if debug[] == true
+		if :data in debug
 			println("Optimal controller for tiger game:")
 			for (node_id, node) in controller.nodes
 			    println(node)
@@ -267,7 +267,7 @@ IBPIPolicyUtils:
 		debug[] = false
 		evaluate!(controller, pomdp)
 		debug[] = old_deb
-		if debug[] == true
+		if :data in debug
 			println("Optimal controller for tiger game:")
 			for (node_id, node) in controller.nodes
 			    println(node)
@@ -287,7 +287,7 @@ IBPIPolicyUtils:
 		debug[] = false
 		evaluate!(controller, pomdp)
 		debug[] = old_deb
-		if debug[] == true
+		if :data in debug
 			println("Optimal controller for tiger game:")
 			for (node_id, node) in controller.nodes
 			    println(node)
@@ -378,7 +378,7 @@ IBPIPolicyUtils:
 					push!(new_nodes_a_z, new_node)
 					new_nodes_counter -=1
 				end
-				if debug[] == true
+				if :data in debug
 					println("New nodes created:")
 					for node in new_nodes_a_z
 						println(node)
@@ -396,9 +396,8 @@ IBPIPolicyUtils:
 	"""
 	Perform a full backup operation according to Pourpart and Boutilier's paper on Bounded finite state controllers
 	"""
-	function full_backup_stochastic!(controller::Controller{A, W}) where {A, W}
+	function full_backup_stochastic!(controller::Controller{A, W}; minval=0.0) where {A, W}
 		pomdp = controller.frame
-		minval = 1e-10
 		nodes = controller.nodes
 		observations = POMDPs.observations(pomdp)
 		#tentative from incpruning
@@ -412,9 +411,9 @@ IBPIPolicyUtils:
 		#also assign permanent ids
 		nodes_counter = controller.maxId+1
 		for new_node in new_nodes
-			@deb("Node $(new_node.id) becomes node $(nodes_counter)")
+			@deb("Node $(new_node.id) becomes node $(nodes_counter)", :data)
 			new_node.id = nodes_counter
-			if debug[] == true
+			if :data in debug
 				println(new_node)
 			end
 			nodes_counter+=1
@@ -469,8 +468,8 @@ IBPIPolicyUtils:
 				s_prime_index = POMDPs.stateindex(pomdp, s_prime)
 				p_s_prime = POMDPModelTools.pdf(transition_dist, s_prime)
 				p_obs = POMDPModelTools.pdf(POMDPs.observation(pomdp, action, s_prime), observation)
-				@deb("$action, $state, $observation, $s_prime")
-				@deb("$(next_node.value[s_prime_index]) * $(p_obs) * $(p_s_prime)")
+				@deb("$action, $state, $observation, $s_prime", :data)
+				@deb("$(next_node.value[s_prime_index]) * $(p_obs) * $(p_s_prime)", :data)
 				sum+= next_node.value[s_prime_index] * p_obs * p_s_prime
 			end
 			new_V[s_index] = (1/n_observations) * POMDPs.reward(pomdp, state, action) + γ*sum
@@ -483,11 +482,11 @@ IBPIPolicyUtils:
 	Follows Cassandra et al paper
 	"""
 	function incprune(nodeVec::Vector{Set{Node}}, startId::Int64, minval::Float64)
-		@deb("Called incprune, startId = $startId")
+		@deb("Called incprune, startId = $startId", :flow)
 		id = startId
 		id, xs = xsum(nodeVec[1], nodeVec[2], id)
 		res = filterNodes(xs, minval)
-		#=if debug[] == true
+		#=if :data in debug
 			for node in res
 				println(node)
 			end
@@ -507,7 +506,7 @@ IBPIPolicyUtils:
 	Returns a new set of the cross-summed nodes.
 	"""
 	function xsum(A::Set{Node}, B::Set{Node}, startId::Int64)
-		@deb("Called xsum, startId = $startId")
+		@deb("Called xsum, startId = $startId", :flow)
 		X = Set{Node}()
 		id = startId
 	    for a in A, b in B
@@ -517,7 +516,7 @@ IBPIPolicyUtils:
 			b_action = collect(keys(b.actionProb))[1]
 			@assert a_action == b_action "action mismatch"
 			c = mergeNode(a, b, a_action, id)
-			if debug[] == true
+			if :flow in debug
 				println("nodes merged: $id<- $(a.id), $(b.id)")
 				println(c)
 			end
@@ -561,7 +560,7 @@ IBPIPolicyUtils:
 		Minval is the minimum probability that an edge can have. values below minval are treated as zero, values above 1-minval are treated as 1
 	"""
 	function filterNodes(nodes::Set{Node}, minval::Float64)
-		@deb("Called filterNodes, length(nodes) = $(length(nodes))")
+		@deb("Called filterNodes, length(nodes) = $(length(nodes))", :flow)
 		if length(nodes) == 0
 			error("called FilterNodes on empty set")
 		end
@@ -598,12 +597,12 @@ IBPIPolicyUtils:
 			#not supported by solver =(
 	        @constraint(lpmodel, con_sum, sum(c[i] for i in keys(new_nodes)) == 1)
 	        optimize!(lpmodel)
-			if debug[] == true
+			if :data in debug
 				println("node $(n.id) -> eps = $(JuMP.value(e))")
 			end
 	        if JuMP.value(e) >= -1e-12
 	            #rewiring function here!
-				if debug[] == true
+				if :data in debug
 					for i in keys(new_nodes)
 						print("c$(new_nodes[i].id) = $(JuMP.value(c[i])) ")
 					end
@@ -643,7 +642,7 @@ IBPIPolicyUtils:
 							if length(dict) == 0
 								#only happens if n was the last node pointed by that node for that action/obs pair
 								#and all c[i]s = 0, which is impossible!
-								@deb("length of dict coming from $(src_node.id) == 0 after deletion, removing")
+								@deb("length of dict coming from $(src_node.id) == 0 after deletion, removing", :flow)
 							end
 						end
 					end
@@ -661,7 +660,7 @@ IBPIPolicyUtils:
 						end
 					end
 				end
-				if debug[] == true
+				if :flow in debug
 					println("Deleting node $(n.id): obj value = $(JuMP.value(e))")
 					println(n)
 				end
@@ -682,7 +681,7 @@ IBPIPolicyUtils:
 		This version of filterNodes analyzes new nodes before old nodes to avoid rewiring in case of nodes with equal values
 	"""
 	function filterNodes(nodes::OrderedSet{Node}, minval::Float64)
-		@deb("Called filterNodes, length(nodes) = $(length(nodes))")
+		@deb("Called filterNodes, length(nodes) = $(length(nodes))", :flow)
 		if length(nodes) == 0
 			error("called FilterNodes on empty set")
 		end
@@ -695,8 +694,8 @@ IBPIPolicyUtils:
 	    node_counter = 1
 	    for node in nodes
 	        new_nodes[node_counter] = node
-			@deb("temp = $node_counter, id = $(node.id)")
-			@deb(node)
+			@deb("temp = $node_counter, id = $(node.id)", :data)
+			@deb(node, :data)
 	        node_counter+=1
 	    end
 	    n_states = length(new_nodes[1].value)
@@ -721,12 +720,12 @@ IBPIPolicyUtils:
 	        @constraint(lpmodel, con[s_index=1:n_states], n.value[s_index] + e <= sum(c[ni_id]*ni.value[s_index] for (ni_id, ni) in new_nodes))
 	        @constraint(lpmodel, con_sum, sum(c[i] for i in keys(new_nodes)) == 1)
 	        optimize!(lpmodel)
-			if debug[] == true
+			if :data in debug
 				println("node $(n.id) -> eps = $(JuMP.value(e))")
 			end
 	        if JuMP.value(e) >= -1e-10
 	            #rewiring function here!
-				if debug[] == true
+				if :data in debug
 					for i in keys(new_nodes)
 						print("c$(new_nodes[i].id) = $(JuMP.value(c[i])) ")
 					end
@@ -750,13 +749,13 @@ IBPIPolicyUtils:
 								end
 								if v > minval
 									if haskey(dict, dst_node)
-										@deb("updated probability of edge from node $(src_node.id) to $(dst_node.id)")
+										@deb("updated probability of edge from node $(src_node.id) to $(dst_node.id)", :flow)
 										dict[dst_node]+= v*old_prob
 										if dict[dst_node] > 1
 											error("probability > 1 after redirection!")
 										end
 									else
-										@deb("Added edge from node $(src_node.id) to $(dst_node.id)")
+										@deb("Added edge from node $(src_node.id) to $(dst_node.id)", :flow)
 										dict[dst_node] = v*old_prob
 										#update incomingEdgeDicts for new dst node
 										if haskey(dst_node.incomingEdgeDicts, src_node)
@@ -791,7 +790,7 @@ IBPIPolicyUtils:
 						end
 					end
 				end
-				if debug[] == true
+				if :flow in debug
 					println("Deleting node $(n.id): obj value = $(JuMP.value(e))")
 					println(n)
 				end
@@ -919,12 +918,12 @@ IBPIPolicyUtils:
 		temp_id = Dict{Int64, Int64}()
 		for real_id in keys(nodes)
 				temp_id[real_id] = node_counter
-				@deb("Node $real_id becomes $node_counter")
+				@deb("Node $real_id becomes $node_counter", :data )
 				node_counter+=1
 		end
 		#start of actual algorithm
 		for (n_id, node) in nodes
-			@deb("Node to be improved: $n_id")
+			@deb("Node to be improved: $n_id", :flow)
 			lpmodel = JuMP.Model(with_optimizer(GLPK.Optimizer))
 			#define variables for LP. c(a, n, z)
 			@variable(lpmodel, canz[a=1:n_actions, z=1:n_observations, n=1:n_nodes] >= 0.0)
@@ -966,7 +965,7 @@ IBPIPolicyUtils:
 			@constraint(lpmodel, con_sum[a=1:n_actions, z=1:n_observations], sum(canz[a, z, n] for n in 1:n_nodes) == ca[a])
 			@constraint(lpmodel, ca_sum, sum(ca[a] for a in 1:n_actions) == 1.0)
 
-			if debug[] == true
+			if :data in debug
 				print(lpmodel)
 			end
 
@@ -975,8 +974,7 @@ IBPIPolicyUtils:
 			@deb("$(termination_status(lpmodel))")
 			@deb("$(primal_status(lpmodel))")
 			@deb("$(dual_status(lpmodel))")
-			@deb("eps = $(JuMP.value(e))")
-			@deb("Obj = $(objective_value(lpmodel))")
+			@deb("Obj = $(objective_value(lpmodel))", :data)
 			if JuMP.objective_value(lpmodel) > minval
 				#means that node can be improved!
 				changed = true
@@ -1055,7 +1053,7 @@ IBPIPolicyUtils:
 					debug[] = false
 					#evaluate!(controller, pomdp)
 					debug[] = old_deb
-					if debug[] == true
+					if :data in debug
 						println("Changed controller after eval")
 						for (n_id, node) in controller.nodes
 							println(node)
@@ -1064,7 +1062,7 @@ IBPIPolicyUtils:
 				end
 				if add_one
 					#no need to update tangent points because they wont be used!
-					if debug[] == true
+					if :data in debug
 						println("Changed node after eval")
 						println(node)
 					end
@@ -1102,7 +1100,7 @@ IBPIPolicyUtils:
 		#new_nodes = collect(values(backed_up_controller.nodes))
 
 		debug[] = old_deb
-		#if debug[] == true
+		#if :data in debug
 		#	println("new_nodes:")
 		#	for node in new_nodes
 		#		println(node)
@@ -1158,11 +1156,11 @@ IBPIPolicyUtils:
 						end
 					end
 					if best_new_value - best_old_value > minval
-						@deb("in $new_b node $(best_new_node.id) has $best_new_value > $best_old_value")
+						@deb("in $new_b node $(best_new_node.id) has $best_new_value > $best_old_value", :data)
 						reworked_node = rework_node(controller, best_new_node)
 						controller.nodes[reworked_node.id] = reworked_node
 						controller.maxId+=1
-						@deb("Added node $(reworked_node.id)")
+						@deb("Added node $(reworked_node.id)", :data)
 
 						#experimental: redirect edge of chosen node to newly added nodes
 						#=
@@ -1171,7 +1169,7 @@ IBPIPolicyUtils:
 						@deb("edge redirected from $(best_old_node.id) to $(reworked_node.id)")
 						=#
 
-						if debug[] == true
+						if :data in debug
 							println(controller.nodes[reworked_node.id])
 						end
 						if add_one
