@@ -516,7 +516,7 @@ IBPIPolicyUtils:
 			b_action = collect(keys(b.actionProb))[1]
 			@assert a_action == b_action "action mismatch"
 			c = mergeNode(a, b, a_action, id)
-			if :flow in debug
+			if :data in debug
 				println("nodes merged: $id<- $(a.id), $(b.id)")
 				println(c)
 			end
@@ -660,7 +660,7 @@ IBPIPolicyUtils:
 						end
 					end
 				end
-				if :flow in debug
+				if :data in debug
 					println("Deleting node $(n.id): obj value = $(JuMP.value(e))")
 					println(n)
 				end
@@ -790,7 +790,7 @@ IBPIPolicyUtils:
 						end
 					end
 				end
-				if :flow in debug
+				if :data in debug
 					println("Deleting node $(n.id): obj value = $(JuMP.value(e))")
 					println(n)
 				end
@@ -911,6 +911,8 @@ IBPIPolicyUtils:
 		n_observations = POMDPs.n_observations(pomdp)
 		#vector containing the tangent belief states for all modified nodes
 		tangent_b = Dict{Int64, Array{Float64}}()
+		constraints = Array{ConstraintRef}(undef, n_states)
+
 		#if at least one node has been modified.
 		changed = false
 		#recompacting dict for controller
@@ -959,8 +961,7 @@ IBPIPolicyUtils:
 					end
 				end
 				#set constraint for a state
-				con = @constraint(lpmodel,  e + node.value[s_index] <= sum( M_a[a]*ca[a]+POMDPs.discount(pomdp)*sum(sum( M[a, z, n] * canz[a, z, n] for n in 1:n_nodes) for z in 1:n_observations) for a in 1:n_actions))
-				set_name(con, "$(s)")
+				constraints[s_index] = @constraint(lpmodel,  e + node.value[s_index] <= sum( M_a[a]*ca[a]+POMDPs.discount(pomdp)*sum(sum( M[a, z, n] * canz[a, z, n] for n in 1:n_nodes) for z in 1:n_observations) for a in 1:n_actions))
 			end
 			@constraint(lpmodel, con_sum[a=1:n_actions, z=1:n_observations], sum(canz[a, z, n] for n in 1:n_nodes) == ca[a])
 			@constraint(lpmodel, ca_sum, sum(ca[a] for a in 1:n_actions) == 1.0)
@@ -1070,7 +1071,7 @@ IBPIPolicyUtils:
 				end
 			end
 			#set the tangent_b of a node with -1 * dual of the constraint of each state.
-			tangent_b[n_id] = [-1*dual(constraint_by_name(lpmodel, "$(s)")) for s in states]
+			tangent_b[n_id] = [-1*dual(constraints[s_index]) for s_index in 1:n_states]
 		end
 		return changed, tangent_b
 	end

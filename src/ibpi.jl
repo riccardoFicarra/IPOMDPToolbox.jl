@@ -147,7 +147,9 @@ function actions(frame::Any)
 		error("Wrong frame type in observation function call")
 	end
 end
+
 function partial_backup!(controller::InteractiveController{A, W}, controller_j::AbstractController; minval = 0.0, add_one = true, debug_node = 0) where {S, A, W}
+	debug = Set([:flow])
 	#this time the matrix form is a1x1+...+anxn = b1
 	#sum(a,s)[sum(nz)[canz*[R(s,a)+gamma*sum(s')p(s'|s, a)p(z|s', a)v(nz,s')]] -eps = V(n,s)
 	#number of variables is |A||Z||N|+1 (canz and eps)
@@ -166,6 +168,7 @@ function partial_backup!(controller::InteractiveController{A, W}, controller_j::
 	observations_i = observations(frame)
 	observations_j = observations(frame)
 	n_observations = length(observations_i)
+	constraints = Array{ConstraintRef}(undef, n_states, n_nodes_j)
 	#vector containing the tangent belief states for all modified nodes
 	tangent_b = Dict{Int64, Array{Float64}}()
 	#dim = n_nodes*n_actions*n_observations
@@ -173,6 +176,7 @@ function partial_backup!(controller::InteractiveController{A, W}, controller_j::
 	#M_TR =  zeros(n_actions, n_observations, n_nodes)
 	#M_TL =  zeros(n_actions, n_observations, n_nodes)
 	temp_id = Dict{Int64, Int64}()
+	debug_complete_M = Vector{Array{Float64}}(undef,n_states)
 	for real_id in keys(nodes)
 			temp_id[real_id] = length(temp_id)+1
 			#@deb("Node $real_id becomes $node_counter")
@@ -183,7 +187,7 @@ function partial_backup!(controller::InteractiveController{A, W}, controller_j::
 			#@deb("Node $real_id becomes $node_counter")
 	end
 	for (n_id, node) in nodes
-		@deb("Node to be improved: $n_id")
+		@deb("Node to be improved: $n_id", :partial)
 		lpmodel = JuMP.Model(with_optimizer(GLPK.Optimizer))
 		#define variables for LP. c(a, n, z)
 		@variable(lpmodel, canz[a=1:n_actions, z=1:n_observations, n=1:n_nodes] >= 0.0)
@@ -236,13 +240,16 @@ function partial_backup!(controller::InteractiveController{A, W}, controller_j::
 						end
 					end
 				end
-				@deb("state $s, node $nj_id")
+				@deb("state $s, node $nj_id", :partial)
 				@deb(M)
 
 				#@deb(M_a)
 				#node.value[s_index, temp_id_j[nj_id]] is V(n, is)
-				con = @constraint(lpmodel, e + node.value[s_index, temp_id_j[nj_id]] <= sum( M_a[a]*ca[a]+ IPOMDPs.discount(frame)*sum(sum( M[a, z, n] * canz[a, z, n] for n in 1:n_nodes) for z in 1:n_observations) for a in 1:n_actions))
-				set_name(con, "$(s_index)_$(temp_id_j[nj_id])")
+				if :lpdual in debug
+					debug_complete_M[s_index] = copy(M)
+				end
+				constraints[s_index, temp_id_j[nj_id]] = @constraint(lpmodel, e + node.value[s_index, temp_id_j[nj_id]] <= sum( M_a[a]*ca[a]+ IPOMDPs.discount(frame)*sum(sum( M[a, z, n] * canz[a, z, n] for n in 1:n_nodes) for z in 1:n_observations) for a in 1:n_actions))
+				#set_name(con, "$(s_index)_$(temp_id_j[nj_id])")
 			end
 		end
 		#sum canz over a,n,z = 1
@@ -250,14 +257,15 @@ function partial_backup!(controller::InteractiveController{A, W}, controller_j::
 		@constraint(lpmodel, con_sum[a=1:n_actions, z=1:n_observations], sum(canz[a, z, n] for n in 1:n_nodes) == ca[a])
 		@constraint(lpmodel, ca_sum, sum(ca[a] for a in 1:n_actions) == 1.0)
 
-		#if :data in debug
-		#	print(lpmodel)
-		#end
+		if :lpdual in debug
+			print(lpmodel)
+		end
+
 
 		optimize!(lpmodel)
-		@deb("$(termination_status(lpmodel))")
-		@deb("$(primal_status(lpmodel))")
-		@deb("$(dual_status(lpmodel))")
+		@deb("$(termination_status(lpmodel))" , :data)
+		@deb("$(primal_status(lpmodel))", :data)
+		@deb("$(dual_status(lpmodel))", :data)
 
 		@deb("Obj = $(objective_value(lpmodel))")
 		if JuMP.objective_value(lpmodel) > minval
@@ -348,14 +356,15 @@ function partial_backup!(controller::InteractiveController{A, W}, controller_j::
 			for nj_id in keys(nodes_j)
 				@deb("nj = $nj_id")
 				@deb("nj_temp = $(temp_id_j[nj_id])")
-				con = constraint_by_name(lpmodel, "$(s_index)_$(temp_id_j[nj_id])")
-				tangent_belief[s_index, temp_id_j[nj_id]] =  -1*dual(con)
+				# con = constraint_by_name(lpmodel, "$(s_index)_$(temp_id_j[nj_id])")
+				tangent_belief[s_index, temp_id_j[nj_id]] =  -1*dual(constraints[s_index, temp_id_j[nj_id]])
 
-				#=
-				if tangent_belief[s, nj] <= 0.0
-					error("belief == $(tangent_belief[s, nj])")
+
+
+				if tangent_belief[s_index, temp_id_j[nj_id]] <= 0.0
+					@warn "belief == $(tangent_belief[s_index, temp_id_j[nj_id]])"
 				end
-				=#
+
 				@deb("state $s_index node $nj_id")
 				if :data in debug
 					println(con)
@@ -414,7 +423,7 @@ function full_backup_generate_nodes(controller::InteractiveController{A, W}, con
 				push!(new_nodes_a_z, new_node)
 				new_nodes_counter -=1
 			end
-			if :flow in debug
+			if :data in debug
 				println("New nodes created:")
 				for node in new_nodes_a_z
 					println(node)
@@ -653,9 +662,9 @@ function full_backup_stochastic!(controller::InteractiveController{A, W}, contro
 	#also assign permanent ids
 	nodes_counter = controller.maxId+1
 	for new_node in new_nodes
-		@deb("Node $(new_node.id) becomes node $(nodes_counter)")
+		@deb("Node $(new_node.id) becomes node $(nodes_counter)", :data)
 		new_node.id = nodes_counter
-		if :flow in debug
+		if :data in debug
 			println(new_node)
 		end
 		nodes_counter+=1
