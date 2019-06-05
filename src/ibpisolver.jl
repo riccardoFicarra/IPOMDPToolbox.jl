@@ -20,7 +20,7 @@ ibpisolver.jl:
 		:( :data in debug && println($(esc(str))) )
     end
     macro deb(str, type)
-		:( $type in debug && println($(esc(str))) )
+		:( $type in debug && println($(esc(str)))  )
     end
 
     include("bpipolicyutils.jl")
@@ -46,7 +46,7 @@ ibpisolver.jl:
 	"""
 	Default config values
 	"""
-	config = IBPISolver(0, 10, 1e-15, 300)
+	config = IBPISolver(0, 10, 1e-10, 300)
 
 
 	"""
@@ -62,9 +62,10 @@ ibpisolver.jl:
 	end
 
     function Base.println(controller::AbstractController)
-        for (id,node) in controller.nodes
+		for (id,node) in controller.nodes
             println(node)
         end
+		println("$(length(controller.nodes)) nodes")
     end
 
 
@@ -83,7 +84,12 @@ ibpisolver.jl:
         return IBPIPolicy{S, A, W}(controllers)
     end
 
-
+	function Base.println(policy::IBPIPolicy)
+		for l in 0:length(policy.controllers)-1
+		    println("Level $l")
+		    println(policy.controllers[l])
+		end
+	end
     """
         Return the policy type used by the solver. Since ReductionSolver is an online solver, the policy doesn't really exist.
         It is used as a container to maintain data through time
@@ -97,7 +103,8 @@ ibpisolver.jl:
     end
 
     function eval_and_improve!(policy::IBPIPolicy, level::Int64, maxlevel::Int64)
-        @deb("called @level $level", :flow)
+		debug = Set([:flow])
+		@deb("called @level $level", :flow)
         improved = false
     	if level >= 1
     		improved, tangent_b_vec = eval_and_improve!(policy, level-1, maxlevel)
@@ -115,17 +122,29 @@ ibpisolver.jl:
             if improved
                 @deb("Improved level 0", :flow)
                 @deb(policy.controllers[0], :data)
-            end
+            else
+				@deb("Did not improve level 0", :flow)
+				escaped = escape_optima_standard!(policy.controllers[0], tangent_b_vec[1]; minval = 1e-10)
+				improved == improved || escaped
+			end
     	else
             @deb("Level $level", :flow)
     		evaluate!(policy.controllers[level], policy.controllers[level-1])
+
             @deb(policy.controllers[level], :data)
 
-    		improved, tangent_b_vec[level+1] = partial_backup!(policy.controllers[level], policy.controllers[level-1]; minval = config.minval)
-            if improved
+    		improved_single, tangent_b_vec[level+1] = partial_backup!(policy.controllers[level], policy.controllers[level-1]; minval = config.minval)
+			if improved_single
                 @deb("Improved level $level", :flow)
                 @deb(policy.controllers[level], :data)
-            end
+            else
+				@deb("Did not improve level $level", :flow)
+				escaped_single = escape_optima_standard!(policy.controllers[level], policy.controllers[level-1], tangent_b_vec[level+1]; minval = config.minval)
+				improved_single = improved_single || escaped_single
+			end
+			# global debug = Set([])
+
+			improved = improved || improved_single
     	end
     	return improved, tangent_b_vec
     end
@@ -134,6 +153,7 @@ ibpisolver.jl:
         iterations = 0
         escaped = true
 		#full backup part to speed up
+
 		evaluate!(policy.controllers[0])
 		full_backup_stochastic!(policy.controllers[0]; minval = config.minval)
 		@deb("Level0 after full backup", :data)
@@ -154,23 +174,28 @@ ibpisolver.jl:
                 improved, tangent_b_vec = eval_and_improve!(policy, maxlevel, maxlevel)
                 iterations += 1
             end
-            for level in maxlevel:-1:1
-                evaluate!(policy.controllers[level], policy.controllers[level-1])
-                escaped_single = escape_optima_standard!(policy.controllers[level], policy.controllers[level-1], tangent_b_vec[level+1]; minval = config.minval)
-                escaped = escaped || escaped_single
-                if escaped_single
-                    @deb("Level $level: escaped", :flow)
-                    @deb(policy.controllers[level], :data)
-                    @deb(" ")
-
-                end
-            end
-            escaped = escape_optima_standard!(policy.controllers[0], tangent_b_vec[1]; minval = 1e-10)
-            if escaped
-                @deb("Level 0: escaped", :flow)
-                @deb(policy.controllers[0], :data)
-                @deb(" ")
-            end
+			@deb("Could not improve controllers anymore", :flow)
+			#@deb(improved, :flow)
+			# if !improved
+	        #     for level in maxlevel:-1:1
+	        #         evaluate!(policy.controllers[level], policy.controllers[level-1])
+			# 		@deb("Escaping lv$level")
+	        #         escaped_single = escape_optima_standard!(policy.controllers[level], policy.controllers[level-1], tangent_b_vec[level+1]; minval = config.minval)
+	        #         escaped = escaped || escaped_single
+	        #         if escaped_single
+	        #             @deb("Level $level: escaped", :flow)
+	        #             @deb(policy.controllers[level], :data)
+	        #             @deb(" ")
+			#
+	        #         end
+	        #     end
+	        #     escaped = escape_optima_standard!(policy.controllers[0], tangent_b_vec[1]; minval = 1e-10)
+	        #     if escaped
+	        #         @deb("Level 0: escaped", :flow)
+	        #         @deb(policy.controllers[0], :data)
+	        #         @deb(" ")
+	        #     end
+			# end
         end
     end
 	include("bpigraph.jl")

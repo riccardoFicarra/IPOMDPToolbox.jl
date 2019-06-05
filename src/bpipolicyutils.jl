@@ -227,10 +227,7 @@ IBPIPolicyUtils:
 		controller.nodes[10].edges[:L][:GL] = Dict(controller.nodes[2] => 1.0)
 		controller.nodes[10].edges[:L][:GR] = Dict(controller.nodes[7] => 1.0)
 		controller.maxId = 10
-		old_deb = debug[]
-		debug[] = false
-		evaluate!(controller, pomdp)
-		debug[] = old_deb
+		evaluate!(controller)
 		if :data in debug
 			println("Optimal controller for tiger game:")
 			for (node_id, node) in controller.nodes
@@ -263,10 +260,10 @@ IBPIPolicyUtils:
 		controller.nodes[6].edges[:L][:GL] = Dict(controller.nodes[1] => 1.0)
 		controller.nodes[6].edges[:L][:GR] = Dict(controller.nodes[3] => 0.69, controller.nodes[6] => 0.31)
 		controller.maxId = 6
-		old_deb = debug[]
-		debug[] = false
+		old_deb = debug
+		debug = false
 		evaluate!(controller, pomdp)
-		debug[] = old_deb
+		debug = old_deb
 		if :data in debug
 			println("Optimal controller for tiger game:")
 			for (node_id, node) in controller.nodes
@@ -283,10 +280,10 @@ IBPIPolicyUtils:
 		controller.nodes[2] = InitialNode(pomdp; force = 2)
 		controller.nodes[2].id = 2
 		controller.maxId = 2
-		old_deb = debug[]
-		debug[] = false
+		old_deb = debug
+		debug = false
 		evaluate!(controller, pomdp)
-		debug[] = old_deb
+		debug = old_deb
 		if :data in debug
 			println("Optimal controller for tiger game:")
 			for (node_id, node) in controller.nodes
@@ -482,7 +479,7 @@ IBPIPolicyUtils:
 	Follows Cassandra et al paper
 	"""
 	function incprune(nodeVec::Vector{Set{Node}}, startId::Int64, minval::Float64)
-		@deb("Called incprune, startId = $startId", :flow)
+		@deb("Called incprune, startId = $startId", :escape)
 		id = startId
 		id, xs = xsum(nodeVec[1], nodeVec[2], id)
 		res = filterNodes(xs, minval)
@@ -493,6 +490,7 @@ IBPIPolicyUtils:
 		end
 		=#
 		for i = 3:length(nodeVec)
+			@deb("Summing set $i", :escape)
 			id, xs = xsum(xs, nodeVec[i], id)
 			res = filterNodes(xs, minval)
 			#@deb("Length $i = $(length(nodeVec[i]))")
@@ -506,7 +504,8 @@ IBPIPolicyUtils:
 	Returns a new set of the cross-summed nodes.
 	"""
 	function xsum(A::Set{Node}, B::Set{Node}, startId::Int64)
-		@deb("Called xsum, startId = $startId", :flow)
+		@deb("Called xsum, startId = $startId", :escape)
+		@deb("$(length(A)) * $(length(B))", :escape)
 		X = Set{Node}()
 		id = startId
 	    for a in A, b in B
@@ -560,7 +559,11 @@ IBPIPolicyUtils:
 		Minval is the minimum probability that an edge can have. values below minval are treated as zero, values above 1-minval are treated as 1
 	"""
 	function filterNodes(nodes::Set{Node}, minval::Float64)
-		@deb("Called filterNodes, length(nodes) = $(length(nodes))", :flow)
+		return nodes
+		@deb("Called filterNodes, length(nodes) = $(length(nodes))", :escape)
+		if length(nodes) > 1000
+			@warn "Called filterNodes on $(length(nodes))"
+		end
 		if length(nodes) == 0
 			error("called FilterNodes on empty set")
 		end
@@ -592,9 +595,6 @@ IBPIPolicyUtils:
 	        @variable(lpmodel, e)
 	        @objective(lpmodel, Max, e)
 	        @constraint(lpmodel, con[s_index=1:n_states], n.value[s_index] + e <= sum(c[ni_id]*ni.value[s_index] for (ni_id, ni) in new_nodes))
-			#this constraint is used to avoid having edges with extremely low probability
-			#@constraint(lpmodel, con_small[i=keys(new_nodes)], c[i]*(c[i]-minval) >= 0)
-			#not supported by solver =(
 	        @constraint(lpmodel, con_sum, sum(c[i] for i in keys(new_nodes)) == 1)
 	        optimize!(lpmodel)
 			if :data in debug
@@ -681,7 +681,7 @@ IBPIPolicyUtils:
 		This version of filterNodes analyzes new nodes before old nodes to avoid rewiring in case of nodes with equal values
 	"""
 	function filterNodes(nodes::OrderedSet{Node}, minval::Float64)
-		@deb("Called filterNodes, length(nodes) = $(length(nodes))", :flow)
+		@deb("Called filterNodes, length(nodes) = $(length(nodes))", :data)
 		if length(nodes) == 0
 			error("called FilterNodes on empty set")
 		end
@@ -749,13 +749,13 @@ IBPIPolicyUtils:
 								end
 								if v > minval
 									if haskey(dict, dst_node)
-										@deb("updated probability of edge from node $(src_node.id) to $(dst_node.id)", :flow)
+										@deb("updated probability of edge from node $(src_node.id) to $(dst_node.id)", :data)
 										dict[dst_node]+= v*old_prob
 										if dict[dst_node] > 1
 											error("probability > 1 after redirection!")
 										end
 									else
-										@deb("Added edge from node $(src_node.id) to $(dst_node.id)", :flow)
+										@deb("Added edge from node $(src_node.id) to $(dst_node.id)", :data)
 										dict[dst_node] = v*old_prob
 										#update incomingEdgeDicts for new dst node
 										if haskey(dst_node.incomingEdgeDicts, src_node)
@@ -900,6 +900,7 @@ IBPIPolicyUtils:
 	# Return Boolean, Vector{Float64}
 	"""
 	function partial_backup!(controller::Controller{A, W}; minval = 0.0, add_one = true, debug_node = 0) where {A, W}
+		debug = Set()
 		pomdp = controller.frame
 		nodes = controller.nodes
 		n_nodes = length(keys(controller.nodes))
@@ -1050,10 +1051,10 @@ IBPIPolicyUtils:
 				node.edges = new_edges
 				node.actionProb = new_actions
 				if !add_one
-					old_deb = debug[]
-					debug[] = false
+					old_deb = debug
+					debug = Set()
 					#evaluate!(controller, pomdp)
-					debug[] = old_deb
+					debug = old_deb
 					if :data in debug
 						println("Changed controller after eval")
 						for (n_id, node) in controller.nodes
@@ -1081,6 +1082,7 @@ IBPIPolicyUtils:
 	"""
 	function escape_optima_standard!(controller::Controller{A, W}, tangent_b::Dict{Int64, Array{Float64}}; add_one=false, minval = 0.0) where {A, W}
 		#@deb("$tangent_b")
+		debug = Set()
 		pomdp = controller.frame
 		nodes = controller.nodes
 		n_nodes = length(keys(controller.nodes))
@@ -1094,13 +1096,12 @@ IBPIPolicyUtils:
 			error("tangent_b was empty!")
 		end
 
-		old_deb = debug[]
-		debug[] = false
+		# old_deb = debug
+		# debug = false
 
-		new_nodes = full_backup_generate_nodes(controller, minval)
-		#new_nodes = collect(values(backed_up_controller.nodes))
-
-		debug[] = old_deb
+		# new_nodes = full_backup_generate_nodes(controller, minval)
+		#
+		# debug = old_deb
 		#if :data in debug
 		#	println("new_nodes:")
 		#	for node in new_nodes
@@ -1117,49 +1118,25 @@ IBPIPolicyUtils:
 			@deb("$id - >$start_b")
 			for a in keys(nodes[id].actionProb)
 				for z in observations
-					new_b = Vector{Float64}(undef, n_states)
-					normalize = 0.0
-					for s_prime_index in 1:n_states
-						s_prime = states[s_prime_index]
-						sum_s = 0.0
-						p_z = POMDPModelTools.pdf(POMDPs.observation(pomdp, a, s_prime), z)
-						for s_index in 1:n_states
-							s = states[s_index]
-							p_s_prime =POMDPModelTools.pdf(POMDPs.transition(pomdp, s, a), s_prime)
-							sum_s+= p_s_prime*start_b[s_index]
-						end
-						new_b[s_prime_index] = p_z * sum_s
-						normalize += p_z * sum_s
-					end
-					for i in 1:n_states
-						new_b[i] = new_b[i] / normalize
-					end
+					new_b = belief_update(start_b, a, z, pomdp)
 					@deb("from belief $start_b action $a and obs $z -> $new_b")
 					push!(reachable_b, new_b)
-					#find the value of the current controller in the reachable belief state
-					best_old_node = nothing
-					best_old_value = 0.0
-					for (id,old_node) in controller.nodes
-						temp_value = new_b' * old_node.value
-						if best_old_node == nothing || best_old_value < temp_value
-							best_old_node = old_node
-							best_old_value = temp_value
-						end
-					end
-					#find the value of the backed up controller in the reachable belief state
-					best_new_node = nothing
-					best_new_value = 0.0
-					for new_node in new_nodes
-						new_value = new_b' * new_node.value
-						if best_new_node == nothing || best_new_value < new_value
-							best_new_node = new_node
-							best_new_value = new_value
-						end
-					end
+					#use the exponentially generated nodes
+					best_old_node, best_old_value = get_best_node(new_b, collect(values(controller.nodes)))
+					#best_new_node, best_new_value = get_best_node(new_b, collect(values(new_nodes)))
+					#generate node directly
+					best_new_node, best_new_value = generate_node_directly(controller, new_b)
+					# if best_new_value > best_new_value_direct + minval
+					# 	@warn "Two methods returned different nodes"
+					# 	println(best_new_node)
+					# 	println("best new_value: $best_new_value")
+					# 	println(best_new_node_direct)
+					# 	println("best new_value_direct: $best_new_value_direct")
+					# end
 					if best_new_value - best_old_value > minval
 						@deb("in $new_b node $(best_new_node.id) has $best_new_value > $best_old_value", :data)
-						reworked_node = rework_node(controller, best_new_node)
-						controller.nodes[reworked_node.id] = reworked_node
+						#reworked_node = rework_node(controller, best_new_node)
+						controller.nodes[best_new_node.id] = best_new_node
 						controller.maxId+=1
 						@deb("Added node $(reworked_node.id)", :data)
 
@@ -1188,6 +1165,55 @@ IBPIPolicyUtils:
 		return escaped
 	end
 
+	function belief_update(start_b::Array{Float64}, a::A, z::W, pomdp::POMDP) where{A, W}
+		states = POMDPs.states(pomdp)
+		n_states = length(states)
+		new_b = Vector{Float64}(undef, n_states)
+		normalize = 0.0
+		for s_prime_index in 1:n_states
+			s_prime = states[s_prime_index]
+			sum_s = 0.0
+			p_z = POMDPModelTools.pdf(POMDPs.observation(pomdp, a, s_prime), z)
+			for s_index in 1:n_states
+				s = states[s_index]
+				p_s_prime =POMDPModelTools.pdf(POMDPs.transition(pomdp, s, a), s_prime)
+				sum_s+= p_s_prime*start_b[s_index]
+			end
+			new_b[s_prime_index] = p_z * sum_s
+			normalize += p_z * sum_s
+		end
+		new_b = new_b ./ normalize
+		return new_b
+	end
+
+	function get_best_node(belief::Array{Float64}, nodes::Vector{Node{A, W}}) where {A, W}
+		best_node = nothing
+		best_value = 0.0
+		@assert length(belief) == length(nodes[1].value)
+		for node in nodes
+			value =  sum(belief[i] * node.value[i]  for i in 1:length(belief))
+			if best_node == nothing || best_value < value
+				best_node = node
+				best_value = value
+			end
+		end
+		return best_node, best_value
+	end
+
+	function get_best_node(belief::Array{Float64}, nodes::Vector{Node})
+		best_node = nothing
+		best_value = 0.0
+		@assert length(belief) == length(nodes[1].value)
+		for node in nodes
+			value =  sum(belief[i] * node.value[i]  for i in 1:length(belief))
+			if best_node == nothing || best_value < value
+				best_node = node
+				best_value = value
+			end
+		end
+		return best_node, best_value
+	end
+
 	function rework_node(controller::AbstractController, new_node::Node{A, W}) where {A, W}
 			id = controller.maxId+1
 			actionProb = copy(new_node.actionProb)
@@ -1204,4 +1230,39 @@ IBPIPolicyUtils:
 				end
 			end
 			return Node(id, actionProb,edges, value, Dict{Node, Vector{Dict{Node, Float64}}}())
+	end
+	function generate_node_directly(controller::Controller{A, W}, start_b::Array{Float64}) where {A, W}
+		actions = POMDPs.actions(controller.frame)
+		observations = POMDPs.observations(controller.frame)
+		n_observations = length(observations)
+
+		best_node = nothing
+		best_value = 0
+		for a in actions
+			#try all actions
+			new_node = nothing
+			for z_index in 1:n_observations
+				#find the best edge (aka the best next node) for each observation
+				z = observations[z_index]
+				#compute the result belief of executing action a and receiving obs z starting from belief b.
+				result_b = belief_update(start_b,a,z,controller.frame)
+				#get the best node in the controller for the updated beief
+				best_next_node, best_value_obs = get_best_node(result_b, collect(values(controller.nodes)))
+				new_v = node_value(best_next_node, a, z, controller.frame)
+				new_node_partial = build_node(controller.maxId+1, a, z, best_next_node, new_v)
+				#add that edge to the node and update the value vector
+				if z_index ==1
+					new_node = new_node_partial
+				else
+					new_node = mergeNode(new_node, new_node_partial, a,  controller.maxId+1)
+				end
+			end
+			#compute the best node (choose between actions)
+			new_value = sum(start_b[i]*new_node.value[i] for i in 1:length(start_b))
+			if best_node == nothing || best_value < new_value
+				best_node = new_node
+				best_value = new_value
+			end
+		end
+		return best_node, best_value
 	end
