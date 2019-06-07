@@ -46,7 +46,7 @@ function observation(frame::Any, s_prime::S, ai::A, aj::A) where {S, A}
 end
 
 
-# interactive -> interactive version
+
 function evaluate!(controller::InteractiveController{A,W},  controller_j::AbstractController) where {S, A, W}
 	ipomdp_i = controller.frame
 	frame_j = controller_j.frame
@@ -312,7 +312,11 @@ function partial_backup!(controller::InteractiveController{A, W}, controller_j::
 							end
 						end
 						if obs_total == 0.0
+							for nz_id in keys(nodes)
+								println("$(JuMP.value(canz[action_index, obs_index, temp_id[nz_id]]))")
+							end
 							error("sum of prob for obs $(observations_i[obs_index]) == 0")
+
 						end
 						new_edge_dict = Dict{Node, Float64}()
 						for (next, prob) in temp_edge_dict
@@ -345,6 +349,7 @@ function partial_backup!(controller::InteractiveController{A, W}, controller_j::
 			end
 			node.edges = new_edges
 			node.actionProb = new_actions
+			checkNode(node, controller, minval; normalize = true)
 			if add_one
 				#no need to update tangent points because they wont be used!
 				if :flow in debug
@@ -640,6 +645,7 @@ function escape_optima_standard!(controller::InteractiveController{A, W}, contro
 					@deb("in $new_b node $(best_new_node.id) has $best_new_value > $best_old_value", :escape)
 					#reworked_node = rework_node(controller, best_new_node)
 					#controller.nodes[reworked_node.id] = reworked_node
+					checkNode(best_new_node, controller, minval; normalize = true)
 					controller.nodes[best_new_node.id] = best_new_node
 
 					controller.maxId+=1
@@ -739,7 +745,7 @@ function rework_node(controller::AbstractController, new_node::Node{A, W}) where
 end
 
 
-function full_backup_stochastic!(controller::InteractiveController{A, W}, controller_j::AbstractController; minval = 0.0) where {A, W}
+function full_backup_stochastic!(controller::InteractiveController{A, W}, controller_j::AbstractController; minval = 1e-10) where {A, W}
 	debug = Set{Symbol}([])
 	nodes = controller.nodes
 	# observations = observations(controller_i.frame)
@@ -786,6 +792,7 @@ function full_backup_stochastic!(controller::InteractiveController{A, W}, contro
 	new_controller_nodes = Dict{Int64, Node{A, W}}()
 	for node in all_nodes
 		#add nodes to the controller
+		checkNode(node, controller, minval; normalize = true)
 		new_controller_nodes[node.id] = node
 	end
 	controller.nodes = new_controller_nodes

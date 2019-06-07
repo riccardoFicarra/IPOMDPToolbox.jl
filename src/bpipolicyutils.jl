@@ -106,31 +106,55 @@ IBPIPolicyUtils:
 			return InitialNode(actions, observations; force = force)
 		end
 	end
-	# function InitialNode(pomdp::POMDP{A, W}; force = 0) where {A, W}
-	# 		actions = POMDPs.actions(pomdp)
-	# 		observations = POMDPs.observations(pomdp)
-	# 		states = POMDPs.states(pomdp)
-	# 		n_states = POMDPs.n_states(pomdp)
-	# 		if force == 0
-	# 			actionindex = rand(1:length(actions))
-	# 		else
-	# 			if force > length(actions)
-	# 				error("forced action outside of action vector length")
-	# 			end
-	# 			actionindex = force
-	# 		end
-	# 		n = Node(1, [actions[actionindex]], observations)
-	# 		obsdict = Dict{W, Dict{Node, Float64}}()
-	# 		n.incomingEdgeDicts[n] = Vector{Dict{Node, Float64}}(undef, 0)
-	# 		for obs in observations
-	# 			edges = Dict{Node, Float64}(n => 1.0)
-	# 			obsdict[obs] = edges
-	# 			push!(n.incomingEdgeDicts[n], edges)
-	# 		end
-	# 		n.edges[actions[actionindex]] = obsdict
-	# 		n.value = [POMDPs.reward(pomdp, s, actions[actionindex]) for s in states]
-	# 		return n
-	# end
+
+	function checkNode(node::Node{A, W}, controller::AbstractController, minval::Float64; normalize = false) where {A, W}
+		obs_list = observations(controller.frame)
+		#check actionProb
+		tot = 0.0
+		for (action, prob) in node.actionProb
+			tot+= prob
+		end
+		if normalize && tot != 1.0
+			@deb("Normalizing $tot", :checkNodes)
+			for (action,prob) in node.actionProb
+				node.actionProb[action] = prob/tot
+			end
+		end
+		if !normalize && tot <= 1-minval || tot >= 1+minval
+			error("Sum of actionProb == $tot")
+		end
+
+		#check edges
+		for (action, obs_dict) in node.edges
+			#check that all observations are there
+			for obs in obs_list
+				if !haskey(obs_dict, obs)
+					error("Missing observation $obs")
+				end
+			end
+			for (obs, next_dict) in obs_dict
+				tot = 0.0
+				for (next, prob_next) in next_dict
+					if !haskey(controller.nodes, next.id)
+						error("Node $(next.id) not present in controller")
+					end
+					tot+= prob_next
+				end
+				if normalize && tot != 1
+					@deb("Normalizing edges $tot", :checkNodes)
+					for (next, prob_next) in next_dict
+						next_dict[next] = prob_next/tot
+					end
+				end
+				if !normalize && tot <= 1-minval || tot >= 1+minval
+					error("Sum of edges  == $tot")
+				end
+
+			end
+		end
+	end
+
+
 	"""
 	Randomly choose an action based on action probability given a node
 	returns action::A
@@ -191,6 +215,12 @@ IBPIPolicyUtils:
 			newNode = InitialNode(pomdp; force = force)
 		end
 		Controller{A, W}(pomdp, Dict(1 => newNode), 1)
+	end
+
+	function checkController(controller::AbstractController, minval::Float64)
+		for (n_id, node) in controller.nodes
+			checkNode(node, controller, minval)
+		end
 	end
 	"""
 	Hardcoded optimal tiger controller from Kaelbling's paper
@@ -393,7 +423,7 @@ IBPIPolicyUtils:
 	"""
 	Perform a full backup operation according to Pourpart and Boutilier's paper on Bounded finite state controllers
 	"""
-	function full_backup_stochastic!(controller::Controller{A, W}; minval=0.0) where {A, W}
+	function full_backup_stochastic!(controller::Controller{A, W}; minval=1e-10) where {A, W}
 		pomdp = controller.frame
 		nodes = controller.nodes
 		observations = POMDPs.observations(pomdp)
@@ -441,6 +471,7 @@ IBPIPolicyUtils:
 		for node in all_nodes
 			#add nodes to the controller
 			new_controller_nodes[node.id] = node
+			checkNode(node, controller, minval)
 		end
 		controller.nodes = new_controller_nodes
 		controller.maxId = new_max_id
@@ -1050,6 +1081,7 @@ IBPIPolicyUtils:
 				end
 				node.edges = new_edges
 				node.actionProb = new_actions
+				checkNode(node, controller, minval)
 				if !add_one
 					old_deb = debug
 					debug = Set()
@@ -1136,6 +1168,7 @@ IBPIPolicyUtils:
 					if best_new_value - best_old_value > minval
 						@deb("in $new_b node $(best_new_node.id) has $best_new_value > $best_old_value", :data)
 						#reworked_node = rework_node(controller, best_new_node)
+						checkNode(best_new_node, controller, minval)
 						controller.nodes[best_new_node.id] = best_new_node
 						controller.maxId+=1
 						@deb("Added node $(reworked_node.id)", :data)

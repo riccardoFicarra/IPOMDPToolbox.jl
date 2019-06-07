@@ -7,6 +7,7 @@ ibpisolver.jl:
 	using POMDPs
 	using IPOMDPs
 	using IPOMDPToolbox
+	using Dates
 	"""
 	Abstract type used for any controller, interactive or not.
 	"""
@@ -22,6 +23,7 @@ ibpisolver.jl:
     macro deb(str, type)
 		:( $type in debug && println($(esc(str)))  )
     end
+
 
     include("bpipolicyutils.jl")
     include("ibpi.jl")
@@ -90,6 +92,7 @@ ibpisolver.jl:
 		    println(policy.controllers[l])
 		end
 	end
+
     """
         Return the policy type used by the solver. Since ReductionSolver is an online solver, the policy doesn't really exist.
         It is used as a container to maintain data through time
@@ -153,7 +156,7 @@ ibpisolver.jl:
         iterations = 0
         escaped = true
 		#full backup part to speed up
-
+		start_time = datetime2unix(now())
 		evaluate!(policy.controllers[0])
 		full_backup_stochastic!(policy.controllers[0]; minval = config.minval)
 		@deb("Level0 after full backup", :data)
@@ -169,7 +172,7 @@ ibpisolver.jl:
             escaped = false
             improved = true
             tangent_b_vec = nothing
-            while improved && iterations <= max_iterations
+            while improved && iterations <= max_iterations && datetime2unix(now()) < start_time+config.timeout
                 @deb("Iteration $iterations / $max_iterations", :flow)
                 improved, tangent_b_vec = eval_and_improve!(policy, maxlevel, maxlevel)
                 iterations += 1
