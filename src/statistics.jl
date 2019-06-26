@@ -73,7 +73,7 @@ mutable struct time_statistics
     timers::Dict{String, Float64}
     start_times::Dict{String, Float64}
 end
-
+time_statistics() = time_statistics(Dict{String, Float64}(), Dict{String, Float64}())
 global time_stats = time_statistics(Dict{String, Float64}(), Dict{String, Float64}())
 
 function start_time(name::String)
@@ -111,5 +111,11 @@ end
 function print_time_stats()
     for name in sort(collect(keys(time_stats.timers)))
         println("$name : $(time_stats.timers[name])")
+    end
+end
+
+function print_time_stats(local_stats::time_statistics)
+    for name in sort(collect(keys(local_stats.timers)))
+        println("$name : $(local_stats.timers[name])")
     end
 end

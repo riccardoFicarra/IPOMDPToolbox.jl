@@ -202,12 +202,12 @@ ibpisolver.jl:
     end
 
 	function save_policy(policy::IBPIPolicy, name::String)
-		@save "savedcontrollers/$name.jld2" policy
+		@save "savedcontrollers/$name.jld2" policy time_stats
 	end
 
 	function load_policy(name::String)
-		@load "savedcontrollers/$name.jld2" policy
-		return policy
+		@load "savedcontrollers/$name.jld2" policy time_stats
+		return policy, time_stats
 	end
 	#include("bpigraph.jl")
 
@@ -280,7 +280,7 @@ ibpisolver.jl:
 		agent_i = IBPIAgent(policy.controllers[maxlevel], initial)
 
 		frame_j = policy.controllers[maxlevel-1].frame
-		anynode_j = first(policy.controllers[maxlevel].nodes)[2]
+		anynode_j = first(policy.controllers[maxlevel-1].nodes)[2]
 		initial_j = ones(size(anynode_j.value))
 		initial_j = initial_j ./ length(initial_j)
 		if maxlevel - 1 == 0
