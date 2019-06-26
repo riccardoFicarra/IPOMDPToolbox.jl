@@ -101,14 +101,18 @@ function evaluate!(controller::InteractiveController{A,W},  controller_j::Abstra
                                 @deb("s_prime = $s_prime")
                                 transition_i = POMDPModelTools.pdf(IPOMDPs.transition(ipomdp_i, s, ai, aj), s_prime)
                                 observation_i = POMDPModelTools.pdf(IPOMDPs.observation(ipomdp_i, s_prime, ai, aj), zi)
-                                @deb(transition_i)
+								partial_mult_start = p_ai * p_aj * IPOMDPs.discount(ipomdp_i) * transition_i * observation_i
+								@deb(transition_i)
                                 @deb(observation_i)
                                 for (zj, obs_dict_j) in nj.edges[aj]
                                     @deb("zj = $zj")
                                     observation_j = POMDPModelTools.pdf(observation(frame_j, s_prime, ai, aj), zj)
+									partial_mult_zj = partial_mult_start * observation_j
                                     for (n_prime_j, prob_j) in nj.edges[aj][zj]
+										partial_mult_pj = partial_mult_zj * prob_j
                                         for (n_prime_i, prob_i) in ni.edges[ai][zi]
-                                            M[s_index, temp_id_j[nj_id], temp_id[ni_id], s_prime_index, temp_id_j[n_prime_j.id], temp_id[n_prime_i.id]] -= p_ai * p_aj * IPOMDPs.discount(ipomdp_i) * transition_i * observation_i * observation_j * prob_j * prob_i
+                                            M[s_index, temp_id_j[nj_id], temp_id[ni_id], s_prime_index, temp_id_j[n_prime_j.id], temp_id[n_prime_i.id]] -= partial_mult_pj * prob_i
+											#M[s_index, temp_id_j[nj_id], temp_id[ni_id], s_prime_index, temp_id_j[n_prime_j.id], temp_id[n_prime_i.id]] -= p_ai * p_aj * IPOMDPs.discount(ipomdp_i) * transition_i * observation_i * observation_j * prob_j * prob_i
                                         end
                                     end
                                 end
@@ -237,19 +241,22 @@ function partial_backup!(controller::InteractiveController{A, W}, controller_j::
 								s_prime = states[s_prime_index]
 								transition_i =POMDPModelTools.pdf(IPOMDPs.transition(frame,s,ai, aj), s_prime)
 								observation_i = POMDPModelTools.pdf(observation(frame, s_prime, ai, aj), zi)
+								partial_mult_s_prime = p_aj * transition_i * observation_i
 								if transition_i != 0.0 && observation_i != 0.0
 									for (zj, obs_dict_j) in nj.edges[aj]
 										observation_j = POMDPModelTools.pdf(observation(frame_j, s_prime, ai, aj), zj)
+										partial_mult_zj = partial_mult_s_prime * observation_j
 										if observation_j != 0.0
 											for (n_prime_j, prob_j) in obs_dict_j
+												partial_mult_pj = partial_mult_zj * prob_j
 												for (n_prime_i_index, n_prime_i) in nodes
 													#n_prime_j is always n1 when you have two nodes!
 													v_nz_sp = n_prime_i.value[s_prime_index,temp_id_j[n_prime_j.id]]
-													#if n_id == 7 || n_id == 8
-													# @deb("state = $s, action_i = $ai, action_j = $aj, obs_i = $zi, obs_j = $zj n_prime_i = $(n_prime_i_index), s_prime = $s_prime", :lpdual)
-													# @deb("$transition_i * $observation_i * $observation_j * $prob_j * $v_nz_sp = $(p_aj* transition_i * observation_i * observation_j * prob_j * v_nz_sp)", :lpdual)
-													#end
-													M[ai_index, zi_index, temp_id[n_prime_i_index]]+= p_aj* transition_i * observation_i * observation_j * prob_j * v_nz_sp
+													#M[ai_index, zi_index, temp_id[n_prime_i_index]]+= p_aj* transition_i * observation_i * observation_j * prob_j * v_nz_sp
+													M[ai_index, zi_index, temp_id[n_prime_i_index]]+= partial_mult_pj * v_nz_sp
+													# if p_aj* transition_i * observation_i * observation_j * prob_j * v_nz_sp - partial_mult_pj * v_nz_sp > 1e-10
+													# 	error("Wrong partial mult")
+													# end
 												end
 											end
 										end
@@ -532,6 +539,7 @@ end
 
 function escape_optima_standard!(controller::InteractiveController{A, W}, controller_j::AbstractController, tangent_b::Dict{Int64, Array{Float64}}; add_all=false, minval = 0.0) where {A, W}
 	@deb("Entered escape_optima", :flow)
+	start_time("escape")
 	frame_i = controller.frame
 	frame_j = controller_j.frame
 	nodes = controller.nodes
@@ -683,10 +691,12 @@ function escape_optima_standard!(controller::InteractiveController{A, W}, contro
 		end
 	end
 	#@deb("$reachable_b")
+	stop_time("escape")
 	return escaped
 end
 
 function belief_update(start_b::Array{Float64}, ai::A, zi::W, frame_i::IPOMDP, controller_j::AbstractController) where {A, W}
+	start_time("escape_belief_update")
 	nodes_j = controller_j.nodes
 	n_nodes_j = length(nodes_j)
 	frame_j = controller_j.frame
@@ -745,6 +755,7 @@ function belief_update(start_b::Array{Float64}, ai::A, zi::W, frame_i::IPOMDP, c
 		error("normalization constant is $normalize !")
 	end
 	new_b = new_b  ./ normalize
+	stop_time("escape_belief_update")
 	return new_b
 end
 
@@ -822,6 +833,7 @@ function full_backup_stochastic!(controller::InteractiveController{A, W}, contro
 end
 
 function generate_node_directly(controller_i::InteractiveController{A, W}, controller_j::AbstractController, start_b::Array{Float64}, temp_id_j::Dict{Int64, Int64}) where {A, W, S}
+	start_time("escape_generate_node")
 	frame_i = controller_i.frame
 	actions_i = actions(frame_i)
 	observations_i = observations(frame_i)
@@ -856,5 +868,6 @@ function generate_node_directly(controller_i::InteractiveController{A, W}, contr
 			best_value = new_value
 		end
 	end
+	stop_time("escape_generate_node")
 	return best_node, best_value
 end

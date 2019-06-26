@@ -109,7 +109,7 @@ function reset_timers()
 end
 
 function print_time_stats()
-    for (name, time) in time_stats.timers
-        println("$name : $time")
+    for name in sort(collect(keys(time_stats.timers)))
+        println("$name : $(time_stats.timers[name])")
     end
 end
