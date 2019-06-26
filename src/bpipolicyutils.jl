@@ -956,8 +956,17 @@ IBPIPolicyUtils:
 				node_counter+=1
 		end
 		#start of actual algorithm
+		nodecounter= 0
 		for (n_id, node) in nodes
-			@deb("Node to be improved: $n_id", :flow)
+			@deb("Node to be improved: $n_id", :checkNodes)
+
+			nodecounter += 1
+			if :flow in debug && nodecounter >= (length(nodes)/100)
+				for i in 1:(nodecounter * 100 / length(nodes))
+					print("|")
+				end
+				nodecounter = 0
+			end
 			lpmodel = JuMP.Model(with_optimizer(GLPK.Optimizer))
 			#define variables for LP. c(a, n, z)
 			@variable(lpmodel, canz[a=1:n_actions, z=1:n_observations, n=1:n_nodes] >= 0.0)

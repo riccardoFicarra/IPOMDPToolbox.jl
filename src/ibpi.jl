@@ -48,6 +48,7 @@ end
 
 
 function evaluate!(controller::InteractiveController{A,W},  controller_j::AbstractController) where {S, A, W}
+	start_time("eval")
 	ipomdp_i = controller.frame
 	frame_j = controller_j.frame
     nodes = controller.nodes
@@ -74,7 +75,8 @@ function evaluate!(controller::InteractiveController{A,W},  controller_j::Abstra
     end
 
     #compute coefficients for sum(a)[R(s|a)*P(a|n)+gamma*sum(z, n', s')[P(s'|s,a)*P(z|s',a)*P(a|n)*P(n'|z)*V(nz, s')]]
-    for (ni_id, ni) in nodes
+	start_time("eval_coeff")
+	for (ni_id, ni) in nodes
         #M is the coefficient matrix (form x1 = a2x2+...+anxn+b)
         #b is the constant term vector
         #variables are all pairs of n,s
@@ -119,13 +121,17 @@ function evaluate!(controller::InteractiveController{A,W},  controller_j::Abstra
     end
     M_2d = reshape(M,n_states* n_nodes_j* n_nodes, n_states* n_nodes_j* n_nodes)
     b_1d = reshape(b, n_states* n_nodes_j* n_nodes)
+	stop_time("eval_coeff")
+	start_time("eval_solve")
     res_1d = M_2d \ b_1d
+	stop_time("eval_solve")
     res = reshape(res_1d, n_states, n_nodes_j, n_nodes)
     #copy respective value functions in nodes
     for (n_id, node) in nodes
         node.value = copy(res[:, :, temp_id[n_id]])
         @deb("Value vector of node $n_id = $(nodes[n_id].value)")
     end
+	stop_time("eval")
 end
 
 function observations(frame::Any)
@@ -153,6 +159,7 @@ function partial_backup!(controller::InteractiveController{A, W}, controller_j::
 	#this time the matrix form is a1x1+...+anxn = b1
 	#sum(a,s)[sum(nz)[canz*[R(s,a)+gamma*sum(s')p(s'|s, a)p(z|s', a)v(nz,s')]] -eps = V(n,s)
 	#number of variables is |A||Z||N|+1 (canz and eps)
+	start_time("partial")
 	type = :none
 	frame = controller.frame
 	frame_j = controller_j.frame
@@ -187,10 +194,19 @@ function partial_backup!(controller::InteractiveController{A, W}, controller_j::
 			temp_id_j[real_id_j] = length(temp_id_j)+1
 			#@deb("Node $real_id becomes $node_counter")
 	end
+	nodecounter= 0
 	for (n_id, node) in nodes
 
 
-		@deb("Node to be improved: $n_id", :flow)
+		@deb("Node to be improved: $n_id", :checkNodes)
+		nodecounter += 1
+		if :flow in debug && nodecounter >= (length(nodes)/100)
+			for i in 1:(nodecounter * 100 / length(nodes))
+				print("|")
+			end
+			nodecounter = 0
+		end
+
 		lpmodel = JuMP.Model(with_optimizer(GLPK.Optimizer))
 		#define variables for LP. c(a, n, z)
 		@variable(lpmodel, canz[a=1:n_actions, z=1:n_observations, n=1:n_nodes] >= 0.0)
@@ -199,6 +215,7 @@ function partial_backup!(controller::InteractiveController{A, W}, controller_j::
 		@variable(lpmodel, e)
 		@objective(lpmodel, Max, e)
 		#define constraints
+		start_time("partial_coeff")
 		for s_index in 1:n_states
 			s = states[s_index]
 			@deb("state $s", :lpdual)
@@ -255,16 +272,19 @@ function partial_backup!(controller::InteractiveController{A, W}, controller_j::
 				#set_name(con, "$(s_index)_$(temp_id_j[nj_id])")
 			end
 		end
-		#sum canz over a,n,z = 1
+		stop_time("partial_coeff")
 
+		#sum canz over a,n,z = 1
 		@constraint(lpmodel, con_sum[a=1:n_actions, z=1:n_observations], sum(canz[a, z, n] for n in 1:n_nodes) == ca[a])
 		@constraint(lpmodel, ca_sum, sum(ca[a] for a in 1:n_actions) == 1.0)
 
 		# if :lpdual in debug
 		# 	print(lpmodel)
 		# end
-
+		start_time("partial_optimize")
 		optimize!(lpmodel)
+		stop_time("partial_optimize")
+
 		@deb("has duals=$(has_duals(lpmodel))", :lpdual)
 
 		@deb("$(termination_status(lpmodel))" , :lpdual)
@@ -386,6 +406,8 @@ function partial_backup!(controller::InteractiveController{A, W}, controller_j::
 		@deb(tangent_belief, :lpdual)
 		tangent_b[n_id] = tangent_belief
 	end
+	@deb("", :flow)
+	stop_time("partial")
 	return changed, tangent_b
 end
 

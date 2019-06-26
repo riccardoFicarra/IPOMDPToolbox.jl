@@ -9,6 +9,7 @@ ibpisolver.jl:
 	using IPOMDPToolbox
 	using Dates
 	using JLD2
+
 	"""
 	Abstract type used for any controller, interactive or not.
 	"""
@@ -25,6 +26,7 @@ ibpisolver.jl:
 		:( $type in debug && println($(esc(str)))  )
     end
 
+	include("statistics.jl")
 
     include("bpipolicyutils.jl")
     include("ibpi.jl")
@@ -121,9 +123,10 @@ ibpisolver.jl:
 
     		evaluate!(policy.controllers[0])
             @deb(policy.controllers[0], :data)
+			start_time = datetime2unix(now())
 
     		improved, tangent_b_vec[1]  = partial_backup!(policy.controllers[0] ; minval = config.minval)
-
+			@deb("Elapsed time for level $level: $(datetime2unix(now()) - start_time)",:stats)
             if improved
                 @deb("Improved level 0", :flow)
                 @deb(policy.controllers[0], :data)
@@ -137,8 +140,12 @@ ibpisolver.jl:
     		evaluate!(policy.controllers[level], policy.controllers[level-1])
 
             @deb(policy.controllers[level], :data)
+			start_time = datetime2unix(now())
 
     		improved_single, tangent_b_vec[level+1] = partial_backup!(policy.controllers[level], policy.controllers[level-1]; minval = config.minval)
+
+			@deb("Elapsed time for level $level: $(datetime2unix(now()) - start_time)", :stats)
+
 			if improved_single
                 @deb("Improved level $level", :flow)
                 @deb(policy.controllers[level], :data)
@@ -160,15 +167,20 @@ ibpisolver.jl:
         escaped = true
 		#full backup part to speed up
 		start_time = datetime2unix(now())
+
 		evaluate!(policy.controllers[0])
-		full_backup_stochastic!(policy.controllers[0]; minval = config.minval)
+		if length(policy.controllers[0].nodes) <= 1
+			full_backup_stochastic!(policy.controllers[0]; minval = config.minval)
+		end
 		@deb("Level0 after full backup", :data)
 		@deb(policy.controllers[0], :data)
 		for level in 1:maxlevel
 			@deb("Level $level after full backup", :data)
 			evaluate!(policy.controllers[level], policy.controllers[level-1])
-			full_backup_stochastic!(policy.controllers[level], policy.controllers[level-1]; minval = config.minval)
-			@deb(policy.controllers[level], :data)
+			if length(policy.controllers[level].nodes) <= 1
+				full_backup_stochastic!(policy.controllers[level], policy.controllers[level-1]; minval = config.minval)
+				@deb(policy.controllers[level], :data)
+			end
 		end
 		#start of the actual algorithm
         while escaped  && iterations <= config.maxrep
@@ -301,75 +313,4 @@ ibpisolver.jl:
 		end
 		println()
 		return value/maxsteps , stats_i, stats_j
-	end
-
-	mutable struct stats
-
-		#agent_i
-		correct::Int64
-		wrong::Int64
-		listen::Int64
-
-		correct_z_l::Int64
-		correct_z_ol::Int64
-		correct_z_or::Int64
-
-		wrong_z_l::Int64
-		wrong_z_ol::Int64
-		wrong_z_or::Int64
-	end
-
-	stats() = stats(0,0,0,0,0,0,0,0,0)
-
-	function computestats(stats::stats, ai::A, aj::A, state::S, s_prime::S, zi::W, zj::W) where {S, A, W}
-		#action stats
-		if ai != :L
-			if (ai == :OL && state == :TR) || (ai == :OR && state == :TL)
-				stats.correct += 1
-			else
-				stats.wrong += 1
-			end
-		else
-			stats.listen += 1
-		end
-
-		#observation stats
-		if ai == :L
-			if aj == :L
-				if (s_prime == :TL && zi == :GLS) || (s_prime == :TR && zi == :GRS)
-					stats.correct_z_l += 1
-				else
-					stats.wrong_z_ol += 1
-				end
-			elseif aj == :OR
-				if (s_prime == :TL && zi == :GLCR) || (s_prime == :TR && zi == :GRCR)
-					stats.correct_z_or += 1
-				else
-					stats.wrong_z_or += 1
-				end
-			elseif aj == :OL
-				if (s_prime == :TL && zi == :GLCL) || (s_prime == :TR && zi == :GRCL)
-					stats.correct_z_ol += 1
-				else
-					stats.correct_z_ol += 1
-				end
-			end
-		end
-		return stats
-	end
-
-
-	function average_listens(stats::stats)
-		avg_l = stats.listen / (stats.correct + stats.wrong)
-		println("Average listens per opening: $avg_l")
-
-	end
-
-	function average_correct_obs(stats::stats)
-		avg_l = stats.correct_z_l / (stats.wrong_z_l + stats.correct_z_l)
-		avg_or = stats.correct_z_or / (stats.wrong_z_or + stats.correct_z_or)
-		avg_ol = stats.correct_z_ol / (stats.wrong_z_ol + stats.correct_z_ol)
-		println("avg_l: $avg_l")
-		println("avg_or: $avg_or")
-		println("avg_ol: $avg_ol")
 	end
