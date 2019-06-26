@@ -272,16 +272,23 @@ ibpisolver.jl:
 	function IBPIsimulate(policy::IBPIPolicy, maxsteps::Int64) where {S, A, W}
 		stats_i = stats()
 		stats_j = stats()
-		frame_i = policy.controllers[2].frame
-		initial = ones(length(IPOMDPs.states(frame_i)), length(policy.controllers[1].nodes))
+		maxlevel = length(policy.controllers) -1
+		frame_i = policy.controllers[maxlevel].frame
+		anynode = first(policy.controllers[maxlevel].nodes)[2]
+		initial = ones(size(anynode.value))
 		initial = initial ./ length(initial)
-		agent_i = IBPIAgent(policy.controllers[2], initial)
+		agent_i = IBPIAgent(policy.controllers[maxlevel], initial)
 
-		frame_j = policy.controllers[1].frame
-		initial_j = ones(length(IPOMDPs.states(frame_j)), length(policy.controllers[0].nodes))
+		frame_j = policy.controllers[maxlevel-1].frame
+		anynode_j = first(policy.controllers[maxlevel].nodes)[2]
+		initial_j = ones(size(anynode_j.value))
 		initial_j = initial_j ./ length(initial_j)
-		agent_j = IBPIAgent(policy.controllers[1], initial_j)
+		if maxlevel - 1 == 0
+			agent_j = BPIAgent(policy.controllers[maxlevel-1], initial_j)
 
+		else
+			agent_j = IBPIAgent(policy.controllers[maxlevel-1], initial_j)
+		end
 		state = randn() > 0.5 ? :TL : :TR
 		value = 0.0
 		for i in 1:95
@@ -307,7 +314,7 @@ ibpisolver.jl:
 			update_agent!(agent_i, ai, zi)
 			update_agent!(agent_j, aj, zj)
 			stats_i = computestats(stats_i, ai, aj, state, s_prime, zi, zj)
-			stats_j = computestats(stats_j, aj, ai, state, s_prime, zj, zi)
+			#stats_j = computestats(stats_j, aj, ai, state, s_prime, zj, zi)
 
 			state = s_prime
 		end
