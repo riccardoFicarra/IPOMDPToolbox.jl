@@ -31,7 +31,7 @@ function computestats(stats::stats, ai::A, aj::A, state::S, s_prime::S, zi::W, z
     #observation stats
     if ai == :L
         if aj == :L
-            if (s_prime == :TL && zi == :GLS) || (s_prime == :TR && zi == :GRS)
+            if (s_prime == :TL && (zi == :GLS || zi == :GL) ) || (s_prime == :TR && (zi == :GRS || zi == :GR) ) || 
                 stats.correct_z_l += 1
             else
                 stats.wrong_z_l += 1
