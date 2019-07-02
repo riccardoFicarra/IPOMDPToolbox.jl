@@ -37,7 +37,7 @@ end
 
 function observation(frame::Any, s_prime::S, ai::A, aj::A) where {S, A}
 	if typeof(frame) <: POMDP
-		return POMDPs.observation(frame, aj, s_prime)
+		return POMDPs.observation(frame, s_prime, aj)
 	elseif typeof(frame) <: IPOMDP
 		return IPOMDPs.observation(frame, s_prime, ai, aj)
 	else

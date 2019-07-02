@@ -881,7 +881,7 @@ IBPIPolicyUtils:
 								if p_s_prime == 0.0
 									continue
 								end
-								p_z = POMDPModelTools.pdf(POMDPs.observation(pomdp,a, s_prime), obs)
+								p_z = POMDPModelTools.pdf(POMDPs.observation(pomdp,s_prime, a), obs)
 								@deb("p_z = $p_z")
 								for (next, prob) in node.edges[a][obs]
 									if !haskey(controller.nodes, next.id)
