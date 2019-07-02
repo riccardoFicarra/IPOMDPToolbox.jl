@@ -19,6 +19,7 @@ ibpisolver.jl:
     Snippet to have debug utility. Use @deb(String) to print debug info
     """
     global debug = Set{Symbol}()
+
 	macro deb(str)
 		:( :data in debug && println($(esc(str))) )
     end
@@ -27,7 +28,6 @@ ibpisolver.jl:
     end
 
 	include("statistics.jl")
-
     include("bpipolicyutils.jl")
     include("ibpi.jl")
 
@@ -132,7 +132,7 @@ ibpisolver.jl:
                 @deb(policy.controllers[0], :data)
             else
 				@deb("Did not improve level 0", :flow)
-				escaped = escape_optima_standard!(policy.controllers[0], tangent_b_vec[1]; minval = 1e-10)
+				escaped = escape_optima_standard!(policy.controllers[0], tangent_b_vec[1]; add_one = false, minval = 1e-10)
 				improved == improved || escaped
 			end
     	else
@@ -151,7 +151,7 @@ ibpisolver.jl:
                 @deb(policy.controllers[level], :data)
             else
 				@deb("Did not improve level $level", :flow)
-				escaped_single = escape_optima_standard!(policy.controllers[level], policy.controllers[level-1], tangent_b_vec[level+1]; minval = config.minval)
+				escaped_single = escape_optima_standard!(policy.controllers[level], policy.controllers[level-1], tangent_b_vec[level+1];add_one = false, minval = config.minval)
 				improved_single = improved_single || escaped_single
 			end
 			# global debug = Set([])
@@ -172,14 +172,14 @@ ibpisolver.jl:
 		if length(policy.controllers[0].nodes) <= 1
 			full_backup_stochastic!(policy.controllers[0]; minval = config.minval)
 		end
-		@deb("Level0 after full backup", :data)
-		@deb(policy.controllers[0], :data)
+		@deb("Level0 after full backup", :example)
+		@deb(policy.controllers[0], :example)
 		for level in 1:maxlevel
-			@deb("Level $level after full backup", :data)
 			evaluate!(policy.controllers[level], policy.controllers[level-1])
 			if length(policy.controllers[level].nodes) <= 1
 				full_backup_stochastic!(policy.controllers[level], policy.controllers[level-1]; minval = config.minval)
-				@deb(policy.controllers[level], :data)
+				@deb("Level $level after full backup", :example)
+				@deb(policy.controllers[level], :example)
 			end
 		end
 		#start of the actual algorithm
@@ -202,11 +202,11 @@ ibpisolver.jl:
     end
 
 	function save_policy(policy::IBPIPolicy, name::String)
-		@save "savedcontrollers/$name.jld2" policy time_stats
+		@save "savedcontrollers/$name.jld2" policy #time_stats
 	end
 
 	function load_policy(name::String)
-		@load "savedcontrollers/$name.jld2" policy time_stats
+		@load "savedcontrollers/$name.jld2" policy #time_stats
 		return policy, time_stats
 	end
 	#include("bpigraph.jl")
@@ -235,7 +235,21 @@ ibpisolver.jl:
 		agent.current_node = chooseWithProbability(agent.current_node.edges[action][observation])
 	end
 	function compute_s_prime(state::S, ai::A, aj::A, frame::IPOMDP) where {S, A}
-		dist = IPOMDPs.transition(ipomdp, state, ai, aj)
+		dist = IPOMDPs.transition(frame, state, ai, aj)
+		items = dist.probs
+		randn = rand() #number in [0, 1)
+		for i in 1:length(dist.vals)
+			if randn <= items[i]
+				return dist.vals[i]
+			else
+				randn-= items[i]
+			end
+		end
+		error("Out of dict bounds while choosing items")
+	end
+
+	function compute_s_prime(state::S, ai::A, aj::A, frame::POMDP) where {S, A}
+		dist = POMDPs.transition(frame, state, ai)
 		items = dist.probs
 		randn = rand() #number in [0, 1)
 		for i in 1:length(dist.vals)
@@ -262,12 +276,19 @@ ibpisolver.jl:
 		error("Out of dict bounds while choosing items")
 	end
 
-	function execute_step(state::S, ai::A, aj::A, frame::IPOMDP) where {S, A}
-		new_state = compute_s_prime(state, ai, aj, frame)
-		observation = compute_observation(s_prime, ai, aj, frame)
-		return new_state, observation
+	function compute_observation(s_prime::S, ai::A, aj::A, frame::POMDP) where {S, A}
+		dist = POMDPs.observation(frame, s_prime, ai)
+		items = dist.probs
+		randn = rand() #number in [0, 1)
+		for i in 1:length(dist.vals)
+			if randn <= items[i]
+				return dist.vals[i]
+			else
+				randn-= items[i]
+			end
+		end
+		error("Out of dict bounds while choosing items")
 	end
-
 
 	function IBPIsimulate(policy::IBPIPolicy, maxsteps::Int64) where {S, A, W}
 		stats_i = stats()
@@ -284,7 +305,7 @@ ibpisolver.jl:
 		initial_j = ones(size(anynode_j.value))
 		initial_j = initial_j ./ length(initial_j)
 		if maxlevel - 1 == 0
-			agent_j = BPIAgent(policy.controllers[maxlevel-1], initial_j)
+			agent_j = IBPIAgent(policy.controllers[maxlevel-1], initial_j)
 
 		else
 			agent_j = IBPIAgent(policy.controllers[maxlevel-1], initial_j)
@@ -314,7 +335,7 @@ ibpisolver.jl:
 			update_agent!(agent_i, ai, zi)
 			update_agent!(agent_j, aj, zj)
 			stats_i = computestats(stats_i, ai, aj, state, s_prime, zi, zj)
-			#stats_j = computestats(stats_j, aj, ai, state, s_prime, zj, zi)
+			stats_j = computestats(stats_j, aj, ai, state, s_prime, zj, zi)
 
 			state = s_prime
 		end

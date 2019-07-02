@@ -146,7 +146,7 @@ IBPIPolicyUtils:
 						next_dict[next] = prob_next/tot
 					end
 				end
-				if !normalize && tot <= 1-minval || tot >= 1+minval
+				if !normalize && (tot <= 1-minval || tot >= 1+minval)
 					error("Sum of edges  == $tot")
 				end
 
@@ -510,7 +510,7 @@ IBPIPolicyUtils:
 	Follows Cassandra et al paper
 	"""
 	function incprune(nodeVec::Vector{Set{Node}}, startId::Int64, minval::Float64)
-		@deb("Called incprune, startId = $startId", :escape)
+		@deb("Called incprune, startId = $startId", :full)
 		id = startId
 		id, xs = xsum(nodeVec[1], nodeVec[2], id)
 		res = filterNodes(xs, minval)
@@ -521,7 +521,7 @@ IBPIPolicyUtils:
 		end
 		=#
 		for i = 3:length(nodeVec)
-			@deb("Summing set $i", :escape)
+			@deb("Summing set $i", :full)
 			id, xs = xsum(xs, nodeVec[i], id)
 			res = filterNodes(xs, minval)
 			#@deb("Length $i = $(length(nodeVec[i]))")
@@ -535,8 +535,8 @@ IBPIPolicyUtils:
 	Returns a new set of the cross-summed nodes.
 	"""
 	function xsum(A::Set{Node}, B::Set{Node}, startId::Int64)
-		@deb("Called xsum, startId = $startId", :escape)
-		@deb("$(length(A)) * $(length(B))", :escape)
+		@deb("Called xsum, startId = $startId", :full)
+		@deb("$(length(A)) * $(length(B))", :full)
 		X = Set{Node}()
 		id = startId
 	    for a in A, b in B
@@ -591,7 +591,7 @@ IBPIPolicyUtils:
 	"""
 	function filterNodes(nodes::Set{Node}, minval::Float64)
 		return nodes
-		@deb("Called filterNodes, length(nodes) = $(length(nodes))", :escape)
+		@deb("Called filterNodes, length(nodes) = $(length(nodes))", :full)
 		if length(nodes) > 1000
 			@warn "Called filterNodes on $(length(nodes))"
 		end
@@ -931,7 +931,6 @@ IBPIPolicyUtils:
 	# Return Boolean, Vector{Float64}
 	"""
 	function partial_backup!(controller::Controller{A, W}; minval = 0.0, add_one = true, debug_node = 0) where {A, W}
-		debug = Set()
 		pomdp = controller.frame
 		nodes = controller.nodes
 		n_nodes = length(keys(controller.nodes))
@@ -961,7 +960,7 @@ IBPIPolicyUtils:
 			@deb("Node to be improved: $n_id", :checkNodes)
 
 			nodecounter += 1
-			if :flow in debug && nodecounter >= (length(nodes)/100)
+			if nodecounter >= (length(nodes)/100)
 				for i in 1:(nodecounter * 100 / length(nodes))
 					print("|")
 				end
@@ -1007,9 +1006,7 @@ IBPIPolicyUtils:
 			@constraint(lpmodel, con_sum[a=1:n_actions, z=1:n_observations], sum(canz[a, z, n] for n in 1:n_nodes) == ca[a])
 			@constraint(lpmodel, ca_sum, sum(ca[a] for a in 1:n_actions) == 1.0)
 
-			if :data in debug
-				print(lpmodel)
-			end
+			@deb(lpmodel, :data)
 
 			optimize!(lpmodel)
 
@@ -1096,7 +1093,7 @@ IBPIPolicyUtils:
 					debug = Set()
 					#evaluate!(controller, pomdp)
 					debug = old_deb
-					if :data in debug
+					if :example in debug
 						println("Changed controller after eval")
 						for (n_id, node) in controller.nodes
 							println(node)
@@ -1105,10 +1102,8 @@ IBPIPolicyUtils:
 				end
 				if add_one
 					#no need to update tangent points because they wont be used!
-					if :data in debug
-						println("Changed node after eval")
-						println(node)
-					end
+					@deb("Changed node after eval", :example)
+					@deb(node, :example)
 					return true, Dict{Int64, Array{Float64}}()
 				end
 			end
@@ -1121,9 +1116,8 @@ IBPIPolicyUtils:
 	Tries to escape local optima by adding new nodes to the controller.
 	Default behavior is to add all nodes that improve reachable beliefs of a single node.
 	"""
-	function escape_optima_standard!(controller::Controller{A, W}, tangent_b::Dict{Int64, Array{Float64}}; add_one=false, minval = 0.0) where {A, W}
+	function escape_optima_standard!(controller::Controller{A, W}, tangent_b::Dict{Int64, Array{Float64}}; add_one=true, minval = 0.0) where {A, W}
 		#@deb("$tangent_b")
-		debug = Set()
 		pomdp = controller.frame
 		nodes = controller.nodes
 		n_nodes = length(keys(controller.nodes))
@@ -1152,7 +1146,7 @@ IBPIPolicyUtils:
 
 
 		escaped = false
-		reachable_b = Set{Vector{Float64}}()
+		reachable_beliefs = Set{Vector{Float64}}()
 		for (id, start_b) in tangent_b
 			#id = collect(keys(tangent_b))[1]
 			#start_b = tangent_b[id]
@@ -1161,46 +1155,41 @@ IBPIPolicyUtils:
 				for z in observations
 					new_b = belief_update(start_b, a, z, pomdp)
 					@deb("from belief $start_b action $a and obs $z -> $new_b")
-					push!(reachable_b, new_b)
-					#use the exponentially generated nodes
-					best_old_node, best_old_value = get_best_node(new_b, collect(values(controller.nodes)))
-					#best_new_node, best_new_value = get_best_node(new_b, collect(values(new_nodes)))
-					#generate node directly
-					best_new_node, best_new_value = generate_node_directly(controller, new_b)
-					# if best_new_value > best_new_value_direct + minval
-					# 	@warn "Two methods returned different nodes"
-					# 	println(best_new_node)
-					# 	println("best new_value: $best_new_value")
-					# 	println(best_new_node_direct)
-					# 	println("best new_value_direct: $best_new_value_direct")
-					# end
-					if best_new_value - best_old_value > minval
-						@deb("in $new_b node $(best_new_node.id) has $best_new_value > $best_old_value", :data)
-						#reworked_node = rework_node(controller, best_new_node)
-						checkNode(best_new_node, controller, minval)
-						controller.nodes[best_new_node.id] = best_new_node
-						controller.maxId+=1
-						@deb("Added node $(reworked_node.id)", :data)
 
-						#experimental: redirect edge of chosen node to newly added nodes
-						#=
-						old_prob = 1.0 #nodes[id].edges[a][z][best_old_node]
-						nodes[id].edges[a][z] = Dict(reworked_node => old_prob)
-						@deb("edge redirected from $(best_old_node.id) to $(reworked_node.id)")
-						=#
+					if add_one
+						best_old_node, best_old_value = get_best_node(new_b, collect(values(controller.nodes)))
+						#generate node directly
+						best_new_node, best_new_value = generate_node_directly(controller, new_b)
+						if best_new_value - best_old_value > minval
+							@deb("in $new_b node $(best_new_node.id) has $best_new_value > $best_old_value", :data)
+							#reworked_node = rework_node(controller, best_new_node)
+							checkNode(best_new_node, controller, minval)
+							controller.nodes[best_new_node.id] = best_new_node
+							controller.maxId+=1
+							@deb("Added node $(best_new_node.id) to improve $id", :example)
 
-						if :data in debug
-							println(controller.nodes[reworked_node.id])
-						end
-						if add_one
+
+							@deb(best_new_node, :example)
 							return true
 						end
-						escaped = true
+					else
+						push!(reachable_beliefs, new_b)
 					end
 				end
 			end
-			if escaped && !add_one
-				return true
+		end
+		if !add_one
+			for reachable_b in reachable_beliefs
+				best_old_node, best_old_value = get_best_node(reachable_b, collect(values(controller.nodes)))
+				#generate node directly
+				best_new_node, best_new_value = generate_node_directly(controller, reachable_b)
+				@deb("in $new_b node $(best_new_node.id) has $best_new_value > $best_old_value", :data)
+				#reworked_node = rework_node(controller, best_new_node)
+				checkNode(best_new_node, controller, minval)
+				controller.nodes[best_new_node.id] = best_new_node
+				controller.maxId+=1
+				@deb("Added node $(best_new_node.id) to improve $reachable_b", :example)
+				@deb(best_new_node, :example)
 			end
 		end
 		#@deb("$reachable_b")
@@ -1229,12 +1218,17 @@ IBPIPolicyUtils:
 	end
 
 	function get_best_node(belief::Array{Float64}, nodes::Vector{Node{A, W}}) where {A, W}
+		@deb("started get_best_node", :bestnode)
 		best_node = nothing
 		best_value = 0.0
 		@assert length(belief) == length(nodes[1].value)
 		for node in nodes
+			@deb(" belief: $belief, value = $value")
+
 			value =  sum(belief[i] * node.value[i]  for i in 1:length(belief))
+			@deb(" new = $value, best =  $best_value", :bestnode)
 			if best_node == nothing || best_value < value
+				@deb("updating $(node.id)", :bestnode)
 				best_node = node
 				best_value = value
 			end
@@ -1243,36 +1237,41 @@ IBPIPolicyUtils:
 	end
 
 	function get_best_node(belief::Array{Float64}, nodes::Vector{Node})
+		@deb("started get_best_node", :bestnode)
+
 		best_node = nothing
 		best_value = 0.0
 		@assert length(belief) == length(nodes[1].value)
 		for node in nodes
+			@deb(" belief: $belief, value = $value")
 			value =  sum(belief[i] * node.value[i]  for i in 1:length(belief))
+			@deb(" new = $value, best =  $best_value", :bestnode)
 			if best_node == nothing || best_value < value
+				@deb("new best node $(node.id)", :bestnode)
 				best_node = node
 				best_value = value
 			end
 		end
 		return best_node, best_value
 	end
-
-	function rework_node(controller::AbstractController, new_node::Node{A, W}) where {A, W}
-			id = controller.maxId+1
-			actionProb = copy(new_node.actionProb)
-			value = copy(new_node.value)
-			edges = Dict{A, Dict{W, Dict{Node, Float64}}}()
-			for (a, obs_dict) in new_node.edges
-				edges[a] = Dict{W, Dict{Node, Float64}}()
-				for (z, node_dict) in obs_dict
-					edges[a][z] = Dict{Node,Float64}()
-					for (node, prob) in node_dict
-						current_controller_node = controller.nodes[node.id]
-						edges[a][z][current_controller_node] = prob
-					end
-				end
-			end
-			return Node(id, actionProb,edges, value, Dict{Node, Vector{Dict{Node, Float64}}}())
-	end
+	#
+	# function rework_node(controller::AbstractController, new_node::Node{A, W}) where {A, W}
+	# 		id = controller.maxId+1
+	# 		actionProb = copy(new_node.actionProb)
+	# 		value = copy(new_node.value)
+	# 		edges = Dict{A, Dict{W, Dict{Node, Float64}}}()
+	# 		for (a, obs_dict) in new_node.edges
+	# 			edges[a] = Dict{W, Dict{Node, Float64}}()
+	# 			for (z, node_dict) in obs_dict
+	# 				edges[a][z] = Dict{Node,Float64}()
+	# 				for (node, prob) in node_dict
+	# 					current_controller_node = controller.nodes[node.id]
+	# 					edges[a][z][current_controller_node] = prob
+	# 				end
+	# 			end
+	# 		end
+	# 		return Node(id, actionProb,edges, value, Dict{Node, Vector{Dict{Node, Float64}}}())
+	# end
 	function generate_node_directly(controller::Controller{A, W}, start_b::Array{Float64}) where {A, W}
 		actions = POMDPs.actions(controller.frame)
 		observations = POMDPs.observations(controller.frame)

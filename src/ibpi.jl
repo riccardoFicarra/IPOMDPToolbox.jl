@@ -123,6 +123,8 @@ function evaluate!(controller::InteractiveController{A,W},  controller_j::Abstra
             end
         end
     end
+	#TL, all njs, only ni = 1, goes to TL
+	# @deb(M[1, :, temp_id[1], 1, :, temp_id[1]], :example)
     M_2d = reshape(M,n_states* n_nodes_j* n_nodes, n_states* n_nodes_j* n_nodes)
     b_1d = reshape(b, n_states* n_nodes_j* n_nodes)
 	stop_time("eval_coeff")
@@ -343,7 +345,6 @@ function partial_backup!(controller::InteractiveController{A, W}, controller_j::
 								println("$(JuMP.value(canz[action_index, obs_index, temp_id[nz_id]]))")
 							end
 							error("sum of prob for obs $(observations_i[obs_index]) == 0")
-
 						end
 						new_edge_dict = Dict{Node, Float64}()
 						for (next, prob) in temp_edge_dict
@@ -379,10 +380,11 @@ function partial_backup!(controller::InteractiveController{A, W}, controller_j::
 			checkNode(node, controller, minval; normalize = true)
 			if add_one
 				#no need to update tangent points because they wont be used!
-				if :flow in debug
+				if :example in debug
 					println("Changed node after eval")
 					println(node)
 				end
+				@deb("", :flow)
 				return true, Dict{Int64, Array{Float64}}()
 			end
 		end
@@ -419,7 +421,7 @@ function partial_backup!(controller::InteractiveController{A, W}, controller_j::
 end
 
 function full_backup_generate_nodes(controller::InteractiveController{A, W}, controller_j::AbstractController, minval::Float64) where {A, W}
-	@deb("Generating nodes", :escape)
+	@deb("Generating nodes", :full)
 	minval = 1e-10
 	frame = controller.frame
 	frame_j = controller_j.frame
@@ -440,7 +442,7 @@ function full_backup_generate_nodes(controller::InteractiveController{A, W}, con
 	#for each node iterate on s and s' to produce a new node
 	#new node is tied to old node?, action a and obs z
 	#with stochastic pruning we get the cis needed
-	if :escape in debug
+	if :full in debug
 		println("Current controller:")
 		println(controller)
 	end
@@ -474,12 +476,12 @@ function full_backup_generate_nodes(controller::InteractiveController{A, W}, con
 			# 		println(node)
 			# 	end
 			# end
-			@deb("$(length(new_nodes_a_z)) nodes created for observation $(observations_i[zi_index])", :escape)
+			@deb("$(length(new_nodes_a_z)) nodes created for observation $(observations_i[zi_index])", :full)
 			new_nodes_z[zi_index] = filterNodes(new_nodes_a_z, minval)
-			@deb("$(length(new_nodes_z[zi_index])) nodes added after filtering for observation $(observations_i[zi_index])", :escape)
+			@deb("$(length(new_nodes_z[zi_index])) nodes added after filtering for observation $(observations_i[zi_index])", :full)
 		end
 		#set that contains all nodes generated from action a after incremental pruning
-		if :escape in debug
+		if :full in debug
 			println("new nodes counter = $new_nodes_counter")
 			println("calling incprune for action $ai")
 		end
@@ -537,7 +539,7 @@ function node_value(ni::Node{A, W}, ai::A, zi::W, controller_j::AbstractControll
 end
 
 
-function escape_optima_standard!(controller::InteractiveController{A, W}, controller_j::AbstractController, tangent_b::Dict{Int64, Array{Float64}}; add_all=false, minval = 0.0) where {A, W}
+function escape_optima_standard!(controller::InteractiveController{A, W}, controller_j::AbstractController, tangent_b::Dict{Int64, Array{Float64}}; add_one = false, minval = 0.0) where {A, W}
 	@deb("Entered escape_optima", :flow)
 	start_time("escape")
 	frame_i = controller.frame
@@ -583,7 +585,7 @@ function escape_optima_standard!(controller::InteractiveController{A, W}, contro
 
 
 	escaped = false
-	reachable_b = Set{Array{Float64}}()
+	reachable_beliefs = Set{Array{Float64}}()
 	for (id, start_b) in tangent_b
 		#id = collect(keys(tangent_b))[1]
 		#start_b = tangent_b[id]
@@ -591,108 +593,56 @@ function escape_optima_standard!(controller::InteractiveController{A, W}, contro
 		@deb("$id - >$start_b", :escape)
 		for ai in keys(nodes[id].actionProb)
 			for zi in observations_i
-				# new_b = zeros(n_states, n_nodes_j)
-				# normalize = 0.0
-				# for s_prime_index in 1:n_states
-				# 	s_prime = states[s_prime_index]
-				# 	for s_index in 1:n_states
-				# 		s = states[s_index]
-				# 		for (nj_id, nj) in nodes_j
-				# 			@deb("$(start_b[s_index, temp_id_j[nj_id]])")
-				# 			if start_b[s_index, temp_id_j[nj_id]] == 0.0
-				# 				continue
-				# 			end
-				# 			for (aj, aj_prob) in nj.actionProb
-				# 				transition_i = POMDPModelTools.pdf(IPOMDPs.transition(frame_i, s, ai, aj), s_prime)
-				# 				observation_i = POMDPModelTools.pdf(IPOMDPs.observation(frame_i, s_prime, ai, aj), zi)
-				# 				if transition_i == 0.0 || observation_i == 0.0 || aj_prob == 0.0
-				# 					continue
-				# 				end
-				# 				@deb("\t $aj_prob $transition_i $observation_i")
-				# 				for (zj, obs_dict) in nj.edges[aj]
-				# 					observation_j = POMDPModelTools.pdf(observation(frame_j, s_prime, ai, aj), zj)
-				# 					if observation_j == 0.0
-				# 						continue
-				# 					end
-				# 					@deb("\t\t $observation_j")
-				# 					for (n_prime_j, prob_j) in obs_dict
-				# 						#FIXME is this the right prob to use? last element of 1.8
-				# 						@deb("start_b = $(start_b[s_index, temp_id_j[nj_id]])")
-				# 						@deb("adding $(start_b[s_index, temp_id_j[nj_id]]) * $aj_prob * $transition_i* $observation_i * $observation_j * $prob_j")
-				# 						@deb("adding $(start_b[s_index, temp_id_j[nj_id]] * aj_prob * transition_i* observation_i * observation_j * prob_j)")
-				# 						new_b[s_prime_index, temp_id_j[n_prime_j.id]] += start_b[s_index, temp_id_j[nj_id]] * aj_prob * transition_i* observation_i * observation_j * prob_j
-				# 						normalize += start_b[s_index, temp_id_j[nj_id]] * aj_prob * transition_i* observation_i * observation_j * prob_j
-				# 					end
-				# 				end
-				# 			end
-				# 		end
-				# 	end
-				# end
-				# if normalize == 0.0
-				# 	error("normalization constant is $normalize !")
-				# end
-				# new_b = new_b  ./ normalize
+
 				new_b = belief_update(start_b, ai, zi, frame_i, controller_j)
 				#node = generate_node_directly(controller, controller_j, new_b)
 				@deb("from belief $start_b action $ai and obs $zi -> $new_b", :escape)
-				push!(reachable_b, new_b)
-				# find the value of the current controller in the reachable belief state
-				# best_old_node = nothing
-				# best_old_value = 0.0
-				# for (id,old_node) in controller.nodes
-				# 	@deb("new_b = $new_b")
-				# 	@deb("old value = $(old_node.value)")
-				# 	temp_value = sum(sum(new_b[s, n] * old_node.value[s, n] for s in 1:n_states) for n in 1:n_nodes_j)
-				# 	@deb("temp value = $temp_value")
-				# 	if best_old_node == nothing || best_old_value < temp_value
-				# 		best_old_node = old_node
-				# 		best_old_value = temp_value
-				# 	end
-				# end
-				best_old_node, best_old_value = get_best_node(new_b, collect(values(controller.nodes)))
-				#@assert best_old_node_alt == best_old_node
-				if :escape in debug
-					println("Best old node:")
-					println(best_old_node)
-				end
-				#find the value of the backed up controller in the reachable belief state
-				# best_new_node = nothing
-				# best_new_value = 0.0
-				# for new_node in new_nodes
-				# 	@deb("new_b = $new_b")
-				# 	@deb("new value = $(new_node.value)")
-				# 	new_value =  sum(sum(new_b[s, n] * new_node.value[s, n] for s in 1:n_states) for n in 1:n_nodes_j)
-				# 	@deb("new value tot= $new_value")
-				# 	if best_new_node == nothing || best_new_value < new_value
-				# 		best_new_node = new_node
-				# 		best_new_value = new_value
-				# 	end
-				# end
-				#best_new_node, best_new_value = get_best_node(new_b, collect(values(new_nodes)))
-				#@assert best_new_node_alt == best_new_node
-				best_new_node, best_new_value = generate_node_directly(controller, controller_j, new_b, temp_id_j)
-				if best_new_value - best_old_value > minval
-					@deb("in $new_b node $(best_new_node.id) has $best_new_value > $best_old_value", :escape)
-					#reworked_node = rework_node(controller, best_new_node)
-					#controller.nodes[reworked_node.id] = reworked_node
-					checkNode(best_new_node, controller, minval; normalize = true)
-					controller.nodes[best_new_node.id] = best_new_node
-
-					controller.maxId+=1
-					@deb("Added node $(best_new_node.id)", :escape)
-
-					@deb(controller.nodes[best_new_node.id])
-					escaped = true
+				if add_one
+					escaped =  add_escape_node(new_b, controller, controller_j, temp_id_j)
+					stop_time("escape")
+					return escaped
+				else
+					push!(reachable_beliefs, new_b)
 				end
 			end
 		end
-		if escaped && !add_all
-			return true
+		#break here if you want to improve only the first tangent belief point
+	end
+	#by accumulating reachable beliefs into a set duplicates are eliminated = less computation
+	if !add_one
+		for reachable_b in reachable_beliefs
+			escaped = escaped || add_escape_node!(reachable_b, controller, controller_j, temp_id_j)
 		end
 	end
 	#@deb("$reachable_b")
 	stop_time("escape")
 	return escaped
+end
+
+function add_escape_node!(new_b::Array{Float64}, controller::InteractiveController{S, A, W}, controller_j::AbstractController, temp_id_j::Dict{Int64, Int64}) where {S, A, W}
+	minval = config.minval
+	best_old_node, best_old_value = get_best_node(new_b, collect(values(controller.nodes)))
+	#@assert best_old_node_alt == best_old_node
+	if :escape in debug
+		println("Best old node:")
+		println(best_old_node)
+	end
+
+	best_new_node, best_new_value = generate_node_directly(controller, controller_j, new_b, temp_id_j)
+	if best_new_value - best_old_value > minval
+		@deb("in $new_b node $(best_new_node.id) has $best_new_value > $best_old_value", :escape)
+		#reworked_node = rework_node(controller, best_new_node)
+		#controller.nodes[reworked_node.id] = reworked_node
+		checkNode(best_new_node, controller, minval; normalize = true)
+		controller.nodes[best_new_node.id] = best_new_node
+		#not the cleanest solution to keep track of ids but hey it works
+		controller.maxId+=1
+		@deb("Added node $(best_new_node.id) to improve belief $new_b", :example)
+
+		@deb(controller.nodes[best_new_node.id], :example)
+		return true
+	end
+	return false
 end
 
 function belief_update(start_b::Array{Float64}, ai::A, zi::W, frame_i::IPOMDP, controller_j::AbstractController) where {A, W}
@@ -759,23 +709,23 @@ function belief_update(start_b::Array{Float64}, ai::A, zi::W, frame_i::IPOMDP, c
 	return new_b
 end
 
-function rework_node(controller::AbstractController, new_node::Node{A, W}) where {A, W}
-		id = controller.maxId+1
-		actionProb = copy(new_node.actionProb)
-		value = copy(new_node.value)
-		edges = Dict{A, Dict{W, Dict{Node, Float64}}}()
-		for (a, obs_dict) in new_node.edges
-			edges[a] = Dict{W, Dict{Node, Float64}}()
-			for (z, node_dict) in obs_dict
-				edges[a][z] = Dict{Node,Float64}()
-				for (node, prob) in node_dict
-					current_controller_node = controller.nodes[node.id]
-					edges[a][z][current_controller_node] = prob
-				end
-			end
-		end
-		return Node(id, actionProb,edges, value, Dict{Node, Vector{Dict{Node, Float64}}}())
-end
+# function rework_node(controller::AbstractController, new_node::Node{A, W}) where {A, W}
+# 		id = controller.maxId+1
+# 		actionProb = copy(new_node.actionProb)
+# 		value = copy(new_node.value)
+# 		edges = Dict{A, Dict{W, Dict{Node, Float64}}}()
+# 		for (a, obs_dict) in new_node.edges
+# 			edges[a] = Dict{W, Dict{Node, Float64}}()
+# 			for (z, node_dict) in obs_dict
+# 				edges[a][z] = Dict{Node,Float64}()
+# 				for (node, prob) in node_dict
+# 					current_controller_node = controller.nodes[node.id]
+# 					edges[a][z][current_controller_node] = prob
+# 				end
+# 			end
+# 		end
+# 		return Node(id, actionProb,edges, value, Dict{Node, Vector{Dict{Node, Float64}}}())
+# end
 
 
 function full_backup_stochastic!(controller::InteractiveController{A, W}, controller_j::AbstractController; minval = 1e-10) where {A, W}
