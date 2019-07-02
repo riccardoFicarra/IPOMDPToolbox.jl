@@ -495,7 +495,7 @@ IBPIPolicyUtils:
 			for s_prime in transition_dist.vals
 				s_prime_index = POMDPs.stateindex(pomdp, s_prime)
 				p_s_prime = POMDPModelTools.pdf(transition_dist, s_prime)
-				p_obs = POMDPModelTools.pdf(POMDPs.observation(pomdp, action, s_prime), observation)
+				p_obs = POMDPModelTools.pdf(POMDPs.observation(pomdp, s_prime, action), observation)
 				@deb("$action, $state, $observation, $s_prime", :data)
 				@deb("$(next_node.value[s_prime_index]) * $(p_obs) * $(p_s_prime)", :data)
 				sum+= next_node.value[s_prime_index] * p_obs * p_s_prime
@@ -881,7 +881,7 @@ IBPIPolicyUtils:
 								if p_s_prime == 0.0
 									continue
 								end
-								p_z = POMDPModelTools.pdf(POMDPs.observation(pomdp, a, s_prime), obs)
+								p_z = POMDPModelTools.pdf(POMDPs.observation(pomdp,a, s_prime), obs)
 								@deb("p_z = $p_z")
 								for (next, prob) in node.edges[a][obs]
 									if !haskey(controller.nodes, next.id)
@@ -989,7 +989,7 @@ IBPIPolicyUtils:
 						#array of edges given observation
 						for s_prime in s_primes
 							p_s_prime =POMDPModelTools.pdf(POMDPs.transition(pomdp,s,action), s_prime)
-							p_z = POMDPModelTools.pdf(POMDPs.observation(pomdp, action, s_prime), obs)
+							p_z = POMDPModelTools.pdf(POMDPs.observation(pomdp, s_prime, action), obs)
 							if p_s_prime != 0.0 && p_z != 0.0
 								for (nz_id, nz) in nodes
 									#iterate over all possible n_prime
@@ -1204,7 +1204,7 @@ IBPIPolicyUtils:
 		for s_prime_index in 1:n_states
 			s_prime = states[s_prime_index]
 			sum_s = 0.0
-			p_z = POMDPModelTools.pdf(POMDPs.observation(pomdp, a, s_prime), z)
+			p_z = POMDPModelTools.pdf(POMDPs.observation(pomdp, s_prime, a), z)
 			for s_index in 1:n_states
 				s = states[s_index]
 				p_s_prime =POMDPModelTools.pdf(POMDPs.transition(pomdp, s, a), s_prime)
