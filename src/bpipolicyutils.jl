@@ -107,7 +107,7 @@ IBPIPolicyUtils:
 		end
 	end
 
-	function checkNode(node::Node{A, W}, controller::AbstractController, minval::Float64; normalize = false) where {A, W}
+	function checkNode(node::Node{A, W}, controller::AbstractController, minval::Float64; normalize = false, checkDistinct = true) where {A, W}
 		obs_list = observations(controller.frame)
 		#check actionProb
 		tot = 0.0
@@ -152,8 +152,46 @@ IBPIPolicyUtils:
 
 			end
 		end
+		if checkDistinct
+			for (id, other_node) in controller.nodes
+				if node.id != other_node.id && nodeequal(node, other_node)
+					println("new node:")
+					println(node)
+					println("old node:")
+					println(other_node)
+					error("New node is already present as $(other_node.id)")
+				end
+			end
+		end
 	end
 
+	function nodeequal(a::Node{A, W}, b::Node{A, W}) where {A, W}
+		minval = config.minval
+		# for i in 1:length(a.value)
+		# 	if abs(a.value[i] - b.value[i]) > config.minval
+		# 		return false
+		# 	end
+		# end
+		# return true
+
+		for (action, prob) in a.actionProb
+			if !haskey(b.actionProb, action) || (b.actionProb[action] - prob) > minval
+				return false
+			end
+		end
+		#actions are the same
+		for (action, action_dict) in a.edges
+			for (obs, obs_dict) in action_dict
+				for (next, prob) in obs_dict
+					b_obs_dict = b.edges[action][obs]
+					if !haskey(b_obs_dict, next) || abs(b_obs_dict[next] - prob) > minval
+						return false
+					end
+				end
+			end
+		end
+		return true
+	end
 
 	"""
 	Randomly choose an action based on action probability given a node
@@ -471,7 +509,7 @@ IBPIPolicyUtils:
 		for node in all_nodes
 			#add nodes to the controller
 			new_controller_nodes[node.id] = node
-			checkNode(node, controller, minval)
+			checkNode(node, controller, minval; checkDistinct = false)
 		end
 		controller.nodes = new_controller_nodes
 		controller.maxId = new_max_id
@@ -1183,13 +1221,15 @@ IBPIPolicyUtils:
 				best_old_node, best_old_value = get_best_node(reachable_b, collect(values(controller.nodes)))
 				#generate node directly
 				best_new_node, best_new_value = generate_node_directly(controller, reachable_b)
-				@deb("in $new_b node $(best_new_node.id) has $best_new_value > $best_old_value", :data)
-				#reworked_node = rework_node(controller, best_new_node)
-				checkNode(best_new_node, controller, minval)
-				controller.nodes[best_new_node.id] = best_new_node
-				controller.maxId+=1
-				@deb("Added node $(best_new_node.id) to improve $reachable_b", :example)
-				@deb(best_new_node, :example)
+				if best_new_value - best_old_value > config.minval
+					@deb("in $new_b node $(best_new_node.id) has $best_new_value > $best_old_value", :data)
+					#reworked_node = rework_node(controller, best_new_node)
+					checkNode(best_new_node, controller, minval)
+					controller.nodes[best_new_node.id] = best_new_node
+					controller.maxId+=1
+					@deb("Added node $(best_new_node.id) to improve $reachable_b", :example)
+					@deb(best_new_node, :example)
+				end
 			end
 		end
 		#@deb("$reachable_b")

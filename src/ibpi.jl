@@ -203,7 +203,6 @@ function partial_backup!(controller::InteractiveController{A, W}, controller_j::
 	nodecounter= 0
 	for (n_id, node) in nodes
 
-
 		@deb("Node to be improved: $n_id", :checkNodes)
 		nodecounter += 1
 		if :flow in debug && nodecounter >= (length(nodes)/100)
@@ -590,13 +589,13 @@ function escape_optima_standard!(controller::InteractiveController{A, W}, contro
 		#id = collect(keys(tangent_b))[1]
 		#start_b = tangent_b[id]
 		@deb(start_b)
-		@deb("$id - >$start_b", :escape)
+		@deb("$id - >$start_b", :belief)
 		for ai in keys(nodes[id].actionProb)
 			for zi in observations_i
 
 				new_b = belief_update(start_b, ai, zi, frame_i, controller_j)
 				#node = generate_node_directly(controller, controller_j, new_b)
-				@deb("from belief $start_b action $ai and obs $zi -> $new_b", :escape)
+				@deb("from belief $start_b action $ai and obs $zi -> $new_b", :belief)
 				if add_one
 					escaped =  add_escape_node(new_b, controller, controller_j, temp_id_j)
 					stop_time("escape")
@@ -775,7 +774,7 @@ function full_backup_stochastic!(controller::InteractiveController{A, W}, contro
 	new_controller_nodes = Dict{Int64, Node{A, W}}()
 	for node in all_nodes
 		#add nodes to the controller
-		checkNode(node, controller, minval; normalize = true)
+		checkNode(node, controller, minval; normalize = true, checkDistinct = false)
 		new_controller_nodes[node.id] = node
 	end
 	controller.nodes = new_controller_nodes
