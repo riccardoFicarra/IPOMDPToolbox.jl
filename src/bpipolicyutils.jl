@@ -154,7 +154,7 @@ IBPIPolicyUtils:
 		end
 		if checkDistinct
 			for (id, other_node) in controller.nodes
-				if node.id != other_node.id && nodeequal(node, other_node)
+				if node.id != other_node.id && nodeequal(node, other_node) && nodeequal(other_node, node)
 					println("new node:")
 					println(node)
 					println("old node:")
@@ -167,12 +167,13 @@ IBPIPolicyUtils:
 
 	function nodeequal(a::Node{A, W}, b::Node{A, W}) where {A, W}
 		minval = config.minval
+
 		# for i in 1:length(a.value)
 		# 	if abs(a.value[i] - b.value[i]) > config.minval
 		# 		return false
 		# 	end
 		# end
-		# return true
+		# @warn("Value vector of $(a.id) and $(b.id) are equal")
 
 		for (action, prob) in a.actionProb
 			if !haskey(b.actionProb, action) || (b.actionProb[action] - prob) > minval
@@ -255,9 +256,9 @@ IBPIPolicyUtils:
 		Controller{A, W}(pomdp, Dict(1 => newNode), 1)
 	end
 
-	function checkController(controller::AbstractController, minval::Float64)
+	function checkController(controller::AbstractController, minval::Float64; checkDistinct = false)
 		for (n_id, node) in controller.nodes
-			checkNode(node, controller, minval)
+			checkNode(node, controller, minval; checkDistinct = true)
 		end
 	end
 	"""
@@ -1127,10 +1128,6 @@ IBPIPolicyUtils:
 				node.actionProb = new_actions
 				checkNode(node, controller, minval)
 				if !add_one
-					old_deb = debug
-					debug = Set()
-					#evaluate!(controller, pomdp)
-					debug = old_deb
 					if :example in debug
 						println("Changed controller after eval")
 						for (n_id, node) in controller.nodes
@@ -1140,14 +1137,16 @@ IBPIPolicyUtils:
 				end
 				if add_one
 					#no need to update tangent points because they wont be used!
-					@deb("Changed node after eval", :example)
-					@deb(node, :example)
+					println()
+					@deb("Changed node, value still to be recomputed", :flow)
+					@deb(node, :flow)
 					return true, Dict{Int64, Array{Float64}}()
 				end
 			end
 			#set the tangent_b of a node with -1 * dual of the constraint of each state.
 			tangent_b[n_id] = [-1*dual(constraints[s_index]) for s_index in 1:n_states]
 		end
+		println()
 		return changed, tangent_b
 	end
 	"""
@@ -1195,21 +1194,7 @@ IBPIPolicyUtils:
 					@deb("from belief $start_b action $a and obs $z -> $new_b")
 
 					if add_one
-						best_old_node, best_old_value = get_best_node(new_b, collect(values(controller.nodes)))
-						#generate node directly
-						best_new_node, best_new_value = generate_node_directly(controller, new_b)
-						if best_new_value - best_old_value > minval
-							@deb("in $new_b node $(best_new_node.id) has $best_new_value > $best_old_value", :data)
-							#reworked_node = rework_node(controller, best_new_node)
-							checkNode(best_new_node, controller, minval)
-							controller.nodes[best_new_node.id] = best_new_node
-							controller.maxId+=1
-							@deb("Added node $(best_new_node.id) to improve $id", :example)
-
-
-							@deb(best_new_node, :example)
-							return true
-						end
+						return add_escape_node!(new_b, controller)
 					else
 						push!(reachable_beliefs, new_b)
 					end
@@ -1218,22 +1203,29 @@ IBPIPolicyUtils:
 		end
 		if !add_one
 			for reachable_b in reachable_beliefs
-				best_old_node, best_old_value = get_best_node(reachable_b, collect(values(controller.nodes)))
-				#generate node directly
-				best_new_node, best_new_value = generate_node_directly(controller, reachable_b)
-				if best_new_value - best_old_value > config.minval
-					@deb("in $new_b node $(best_new_node.id) has $best_new_value > $best_old_value", :data)
-					#reworked_node = rework_node(controller, best_new_node)
-					checkNode(best_new_node, controller, minval)
-					controller.nodes[best_new_node.id] = best_new_node
-					controller.maxId+=1
-					@deb("Added node $(best_new_node.id) to improve $reachable_b", :example)
-					@deb(best_new_node, :example)
-				end
+				escaped = escaped || add_escape_node!(reachable_b, controller)
 			end
 		end
 		#@deb("$reachable_b")
 		return escaped
+	end
+
+	function add_escape_node!(reachable_b::Array{Float64}, controller::Controller{A, W}) where {A, W}
+		best_old_node, best_old_value = get_best_node(reachable_b, collect(values(controller.nodes)))
+		#generate node directly
+		best_new_node, best_new_value = generate_node_directly(controller, reachable_b)
+		if best_new_value - best_old_value > config.minval
+			@deb("in $reachable_b node $(best_new_node.id) has $best_new_value > $best_old_value", :escape)
+			@deb("best old node:", :generatenode)
+			@deb(best_old_node, :generatenode)
+			checkNode(best_new_node, controller, config.minval)
+			controller.nodes[best_new_node.id] = best_new_node
+			controller.maxId+=1
+			@deb("Added node $(best_new_node.id) to improve $reachable_b", :flow)
+			@deb(best_new_node, :flow)
+			return true
+		end
+		return false
 	end
 
 	function belief_update(start_b::Array{Float64}, a::A, z::W, pomdp::POMDP) where{A, W}

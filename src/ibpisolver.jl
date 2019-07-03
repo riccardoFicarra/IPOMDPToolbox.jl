@@ -125,7 +125,7 @@ ibpisolver.jl:
             @deb(policy.controllers[0], :data)
 			start_time = datetime2unix(now())
 
-    		improved, tangent_b_vec[1]  = partial_backup!(policy.controllers[0] ; minval = config.minval)
+    		improved, tangent_b_vec[1]  = partial_backup!(policy.controllers[0] ; minval = config.minval, add_one = true)
 			@deb("Elapsed time for level $level: $(datetime2unix(now()) - start_time)",:stats)
             if improved
                 @deb("Improved level 0", :flow)
@@ -142,7 +142,7 @@ ibpisolver.jl:
             @deb(policy.controllers[level], :data)
 			start_time = datetime2unix(now())
 
-    		improved_single, tangent_b_vec[level+1] = partial_backup!(policy.controllers[level], policy.controllers[level-1]; minval = config.minval)
+    		improved_single, tangent_b_vec[level+1] = partial_backup!(policy.controllers[level], policy.controllers[level-1]; minval = config.minval, add_one = true)
 
 			@deb("Elapsed time for level $level: $(datetime2unix(now()) - start_time)", :stats)
 
@@ -172,14 +172,15 @@ ibpisolver.jl:
 		if length(policy.controllers[0].nodes) <= 1
 			full_backup_stochastic!(policy.controllers[0]; minval = config.minval)
 		end
-		@deb("Level0 after full backup", :example)
-		@deb(policy.controllers[0], :example)
+		@deb("Level0 after full backup", :flow)
+		@deb(policy.controllers[0], :flow)
 		for level in 1:maxlevel
 			evaluate!(policy.controllers[level], policy.controllers[level-1])
+			checkController(policy.controllers[level], config.minval)
 			if length(policy.controllers[level].nodes) <= 1
 				full_backup_stochastic!(policy.controllers[level], policy.controllers[level-1]; minval = config.minval)
-				@deb("Level $level after full backup", :example)
-				@deb(policy.controllers[level], :example)
+				@deb("Level $level after full backup", :flow)
+				@deb(policy.controllers[level], :flow)
 			end
 		end
 		#start of the actual algorithm

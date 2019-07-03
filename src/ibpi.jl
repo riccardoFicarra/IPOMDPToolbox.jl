@@ -37,7 +37,7 @@ end
 
 function observation(frame::Any, s_prime::S, ai::A, aj::A) where {S, A}
 	if typeof(frame) <: POMDP
-		return POMDPs.observation(frame, s_prime, aj)
+		return POMDPs.observation(frame, s_prime, ai)
 	elseif typeof(frame) <: IPOMDP
 		return IPOMDPs.observation(frame, s_prime, ai, aj)
 	else
@@ -106,7 +106,7 @@ function evaluate!(controller::InteractiveController{A,W},  controller_j::Abstra
                                 @deb(observation_i)
                                 for (zj, obs_dict_j) in nj.edges[aj]
                                     @deb("zj = $zj")
-                                    observation_j = POMDPModelTools.pdf(observation(frame_j, s_prime, ai, aj), zj)
+                                    observation_j = POMDPModelTools.pdf(observation(frame_j, s_prime, aj, ai), zj)
 									partial_mult_zj = partial_mult_start * observation_j
                                     for (n_prime_j, prob_j) in nj.edges[aj][zj]
 										partial_mult_pj = partial_mult_zj * prob_j
@@ -160,7 +160,7 @@ function actions(frame::Any)
 	end
 end
 
-function partial_backup!(controller::InteractiveController{A, W}, controller_j::AbstractController; minval = 0.0, add_one = true, debug_node = 0) where {S, A, W}
+function partial_backup!(controller::InteractiveController{A, W}, controller_j::AbstractController; minval = 1e-10, add_one = true, debug_node = 0) where {S, A, W}
 	#debug = Set([:flow])
 	#this time the matrix form is a1x1+...+anxn = b1
 	#sum(a,s)[sum(nz)[canz*[R(s,a)+gamma*sum(s')p(s'|s, a)p(z|s', a)v(nz,s')]] -eps = V(n,s)
@@ -205,7 +205,7 @@ function partial_backup!(controller::InteractiveController{A, W}, controller_j::
 
 		@deb("Node to be improved: $n_id", :checkNodes)
 		nodecounter += 1
-		if :flow in debug && nodecounter >= (length(nodes)/100)
+		if nodecounter >= (length(nodes)/100)
 			for i in 1:(nodecounter * 100 / length(nodes))
 				print("|")
 			end
@@ -245,7 +245,7 @@ function partial_backup!(controller::InteractiveController{A, W}, controller_j::
 								partial_mult_s_prime = p_aj * transition_i * observation_i
 								if transition_i != 0.0 && observation_i != 0.0
 									for (zj, obs_dict_j) in nj.edges[aj]
-										observation_j = POMDPModelTools.pdf(observation(frame_j, s_prime, ai, aj), zj)
+										observation_j = POMDPModelTools.pdf(observation(frame_j, s_prime, aj, ai), zj)
 										partial_mult_zj = partial_mult_s_prime * observation_j
 										if observation_j != 0.0
 											for (n_prime_j, prob_j) in obs_dict_j
@@ -379,11 +379,9 @@ function partial_backup!(controller::InteractiveController{A, W}, controller_j::
 			checkNode(node, controller, minval; normalize = true)
 			if add_one
 				#no need to update tangent points because they wont be used!
-				if :example in debug
-					println("Changed node after eval")
-					println(node)
-				end
-				@deb("", :flow)
+				println()
+				@deb("Changed node after eval", :flow)
+				@deb(node, :flow)
 				return true, Dict{Int64, Array{Float64}}()
 			end
 		end
@@ -414,7 +412,7 @@ function partial_backup!(controller::InteractiveController{A, W}, controller_j::
 		@deb(tangent_belief, :lpdual)
 		tangent_b[n_id] = tangent_belief
 	end
-	@deb("", :flow)
+	println()
 	stop_time("partial")
 	return changed, tangent_b
 end
@@ -510,28 +508,31 @@ function node_value(ni::Node{A, W}, ai::A, zi::W, controller_j::AbstractControll
 	for s_index in 1:n_states
 		s = states[s_index]
 		for (nj_id, nj) in nodes_j
+			immediate_reward = 0.0
+			future_reward = 0.0
 			for (aj, aj_prob) in nj.actionProb
-				r = IPOMDPs.reward(ipomdp, s, ai, aj)
-				sum = 0.0
+				immediate_reward += aj_prob * IPOMDPs.reward(ipomdp, s, ai, aj)
 				for s_prime_index in 1:n_states
 					s_prime = states[s_prime_index]
 					transition_i =POMDPModelTools.pdf(IPOMDPs.transition(ipomdp,s,ai, aj), s_prime)
 					observation_i = POMDPModelTools.pdf(IPOMDPs.observation(ipomdp, s_prime, ai, aj), zi)
 					if transition_i != 0.0 && observation_i != 0.0
+						part_mult_s_prime = aj_prob * transition_i * observation_i
 						for (zj, obs_dict_j) in nj.edges[aj]
-							observation_j = POMDPModelTools.pdf(observation(frame_j, s_prime, ai, aj), zj)
-							for (nj_prime, prob_nj_prime) in obs_dict_j
-								#@deb("$action, $state, $observation, $s_prime")
-								#@deb("$(node.value[s_prime_index]) * $(p_obs) * $(p_s_prime)")
-								sum+= ni.value[s_prime_index, temp_id_j[nj_prime.id]] *  aj_prob * transition_i * observation_i * observation_j * prob_nj_prime
+							observation_j = POMDPModelTools.pdf(observation(frame_j, s_prime, aj, ai), zj)
+							if observation_j != 0.0
+								part_mult_zj = part_mult_s_prime * observation_j
+								for (nj_prime, prob_nj_prime) in obs_dict_j
+									#@deb("$action, $state, $observation, $s_prime")
+									#@deb("$(node.value[s_prime_index]) * $(p_obs) * $(p_s_prime)")
+									future_reward += ni.value[s_prime_index, temp_id_j[nj_prime.id]] * part_mult_zj * prob_nj_prime
+								end
 							end
 						end
 					end
 				end
-				new_V[s_index, temp_id_j[nj_id]] = (1/n_observations) * IPOMDPs.reward(ipomdp, s, ai, aj) + γ*sum
 			end
-
-
+			new_V[s_index, temp_id_j[nj_id]] = (1/n_observations) * immediate_reward + γ* future_reward
 		end
 	end
 	return new_V
@@ -632,13 +633,13 @@ function add_escape_node!(new_b::Array{Float64}, controller::InteractiveControll
 		@deb("in $new_b node $(best_new_node.id) has $best_new_value > $best_old_value", :escape)
 		#reworked_node = rework_node(controller, best_new_node)
 		#controller.nodes[reworked_node.id] = reworked_node
+		@deb("Added node $(best_new_node.id) to improve belief $new_b", :flow)
 		checkNode(best_new_node, controller, minval; normalize = true)
 		controller.nodes[best_new_node.id] = best_new_node
 		#not the cleanest solution to keep track of ids but hey it works
 		controller.maxId+=1
-		@deb("Added node $(best_new_node.id) to improve belief $new_b", :example)
 
-		@deb(controller.nodes[best_new_node.id], :example)
+		@deb(controller.nodes[best_new_node.id], :flow)
 		return true
 	end
 	return false
@@ -682,7 +683,7 @@ function belief_update(start_b::Array{Float64}, ai::A, zi::W, frame_i::IPOMDP, c
 					end
 					@deb("\t $aj_prob $transition_i $observation_i")
 					for (zj, obs_dict) in nj.edges[aj]
-						observation_j = POMDPModelTools.pdf(observation(frame_j, s_prime, ai, aj), zj)
+						observation_j = POMDPModelTools.pdf(observation(frame_j, s_prime, aj, ai), zj)
 						if observation_j == 0.0
 							continue
 						end
@@ -790,7 +791,7 @@ function generate_node_directly(controller_i::InteractiveController{A, W}, contr
 	# states = states(frame_i)
 	# n_states = length(states)
 	best_node = nothing
-	best_value = 0
+	best_value = 0.0
 	for a in actions_i
 		#try all actions
 		new_node = nothing
@@ -802,12 +803,17 @@ function generate_node_directly(controller_i::InteractiveController{A, W}, contr
 			#get the best node in the controller for the updated beief
 			best_next_node, best_value_obs = get_best_node(result_b, collect(values(controller_i.nodes)))
 			new_v = node_value(best_next_node, a, z, controller_j, frame_i, temp_id_j)
+			@deb("new_v = $new_v", :generatenode)
 			new_node_partial = build_node(controller_i.maxId+1, a, z, best_next_node, new_v)
+			@deb("new partial node:", :generatenode)
+			@deb(new_node_partial, :generatenode)
 			#add that edge to the node and update the value vector
 			if z_index ==1
 				new_node = new_node_partial
 			else
-				new_node = mergeNode(new_node, new_node_partial, a,  controller_i.maxId+1)
+				new_node = mergeNode(new_node, new_node_partial, a, controller_i.maxId+1)
+				@deb("after merge:", :generatenode)
+				@deb(new_node, :generatenode)
 			end
 		end
 		#compute the best node (choose between actions)
