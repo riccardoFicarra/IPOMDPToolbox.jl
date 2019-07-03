@@ -93,7 +93,7 @@ function evaluate!(controller::InteractiveController{A,W},  controller_j::Abstra
                         r = IPOMDPs.reward(ipomdp_i, s, ai, aj)
                         #@deb("r = $s")
                         @deb("r = $r")
-                        b[s_index, temp_id_j[nj_id], temp_id[ni_id]] = p_ai * p_aj * r
+                        b[s_index, temp_id_j[nj_id], temp_id[ni_id]] += p_ai * p_aj * r
                         for (zi, obs_dict_i) in ni.edges[ai]
                             @deb("zi = $zi")
                             for s_prime_index in 1:n_states

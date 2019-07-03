@@ -159,7 +159,7 @@ IBPIPolicyUtils:
 					println(node)
 					println("old node:")
 					println(other_node)
-					error("New node is already present as $(other_node.id)")
+					@warn("New node is already present as $(other_node.id)")
 				end
 			end
 		end
@@ -886,8 +886,8 @@ IBPIPolicyUtils:
 			n_nodes = length(keys(controller.nodes))
 			states = POMDPs.states(pomdp)
 			n_states = POMDPs.n_states(pomdp)
-			M = zeros(n_states*n_nodes, n_states*n_nodes)
-			b = zeros(n_states*n_nodes)
+			M = zeros(n_nodes, n_states, n_nodes, n_states)
+			b = zeros(n_nodes, n_states)
 
 			#dictionary used for recompacting ids
 			temp_id = Dict{Int64, Int64}()
@@ -906,9 +906,9 @@ IBPIPolicyUtils:
 					for a in actions
 						@deb("action = $a")
 						p_a_n = node.actionProb[a]
-						b[composite_index([temp_id[n_id], s_index],[n_nodes, n_states])] = POMDPs.reward(pomdp, s, a)*p_a_n
+						b[temp_id[n_id], s_index] += POMDPs.reward(pomdp, s, a) * p_a_n
 						@deb("b($n_id, $s) = $(POMDPs.reward(pomdp, s, a)*p_a_n)")
-						M[composite_index([temp_id[n_id], s_index],[n_nodes, n_states]), composite_index([temp_id[n_id], s_index],[n_nodes, n_states])] += 1
+						M[temp_id[n_id], s_index, temp_id[n_id], s_index] += 1
 						@deb("M[$n_id, $s][$n_id, $s] = 1")
 						s_primes = POMDPs.transition(pomdp,s,a).vals
 						possible_obs = keys(node.edges[a])  #only consider observations possible from current node/action combo
@@ -922,11 +922,12 @@ IBPIPolicyUtils:
 								end
 								p_z = POMDPModelTools.pdf(POMDPs.observation(pomdp,s_prime, a), obs)
 								@deb("p_z = $p_z")
+								partial_mult = p_a_n * POMDPs.discount(pomdp) * p_s_prime * p_z
 								for (next, prob) in node.edges[a][obs]
 									if !haskey(controller.nodes, next.id)
 										error("Node $(next.id) not present in nodes")
 									end
-									M[composite_index([temp_id[n_id], s_index],[n_nodes, n_states]), composite_index([temp_id[next.id], s_prime_index],[n_nodes,n_states])]-= POMDPs.discount(pomdp)*p_s_prime*p_z*p_a_n*prob
+									M[temp_id[n_id], s_index, temp_id[next.id], s_prime_index]-= partial_mult * prob
 									@deb("M[$n_id, $s][$(next.id), $s_prime] = gamma=$(POMDPs.discount(pomdp))*ps'=$p_s_prime*pz=$p_z*pa=$p_a_n*pn'=$prob = $(M[composite_index([temp_id[n_id], s_index],[n_nodes, n_states]), composite_index([temp_id[next.id], s_prime_index],[n_nodes,n_states])])")
 								end
 							end
@@ -936,10 +937,11 @@ IBPIPolicyUtils:
 			end
 			@deb("M = $M")
 			@deb("b = $b")
-			res = M \ b
+			res = reshape(M, n_nodes * n_states, n_nodes * n_states) \ reshape(b, n_nodes * n_states)
 			#copy respective value functions in nodes
+			res_2d = reshape(res, n_nodes, n_states)
 			for (n_id, node) in nodes
-				node.value = copy(res[(temp_id[n_id]-1)*n_states+1 : temp_id[n_id]*n_states])
+				node.value = copy(res_2d[temp_id[n_id], :])
 				@deb("Value vector of node $n_id = $(nodes[n_id].value)")
 			end
 	end
