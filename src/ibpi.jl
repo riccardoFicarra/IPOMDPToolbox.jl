@@ -48,7 +48,7 @@ end
 
 
 
-function evaluate!(controller::InteractiveController{A,W}, controllers_j::Array{AbstractController}) where {S, A, W}
+function evaluate!(controller::InteractiveController{A,W}, controllers_j::Array{AbstractController, 1}) where {S, A, W}
 	start_time("eval")
 	ipomdp_i = controller.frame
     nodes = controller.nodes
@@ -74,14 +74,15 @@ function evaluate!(controller::InteractiveController{A,W}, controllers_j::Array{
 		controller_j = controllers_j[controller_index]
 		nodes_j = controller_j.nodes
 		#initialize inner array
-		temp_id_j[controller_index] = Array{Int64, 1}(undef, length(nodes_j))
+		temp_id_j[controller_index] = Array{Int64, 1}(undef, controller_j.maxId)
 		#quick fix to have the values in some order
 	    for node_id in sort(collect(keys(nodes_j)))
 	        temp_id_j[controller_index][node_id] = node_counter
 			node_counter += 1
 	    end
 	end
-	n_nodes_j = length(temp_id_j)
+	@deb("$temp_id_j", :multiple)
+	n_nodes_j = node_counter-1
 	@deb("total nodes in j: $n_nodes_j", :multiple)
 	#M[s, nj, ni, s', nj', ni']
     M = zeros(n_states, n_nodes_j, n_nodes, n_states, n_nodes_j, n_nodes)
@@ -141,7 +142,7 @@ function evaluate!(controller::InteractiveController{A,W}, controllers_j::Array{
         end
     end
 	#TL, all njs, only ni = 1, goes to TL
-	# @deb(M[1, :, temp_id[1], 1, :, temp_id[1]], :example)
+	@deb(M[1, :, temp_id[1], 1, :, temp_id[1]], :multiple)
     M_2d = reshape(M,n_states* n_nodes_j* n_nodes, n_states* n_nodes_j* n_nodes)
     b_1d = reshape(b, n_states* n_nodes_j* n_nodes)
 	stop_time("eval_coeff")
@@ -212,14 +213,14 @@ function partial_backup!(controller::InteractiveController{A, W}, controllers_j:
 		controller_j = controllers_j[controller_index]
 		nodes_j = controller_j.nodes
 		#initialize inner array
-		temp_id_j[controller_index] = Array{Int64, 1}(undef, length(nodes_j))
+		temp_id_j[controller_index] = Array{Int64, 1}(undef, controller_j.maxId)
 		#quick fix to have the values in some order
 	    for node_id in sort(collect(keys(nodes_j)))
 	        temp_id_j[controller_index][node_id] = node_counter
 			node_counter += 1
 	    end
 	end
-	n_nodes_j = length(temp_id_j)
+	n_nodes_j = node_counter-1
 	@deb("total nodes in j: $n_nodes_j", :multiple)
 	constraints = Array{ConstraintRef}(undef, n_states, n_nodes_j)
 
@@ -450,328 +451,8 @@ function partial_backup!(controller::InteractiveController{A, W}, controllers_j:
 	return changed, tangent_b
 end
 
-function full_backup_generate_nodes(controller::InteractiveController{A, W}, controller_j::AbstractController, minval::Float64) where {A, W}
-	@deb("Generating nodes", :full)
-	minval = 1e-10
-	frame = controller.frame
-	frame_j = controller_j.frame
-	nodes = controller.nodes
-	nodes_j = controller_j.nodes
-	n_nodes = length(nodes)
-	#@deb(n_nodes)
-	n_nodes_j = length(nodes_j)
-	states = IPOMDPs.states(frame)
-	n_states = length(states)
-	actions_i = actions(frame)
-	n_actions = length(actions_i)
-	observations_i = observations(frame)
-	n_observations = length(observations_i)
-	#tentative from incpruning
-	#prder of it -> actions, obs
-	#for each a, z produce n new nodes (iterate on nodes)
-	#for each node iterate on s and s' to produce a new node
-	#new node is tied to old node?, action a and obs z
-	#with stochastic pruning we get the cis needed
-	if :full in debug
-		println("Current controller:")
-		println(controller)
-	end
-	temp_id_j = Array{Array{Int64, 1}, 1}(undef, n_controllers_j)
-	node_counter = 1
-	for controller_index in 1:n_controllers_j
-		controller_j = controllers_j[controller_index]
-		nodes_j = controller_j.nodes
-		#initialize inner array
-		temp_id_j[controller_index] = Array{Int64, 1}(undef, length(nodes_j))
-		#quick fix to have the values in some order
-	    for node_id in sort(collect(keys(nodes_j)))
-	        temp_id_j[controller_index][node_id] = node_counter
-			node_counter += 1
-	    end
-	end
-	n_nodes_j = length(temp_id_j)
-	@deb("total nodes in j: $n_nodes_j", :multiple)
 
-	new_nodes = Set{Node}()
-	#new nodes counter used mainly for debugging, counts backwards (gets overwritten eventually)
-	new_nodes_counter = -1
-	for ai in actions_i
-		#this data structure has the set of nodes for each observation (new_nodes_z[obs] = Set{Nodes} generated from obs)
-		new_nodes_z = Vector{Set{Node}}(undef, length(observations_i))
-		for zi_index in 1:length(observations_i)
-			zi = observations_i[zi_index]
-			#this set contains all new nodes for action, obs for all nodes
-			new_nodes_a_z = Set{Node}()
-			for (ni_id, ni) in nodes
-				new_v = node_value(ni, ai, zi, controller_j, frame, temp_id_j)
-				#do not set node id for now
-				#new_node = build_node(new_nodes_counter, [a], [1.0], [[obs]], [[1.0]], [[node]], new_v)
-				new_node = build_node(new_nodes_counter, ai, zi, ni, new_v)
-				push!(new_nodes_a_z, new_node)
-				new_nodes_counter -=1
-			end
-			# if :escape in debug
-			# 	println("New nodes created:")
-			# 	for node in new_nodes_a_z
-			# 		println(node)
-			# 	end
-			# end
-			@deb("$(length(new_nodes_a_z)) nodes created for observation $(observations_i[zi_index])", :full)
-			new_nodes_z[zi_index] = filterNodes(new_nodes_a_z, minval)
-			@deb("$(length(new_nodes_z[zi_index])) nodes added after filtering for observation $(observations_i[zi_index])", :full)
-		end
-		#set that contains all nodes generated from action a after incremental pruning
-		if :full in debug
-			println("new nodes counter = $new_nodes_counter")
-			println("calling incprune for action $ai")
-		end
-		new_nodes_counter, new_nodes_a = incprune(new_nodes_z, new_nodes_counter, minval)
-		union!(new_nodes, new_nodes_a)
-	end
-	#all new nodes, final filtering
-	filtered_nodes = filterNodes(new_nodes, minval)
-	for new_node in new_nodes
-		for (a, a_dict) in new_node.edges
-			if length(a_dict) != n_observations
-				error("Invalid node produced!")
-			end
-		end
-	end
-	return filtered_nodes
-end
-#using eq τ(n, a, z) from incremental pruning paper
-function node_value(ni::Node{A, W}, ai::A, zi::W, controller_j::AbstractController, ipomdp::IPOMDP, temp_id_j::Dict{Int64, Int64}) where {A, W}
-	states = IPOMDPs.states(ipomdp)
-	frame_j = controller_j.frame
-	nodes_j = controller_j.nodes
-	n_states = length(states)
-	n_observations = length(observations_agent(ipomdp))
-	γ = IPOMDPs.discount(ipomdp)
-	new_V = zeros(Float64,n_states, length(nodes_j))
-	for s_index in 1:n_states
-		s = states[s_index]
-		for (nj_id, nj) in nodes_j
-			immediate_reward = 0.0
-			future_reward = 0.0
-			for (aj, aj_prob) in nj.actionProb
-				immediate_reward += aj_prob * IPOMDPs.reward(ipomdp, s, ai, aj)
-				for s_prime_index in 1:n_states
-					s_prime = states[s_prime_index]
-					transition_i =POMDPModelTools.pdf(IPOMDPs.transition(ipomdp,s,ai, aj), s_prime)
-					observation_i = POMDPModelTools.pdf(IPOMDPs.observation(ipomdp, s_prime, ai, aj), zi)
-					if transition_i != 0.0 && observation_i != 0.0
-						part_mult_s_prime = aj_prob * transition_i * observation_i
-						for (zj, obs_dict_j) in nj.edges[aj]
-							observation_j = POMDPModelTools.pdf(observation(frame_j, s_prime, aj, ai), zj)
-							if observation_j != 0.0
-								part_mult_zj = part_mult_s_prime * observation_j
-								for (nj_prime, prob_nj_prime) in obs_dict_j
-									#@deb("$action, $state, $observation, $s_prime")
-									#@deb("$(node.value[s_prime_index]) * $(p_obs) * $(p_s_prime)")
-									future_reward += ni.value[s_prime_index, temp_id_j[nj_prime.id]] * part_mult_zj * prob_nj_prime
-								end
-							end
-						end
-					end
-				end
-			end
-			new_V[s_index, temp_id_j[nj_id]] = (1/n_observations) * immediate_reward + γ* future_reward
-		end
-	end
-	return new_V
-end
-
-
-function escape_optima_standard!(controller::InteractiveController{A, W}, controller_j::AbstractController, tangent_b::Dict{Int64, Array{Float64}}; add_one = false, minval = 0.0) where {A, W}
-	@deb("Entered escape_optima", :flow)
-	start_time("escape")
-	frame_i = controller.frame
-	frame_j = controller_j.frame
-	nodes = controller.nodes
-	nodes_j = controller_j.nodes
-	n_nodes_j = length(nodes_j)
-	n_nodes = length(nodes)
-	#@deb(n_nodes)
-	n_nodes_j = length(nodes_j)
-	states = IPOMDPs.states(frame_i)
-	n_states = length(states)
-	actions_i = actions(frame_i)
-	n_actions = length(actions_i)
-	actions_j = actions(frame_j)
-	observations_i = observations(frame_i)
-	observations_j = observations(frame_j)
-	n_observations = length(observations_i)
-
-	if length(tangent_b) == 0
-		error("tangent_b was empty!")
-	end
-
-
-	temp_id_j = Dict{Int64, Int64}()
-	for real_id in sort(collect(keys(nodes_j)))
-			temp_id_j[real_id] = length(temp_id_j)+1
-			#@deb("Node $real_id becomes $node_counter")
-	end
-
-
-
-	#new_nodes = full_backup_generate_nodes(controller, controller_j, minval)
-	#@deb("Finished generating nodes", :escape)
-
-	# if :escape in debug
-	# 	println("new_nodes:")
-	# 	for node in new_nodes
-	# 		println(node)
-	# 	end
-	# end
-
-
-
-	escaped = false
-	reachable_beliefs = Set{Array{Float64}}()
-	for (id, start_b) in tangent_b
-		#id = collect(keys(tangent_b))[1]
-		#start_b = tangent_b[id]
-		@deb(start_b)
-		@deb("$id - >$start_b", :belief)
-		for ai in keys(nodes[id].actionProb)
-			for zi in observations_i
-
-				new_b = belief_update(start_b, ai, zi, frame_i, controller_j)
-				#node = generate_node_directly(controller, controller_j, new_b)
-				@deb("from belief $start_b action $ai and obs $zi -> $new_b", :belief)
-				if add_one
-					escaped =  add_escape_node(new_b, controller, controller_j, temp_id_j)
-					stop_time("escape")
-					return escaped
-				else
-					push!(reachable_beliefs, new_b)
-				end
-			end
-		end
-		#break here if you want to improve only the first tangent belief point
-	end
-	#by accumulating reachable beliefs into a set duplicates are eliminated = less computation
-	if !add_one
-		for reachable_b in reachable_beliefs
-			escaped = escaped || add_escape_node!(reachable_b, controller, controller_j, temp_id_j)
-		end
-	end
-	#@deb("$reachable_b")
-	stop_time("escape")
-	return escaped
-end
-
-function add_escape_node!(new_b::Array{Float64}, controller::InteractiveController{S, A, W}, controller_j::AbstractController, temp_id_j::Dict{Int64, Int64}) where {S, A, W}
-	minval = config.minval
-	best_old_node, best_old_value = get_best_node(new_b, collect(values(controller.nodes)))
-	#@assert best_old_node_alt == best_old_node
-	if :escape in debug
-		println("Best old node:")
-		println(best_old_node)
-	end
-
-	best_new_node, best_new_value = generate_node_directly(controller, controller_j, new_b, temp_id_j)
-	if best_new_value - best_old_value > minval
-		@deb("in $new_b node $(best_new_node.id) has $best_new_value > $best_old_value", :escape)
-		#reworked_node = rework_node(controller, best_new_node)
-		#controller.nodes[reworked_node.id] = reworked_node
-		@deb("Added node $(best_new_node.id) to improve belief $new_b", :flow)
-		checkNode(best_new_node, controller, minval; normalize = true)
-		controller.nodes[best_new_node.id] = best_new_node
-		#not the cleanest solution to keep track of ids but hey it works
-		controller.maxId+=1
-
-		@deb(controller.nodes[best_new_node.id], :flow)
-		return true
-	end
-	return false
-end
-
-function belief_update(start_b::Array{Float64}, ai::A, zi::W, frame_i::IPOMDP, controller_j::AbstractController) where {A, W}
-	start_time("escape_belief_update")
-	nodes_j = controller_j.nodes
-	n_nodes_j = length(nodes_j)
-	frame_j = controller_j.frame
-	states = IPOMDPs.states(frame_i)
-	n_states = length(states)
-	actions_i = actions(frame_i)
-	n_actions = length(actions_i)
-	actions_j = actions(frame_j)
-	observations_i = observations(frame_i)
-	observations_j = observations(frame_j)
-	n_observations = length(observations_i)
-
-	temp_id_j = Dict{Int64, Int64}()
-	for real_id in sort(collect(keys(nodes_j)))
-			temp_id_j[real_id] = length(temp_id_j)+1
-			#@deb("Node $real_id becomes $node_counter")
-	end
-	new_b = zeros(n_states, n_nodes_j)
-	normalize = 0.0
-	for s_prime_index in 1:n_states
-		s_prime = states[s_prime_index]
-		for s_index in 1:n_states
-			s = states[s_index]
-			for (nj_id, nj) in nodes_j
-				@deb("$(start_b[s_index, temp_id_j[nj_id]])")
-				if start_b[s_index, temp_id_j[nj_id]] == 0.0
-					continue
-				end
-				for (aj, aj_prob) in nj.actionProb
-					transition_i = POMDPModelTools.pdf(IPOMDPs.transition(frame_i, s, ai, aj), s_prime)
-					observation_i = POMDPModelTools.pdf(IPOMDPs.observation(frame_i, s_prime, ai, aj), zi)
-					if transition_i == 0.0 || observation_i == 0.0 || aj_prob == 0.0
-						continue
-					end
-					@deb("\t $aj_prob $transition_i $observation_i")
-					for (zj, obs_dict) in nj.edges[aj]
-						observation_j = POMDPModelTools.pdf(observation(frame_j, s_prime, aj, ai), zj)
-						if observation_j == 0.0
-							continue
-						end
-						@deb("\t\t $observation_j")
-						for (n_prime_j, prob_j) in obs_dict
-							#FIXME is this the right prob to use? last element of 1.8
-							@deb("start_b = $(start_b[s_index, temp_id_j[nj_id]])")
-							@deb("adding $(start_b[s_index, temp_id_j[nj_id]]) * $aj_prob * $transition_i* $observation_i * $observation_j * $prob_j")
-							@deb("adding $(start_b[s_index, temp_id_j[nj_id]] * aj_prob * transition_i* observation_i * observation_j * prob_j)")
-							new_b[s_prime_index, temp_id_j[n_prime_j.id]] += start_b[s_index, temp_id_j[nj_id]] * aj_prob * transition_i* observation_i * observation_j * prob_j
-							normalize += start_b[s_index, temp_id_j[nj_id]] * aj_prob * transition_i* observation_i * observation_j * prob_j
-						end
-					end
-				end
-			end
-		end
-	end
-	if normalize == 0.0
-		error("normalization constant is $normalize !")
-	end
-	new_b = new_b  ./ normalize
-	stop_time("escape_belief_update")
-	return new_b
-end
-
-# function rework_node(controller::AbstractController, new_node::Node{A, W}) where {A, W}
-# 		id = controller.maxId+1
-# 		actionProb = copy(new_node.actionProb)
-# 		value = copy(new_node.value)
-# 		edges = Dict{A, Dict{W, Dict{Node, Float64}}}()
-# 		for (a, obs_dict) in new_node.edges
-# 			edges[a] = Dict{W, Dict{Node, Float64}}()
-# 			for (z, node_dict) in obs_dict
-# 				edges[a][z] = Dict{Node,Float64}()
-# 				for (node, prob) in node_dict
-# 					current_controller_node = controller.nodes[node.id]
-# 					edges[a][z][current_controller_node] = prob
-# 				end
-# 			end
-# 		end
-# 		return Node(id, actionProb,edges, value, Dict{Node, Vector{Dict{Node, Float64}}}())
-# end
-
-
-function full_backup_stochastic!(controller::InteractiveController{A, W}, controller_j::AbstractController; minval = 1e-10) where {A, W}
+function full_backup_stochastic!(controller::InteractiveController{A, W}, controllers_j::Array{AbstractController, 1}; minval = 1e-10) where {A, W}
 	debug = Set{Symbol}([])
 	nodes = controller.nodes
 	# observations = observations(controller_i.frame)
@@ -781,7 +462,7 @@ function full_backup_stochastic!(controller::InteractiveController{A, W}, contro
 	#for each node iterate on s and s' to produce a new node
 	#new node is tied to old node?, action a and obs z
 	#with stochastic pruning we get the cis needed
-	new_nodes = full_backup_generate_nodes(controller, controller_j, minval)
+	new_nodes = full_backup_generate_nodes(controller, controllers_j)
 	#before performing filtering with the old nodes update incomingEdge structure of old nodes
 	#also assign permanent ids
 	nodes_counter = controller.maxId+1
@@ -825,7 +506,346 @@ function full_backup_stochastic!(controller::InteractiveController{A, W}, contro
 	controller.maxId = new_max_id
 end
 
-function generate_node_directly(controller_i::InteractiveController{A, W}, controller_j::AbstractController, start_b::Array{Float64}, temp_id_j::Dict{Int64, Int64}) where {A, W, S}
+function full_backup_generate_nodes(controller::InteractiveController{A, W}, controllers_j::Array{AbstractController, 1}) where {A, W}
+	@deb("Generating nodes", :full)
+	minval = config.minval
+	frame = controller.frame
+	nodes = controller.nodes
+	n_nodes = length(nodes)
+	#@deb(n_nodes)
+	n_controllers_j = length(controllers_j)
+	states = IPOMDPs.states(frame)
+	n_states = length(states)
+	actions_i = actions(frame)
+	n_actions = length(actions_i)
+	observations_i = observations(frame)
+	n_observations = length(observations_i)
+	#tentative from incpruning
+	#prder of it -> actions, obs
+	#for each a, z produce n new nodes (iterate on nodes)
+	#for each node iterate on s and s' to produce a new node
+	#new node is tied to old node?, action a and obs z
+	#with stochastic pruning we get the cis needed
+	temp_id_j = Array{Array{Int64, 1}, 1}(undef, n_controllers_j)
+	node_counter = 1
+	for controller_index in 1:n_controllers_j
+		controller_j = controllers_j[controller_index]
+		nodes_j = controller_j.nodes
+		#initialize inner array
+		temp_id_j[controller_index] = Array{Int64, 1}(undef, controller_j.maxId)
+		#quick fix to have the values in some order
+	    for node_id in sort(collect(keys(nodes_j)))
+	        temp_id_j[controller_index][node_id] = node_counter
+			node_counter += 1
+	    end
+	end
+	n_nodes_j = node_counter-1
+	@deb("total nodes in j: $n_nodes_j", :multiple)
+
+	new_nodes = Set{Node}()
+	#new nodes counter used mainly for debugging, counts backwards (gets overwritten eventually)
+	new_nodes_counter = -1
+	for ai in actions_i
+		#this data structure has the set of nodes for each observation (new_nodes_z[obs] = Set{Nodes} generated from obs)
+		new_nodes_z = Vector{Set{Node}}(undef, length(observations_i))
+		for zi_index in 1:length(observations_i)
+			zi = observations_i[zi_index]
+			#this set contains all new nodes for action, obs for all nodes
+			new_nodes_a_z = Set{Node}()
+			for (ni_id, ni) in nodes
+				new_v = node_value(ni, ai, zi, controllers_j, frame, temp_id_j)
+				#do not set node id for now
+				#new_node = build_node(new_nodes_counter, [a], [1.0], [[obs]], [[1.0]], [[node]], new_v)
+				new_node = build_node(new_nodes_counter, ai, zi, ni, new_v)
+				push!(new_nodes_a_z, new_node)
+				new_nodes_counter -=1
+			end
+			# if :escape in debug
+			# 	println("New nodes created:")
+			# 	for node in new_nodes_a_z
+			# 		println(node)
+			# 	end
+			# end
+			@deb("$(length(new_nodes_a_z)) nodes created for observation $(observations_i[zi_index])", :full)
+			new_nodes_z[zi_index] = filterNodes(new_nodes_a_z, minval)
+			@deb("$(length(new_nodes_z[zi_index])) nodes added after filtering for observation $(observations_i[zi_index])", :full)
+		end
+		#set that contains all nodes generated from action a after incremental pruning
+		if :full in debug
+			println("new nodes counter = $new_nodes_counter")
+			println("calling incprune for action $ai")
+		end
+		new_nodes_counter, new_nodes_a = incprune(new_nodes_z, new_nodes_counter, minval)
+		union!(new_nodes, new_nodes_a)
+	end
+	#all new nodes, final filtering
+	filtered_nodes = filterNodes(new_nodes, minval)
+	for new_node in new_nodes
+		for (a, a_dict) in new_node.edges
+			if length(a_dict) != n_observations
+				error("Invalid node produced!")
+			end
+		end
+	end
+	return filtered_nodes
+end
+#using eq τ(n, a, z) from incremental pruning paper
+function node_value(ni::Node{A, W}, ai::A, zi::W, controllers_j::Array{AbstractController, 1}, ipomdp::IPOMDP{S, A, W}, temp_id_j::Array{Array{Int64, 1}, 1}) where {S, A, W}
+	n_controllers_j = length(controllers_j)
+	states = IPOMDPs.states(ipomdp)
+	n_states = length(states)
+	n_observations = length(observations_agent(ipomdp))
+	γ = IPOMDPs.discount(ipomdp)
+	tot_nj = 0
+	for inner in temp_id_j
+		tot_nj+= length(inner)
+	end
+	new_V = zeros(Float64, n_states, tot_nj )
+	for s_index in 1:n_states
+		s = states[s_index]
+		for controller_index in 1:n_controllers_j
+			controller_j = controllers_j[controller_index]
+			frame_j = controller_j.frame
+			nodes_j = controller_j.nodes
+			for (nj_id, nj) in nodes_j
+				immediate_reward = 0.0
+				future_reward = 0.0
+				for (aj, aj_prob) in nj.actionProb
+					immediate_reward += aj_prob * IPOMDPs.reward(ipomdp, s, ai, aj)
+					for s_prime_index in 1:n_states
+						s_prime = states[s_prime_index]
+						transition_i =POMDPModelTools.pdf(IPOMDPs.transition(ipomdp,s,ai, aj), s_prime)
+						observation_i = POMDPModelTools.pdf(IPOMDPs.observation(ipomdp, s_prime, ai, aj), zi)
+						if transition_i != 0.0 && observation_i != 0.0
+							part_mult_s_prime = aj_prob * transition_i * observation_i
+							for (zj, obs_dict_j) in nj.edges[aj]
+								observation_j = POMDPModelTools.pdf(observation(frame_j, s_prime, aj, ai), zj)
+								if observation_j != 0.0
+									part_mult_zj = part_mult_s_prime * observation_j
+									for (nj_prime, prob_nj_prime) in obs_dict_j
+										#@deb("$action, $state, $observation, $s_prime")
+										#@deb("$(node.value[s_prime_index]) * $(p_obs) * $(p_s_prime)")
+										future_reward += ni.value[s_prime_index, temp_id_j[controller_index][nj_prime.id]] * part_mult_zj * prob_nj_prime
+									end
+								end
+							end
+						end
+					end
+				end
+				new_V[s_index, temp_id_j[controller_index][nj_id]] = (1/n_observations) * immediate_reward + γ* future_reward
+			end
+		end
+	end
+	return new_V
+end
+
+
+function escape_optima_standard!(controller::InteractiveController{A, W}, controllers_j::Array{AbstractController,1}, tangent_b::Dict{Int64, Array{Float64}}; add_one = false, minval = 0.0) where {A, W}
+	@deb("Entered escape_optima", :flow)
+	start_time("escape")
+	frame_i = controller.frame
+	nodes = controller.nodes
+	n_nodes = length(nodes)
+	#@deb(n_nodes)
+	n_controllers_j = length(controllers_j)
+	states = IPOMDPs.states(frame_i)
+	n_states = length(states)
+	actions_i = actions(frame_i)
+	n_actions = length(actions_i)
+	observations_i = observations(frame_i)
+	n_observations = length(observations_i)
+
+	if length(tangent_b) == 0
+		error("tangent_b was empty!")
+	end
+
+
+	temp_id_j = Array{Array{Int64, 1}, 1}(undef, n_controllers_j)
+	node_counter = 1
+	for controller_index in 1:n_controllers_j
+		controller_j = controllers_j[controller_index]
+		nodes_j = controller_j.nodes
+		#initialize inner array
+		temp_id_j[controller_index] = Array{Int64, 1}(undef, controller_j.maxId)
+		#quick fix to have the values in some order
+	    for node_id in sort(collect(keys(nodes_j)))
+	        temp_id_j[controller_index][node_id] = node_counter
+			node_counter += 1
+	    end
+	end
+	n_nodes_j = node_counter-1
+	@deb("total nodes in j: $n_nodes_j", :multiple)
+
+
+
+	#new_nodes = full_backup_generate_nodes(controller, controller_j, minval)
+	#@deb("Finished generating nodes", :escape)
+
+	# if :escape in debug
+	# 	println("new_nodes:")
+	# 	for node in new_nodes
+	# 		println(node)
+	# 	end
+	# end
+
+
+
+	escaped = false
+	reachable_beliefs = Set{Array{Float64}}()
+	for (id, start_b) in tangent_b
+		#id = collect(keys(tangent_b))[1]
+		#start_b = tangent_b[id]
+		@deb(start_b)
+		@deb("$id - >$start_b", :belief)
+		for ai in keys(nodes[id].actionProb)
+			for zi in observations_i
+				new_b = belief_update(start_b, ai, zi, frame_i, controllers_j)
+				#node = generate_node_directly(controller, controller_j, new_b)
+				@deb("from belief $start_b action $ai and obs $zi -> $new_b", :belief)
+				if add_one
+					escaped =  add_escape_node(new_b, controller, controllers_j, temp_id_j)
+					stop_time("escape")
+					return escaped
+				else
+					push!(reachable_beliefs, new_b)
+				end
+			end
+		end
+		#break here if you want to improve only the first tangent belief point
+	end
+	#by accumulating reachable beliefs into a set duplicates are eliminated = less computation
+	if !add_one
+		for reachable_b in reachable_beliefs
+			escaped = escaped || add_escape_node!(reachable_b, controller, controllers_j, temp_id_j)
+		end
+	end
+	#@deb("$reachable_b")
+	stop_time("escape")
+	return escaped
+end
+
+function add_escape_node!(new_b::Array{Float64}, controller::InteractiveController{S, A, W}, controllers_j::Array{AbstractController, 1}, temp_id_j::Array{Array{Int64, 1}, 1}) where {S, A, W}
+	minval = config.minval
+	best_old_node, best_old_value = get_best_node(new_b, collect(values(controller.nodes)))
+	#@assert best_old_node_alt == best_old_node
+	if :escape in debug
+		println("Best old node:")
+		println(best_old_node)
+	end
+
+	best_new_node, best_new_value = generate_node_directly(controller, controllers_j, new_b, temp_id_j)
+	if best_new_value - best_old_value > minval
+		@deb("in $new_b node $(best_new_node.id) has $best_new_value > $best_old_value", :escape)
+		#reworked_node = rework_node(controller, best_new_node)
+		#controller.nodes[reworked_node.id] = reworked_node
+		@deb("Added node $(best_new_node.id) to improve belief $new_b", :flow)
+		checkNode(best_new_node, controller, minval; normalize = true)
+		controller.nodes[best_new_node.id] = best_new_node
+		#not the cleanest solution to keep track of ids but hey it works
+		controller.maxId+=1
+
+		@deb(controller.nodes[best_new_node.id], :flow)
+		return true
+	end
+	return false
+end
+
+function belief_update(start_b::Array{Float64}, ai::A, zi::W, frame_i::IPOMDP, controllers_j::Array{AbstractController, 1}) where {A, W}
+	start_time("escape_belief_update")
+	n_controllers_j = length(controllers_j)
+	states = IPOMDPs.states(frame_i)
+	n_states = length(states)
+	actions_i = actions(frame_i)
+	n_actions = length(actions_i)
+	observations_i = observations(frame_i)
+	n_observations = length(observations_i)
+
+	temp_id_j = Array{Array{Int64, 1}, 1}(undef, n_controllers_j)
+	node_counter = 1
+	for controller_index in 1:n_controllers_j
+		controller_j = controllers_j[controller_index]
+		nodes_j = controller_j.nodes
+		#initialize inner array
+		temp_id_j[controller_index] = Array{Int64, 1}(undef, controller_j.maxId)
+		#quick fix to have the values in some order
+	    for node_id in sort(collect(keys(nodes_j)))
+	        temp_id_j[controller_index][node_id] = node_counter
+			node_counter += 1
+	    end
+	end
+	n_nodes_j = node_counter-1
+	@deb("total nodes in j: $n_nodes_j", :multiple)
+	new_b = zeros(n_states, n_nodes_j)
+	normalize = 0.0
+	for s_prime_index in 1:n_states
+		s_prime = states[s_prime_index]
+		for s_index in 1:n_states
+			s = states[s_index]
+			for controller_index in 1:n_controllers_j
+				controller_j = controllers_j[controller_index]
+				nodes_j = controller_j.nodes
+				frame_j = controller_j.frame
+				for (nj_id, nj) in nodes_j
+					@deb("$(start_b[s_index, temp_id_j[nj_id]])")
+					if start_b[s_index, temp_id_j[nj_id]] == 0.0
+						continue
+					end
+					for (aj, aj_prob) in nj.actionProb
+						transition_i = POMDPModelTools.pdf(IPOMDPs.transition(frame_i, s, ai, aj), s_prime)
+						observation_i = POMDPModelTools.pdf(IPOMDPs.observation(frame_i, s_prime, ai, aj), zi)
+						if transition_i == 0.0 || observation_i == 0.0 || aj_prob == 0.0
+							continue
+						end
+						@deb("\t $aj_prob $transition_i $observation_i")
+						for (zj, obs_dict) in nj.edges[aj]
+							observation_j = POMDPModelTools.pdf(observation(frame_j, s_prime, aj, ai), zj)
+							if observation_j == 0.0
+								continue
+							end
+							@deb("\t\t $observation_j")
+							for (n_prime_j, prob_j) in obs_dict
+								#FIXME is this the right prob to use? last element of 1.8
+								@deb("start_b = $(start_b[s_index, temp_id_j[nj_id]])")
+								@deb("adding $(start_b[s_index, temp_id_j[nj_id]]) * $aj_prob * $transition_i* $observation_i * $observation_j * $prob_j")
+								@deb("adding $(start_b[s_index, temp_id_j[nj_id]] * aj_prob * transition_i* observation_i * observation_j * prob_j)")
+								new_b[s_prime_index, temp_id_j[n_prime_j.id]] += start_b[s_index, temp_id_j[nj_id]] * aj_prob * transition_i* observation_i * observation_j * prob_j
+								normalize += start_b[s_index, temp_id_j[nj_id]] * aj_prob * transition_i* observation_i * observation_j * prob_j
+							end
+						end
+					end
+				end
+			end
+		end
+	end
+	if normalize == 0.0
+		error("normalization constant is $normalize !")
+	end
+	new_b = new_b  ./ normalize
+	stop_time("escape_belief_update")
+	return new_b
+end
+
+# function rework_node(controller::AbstractController, new_node::Node{A, W}) where {A, W}
+# 		id = controller.maxId+1
+# 		actionProb = copy(new_node.actionProb)
+# 		value = copy(new_node.value)
+# 		edges = Dict{A, Dict{W, Dict{Node, Float64}}}()
+# 		for (a, obs_dict) in new_node.edges
+# 			edges[a] = Dict{W, Dict{Node, Float64}}()
+# 			for (z, node_dict) in obs_dict
+# 				edges[a][z] = Dict{Node,Float64}()
+# 				for (node, prob) in node_dict
+# 					current_controller_node = controller.nodes[node.id]
+# 					edges[a][z][current_controller_node] = prob
+# 				end
+# 			end
+# 		end
+# 		return Node(id, actionProb,edges, value, Dict{Node, Vector{Dict{Node, Float64}}}())
+# end
+
+
+
+function generate_node_directly(controller_i::InteractiveController{A, W}, controllers_j::Array{AbstractController, 1}, start_b::Array{Float64}, temp_id_j::Dict{Int64, Int64}) where {A, W, S}
 	start_time("escape_generate_node")
 	frame_i = controller_i.frame
 	actions_i = actions(frame_i)
@@ -845,7 +865,7 @@ function generate_node_directly(controller_i::InteractiveController{A, W}, contr
 			result_b = belief_update(start_b,a,z,frame_i, controller_j)
 			#get the best node in the controller for the updated beief
 			best_next_node, best_value_obs = get_best_node(result_b, collect(values(controller_i.nodes)))
-			new_v = node_value(best_next_node, a, z, controller_j, frame_i, temp_id_j)
+			new_v = node_value(best_next_node, a, z, controllers_j, frame_i, temp_id_j)
 			@deb("new_v = $new_v", :generatenode)
 			new_node_partial = build_node(controller_i.maxId+1, a, z, best_next_node, new_v)
 			@deb("new partial node:", :generatenode)

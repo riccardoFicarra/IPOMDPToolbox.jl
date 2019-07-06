@@ -126,78 +126,84 @@ ibpisolver.jl:
     function eval_and_improve!(policy::IBPIPolicy, level::Int64)
 		debug = Set([:flow])
 		@deb("called @level $level", :flow)
-		maxlevel = length(policy.controllers) -1
+		maxlevel = length(policy.controllers)
         improved = false
-    	if level >= 1
-    		improved, tangent_b_vec = eval_and_improve!(policy, level-1)
+    	if level >= 2
+    		improved, tangent_b_vec = eval_and_improve!(policy, level)
     	end
         @deb("evaluating level $level", :flow)
-    	if level == 0
-            tangent_b_vec = Vector{Dict{Int64, Array{Float64}}}(undef, maxlevel+1)
-            println("Level 0 : $(length(policy.controllers[0].nodes)) nodes")
+    	if level == 1
+            tangent_b_vec = Vector{Dict{Int64, Array{Float64}}}(undef, maxlevel)
+            println("Level 0 : $(length(policy.controllers[1].nodes)) nodes")
+			for controller in policy.controllers[1]
+    			evaluate!(controller)
+				@deb(controller, :data)
+				start_time = datetime2unix(now())
 
-    		evaluate!(policy.controllers[0])
-            @deb(policy.controllers[0], :data)
-			start_time = datetime2unix(now())
-
-    		improved, tangent_b_vec[1]  = partial_backup!(policy.controllers[0] ; minval = config.minval, add_one = true)
-			@deb("Elapsed time for level $level: $(datetime2unix(now()) - start_time)",:stats)
-            if improved
-                @deb("Improved level 0", :flow)
-                @deb(policy.controllers[0], :data)
-            else
-				@deb("Did not improve level 0", :flow)
-				escaped = escape_optima_standard!(policy.controllers[0], tangent_b_vec[1]; add_one = false, minval = 1e-10)
-				improved == improved || escaped
+	    		improved, tangent_b_vec[1]  = partial_backup!(controller ; minval = config.minval, add_one = true)
+				@deb("Elapsed time for level $level: $(datetime2unix(now()) - start_time)",:stats)
+	            if improved
+	                @deb("Improved level 0", :flow)
+	                @deb(policy.controllers[0], :data)
+	            else
+					@deb("Did not improve level 0", :flow)
+					escaped = escape_optima_standard!(controller, tangent_b_vec[1]; add_one = false, minval = 1e-10)
+					improved == improved || escaped
+				end
 			end
     	else
-            println("Level $level : $(length(policy.controllers[level].nodes)) nodes")
-    		evaluate!(policy.controllers[level], policy.controllers[level-1])
+			for controller in policy.controllers[level]
+	            println("Level $level : $(length(policy.controllers[level].nodes)) nodes")
+	    		evaluate!(controller, policy.controllers[level-1])
 
-            @deb(policy.controllers[level], :data)
-			start_time = datetime2unix(now())
+	            @deb(controller, :data)
+				start_time = datetime2unix(now())
 
-    		improved_single, tangent_b_vec[level+1] = partial_backup!(policy.controllers[level], policy.controllers[level-1]; minval = config.minval, add_one = true)
+	    		improved_single, tangent_b_vec[level+1] = partial_backup!(controller, policy.controllers[level]; minval = config.minval, add_one = true)
 
-			@deb("Elapsed time for level $level: $(datetime2unix(now()) - start_time)", :stats)
+				@deb("Elapsed time for level $level: $(datetime2unix(now()) - start_time)", :stats)
 
-			if improved_single
-                @deb("Improved level $level", :flow)
-                @deb(policy.controllers[level], :data)
-            else
-				@deb("Did not improve level $level", :flow)
-				escaped_single = escape_optima_standard!(policy.controllers[level], policy.controllers[level-1], tangent_b_vec[level+1];add_one = false, minval = config.minval)
-				improved_single = improved_single || escaped_single
+				if improved_single
+	                @deb("Improved level $level", :flow)
+	                @deb(controller, :data)
+	            else
+					@deb("Did not improve level $level", :flow)
+					escaped_single = escape_optima_standard!(controller, policy.controllers[level-1], tangent_b_vec[level];add_one = false, minval = config.minval)
+					improved_single = improved_single || escaped_single
+
+					improved = improved || improved_single
+
+				end
 			end
-			# global debug = Set([])
-
-			improved = improved || improved_single
     	end
     	return improved, tangent_b_vec
     end
 
     function ibpi!(policy::IBPIPolicy)
-		maxlevel = length(policy.controllers) -1
 		iterations = 0
         escaped = true
 		#full backup part to speed up
 		start_time = datetime2unix(now())
-
-		evaluate!(policy.controllers[0])
-		if length(policy.controllers[0].nodes) <= 1
-			full_backup_stochastic!(policy.controllers[0]; minval = config.minval)
-		end
-		@deb("Level0 after full backup", :flow)
-		@deb(policy.controllers[0], :flow)
-		for level in 1:maxlevel
-			evaluate!(policy.controllers[level], policy.controllers[level-1])
-			checkController(policy.controllers[level], config.minval)
-			if length(policy.controllers[level].nodes) <= 1
-				full_backup_stochastic!(policy.controllers[level], policy.controllers[level-1]; minval = config.minval)
-				@deb("Level $level after full backup", :flow)
-				@deb(policy.controllers[level], :flow)
+		for controller in policy.controllers[1]
+			evaluate!(controller)
+			if length(controller.nodes) <= 1
+				full_backup_stochastic!(controller)
 			end
+			@deb("Level0 after full backup", :flow)
+			@deb(controller, :flow)
 		end
+
+		# for level in 2:policy.maxlevel
+		# 	for controller in policy.controllers[level]
+		# 		evaluate!(controller, policy.controllers[level-1])
+		# 		checkController(controller, config.minval)
+		# 		if length(controller.nodes) <= 1
+		# 			full_backup_stochastic!(controller, policy.controllers[level-1]; minval = config.minval)
+		# 			@deb("Level $level after full backup", :flow)
+		# 			@deb(controller, :flow)
+		# 		end
+		# 	end
+		# end
 		#start of the actual algorithm
         while escaped  && iterations <= config.maxrep
             escaped = false
