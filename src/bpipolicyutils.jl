@@ -64,6 +64,8 @@ IBPIPolicyUtils:
 		=#
 		println("Value vector = $(node.value)")
 	end
+
+	
 	"""
 	Builds a node with only 1 randomly chosen action and with all observation edges
 	pointing back to itself

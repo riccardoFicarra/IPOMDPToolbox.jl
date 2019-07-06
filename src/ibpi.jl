@@ -6,6 +6,7 @@ mutable struct InteractiveController{S, A, W} <: AbstractController
 	maxId::Int64
 end
 
+
 function init_controllers(ipomdp::IPOMDP{S,A,W}, pomdp::POMDP{A, W},maxlevel::Int64; force = 0) where {S, A, W}
     #for now i assume i modeling another agent same as him.
     controllers = Dict{Int64, AbstractController}()
@@ -47,33 +48,44 @@ end
 
 
 
-function evaluate!(controller::InteractiveController{A,W},  controller_j::AbstractController) where {S, A, W}
+function evaluate!(controller::InteractiveController{A,W}, controllers_j::Array{AbstractController}) where {S, A, W}
 	start_time("eval")
 	ipomdp_i = controller.frame
-	frame_j = controller_j.frame
     nodes = controller.nodes
     n_nodes = length(controller.nodes)
-    nodes_j = controller_j.nodes
-    n_nodes_j = length(nodes_j)
     states = IPOMDPs.states(ipomdp_i)
     n_states = length(states)
-    #M[s, nj, ni, s', nj', ni']
-    M = zeros(n_states, n_nodes_j, n_nodes, n_states, n_nodes_j, n_nodes)
-    b = zeros(n_states, n_nodes_j, n_nodes)
+
+	n_controllers_j = length(controllers_j)
+	@deb("length of controllers_j = $n_controllers_j", :multiple)
 
     #dictionary used for recompacting ids
     temp_id = Dict{Int64, Int64}()
+
     for (node_id, node) in nodes
         temp_id[node_id] = length(temp_id)+1
     end
 
     #dictionary used for recompacting ids -> they are sorted!
-    #quick fix to have the values in some order
-    temp_id_j = Dict{Int64, Int64}()
-    for node_id in sort(collect(keys(nodes_j)))
-        temp_id_j[node_id] = length(temp_id_j)+1
-    end
-
+	#concatenate all nodes from all lower level controllers
+    temp_id_j = Array{Array{Int64, 1}, 1}(undef, n_controllers_j)
+	node_counter = 1
+	for controller_index in 1:n_controllers_j
+		controller_j = controllers_j[controller_index]
+		nodes_j = controller_j.nodes
+		#initialize inner array
+		temp_id_j[controller_index] = Array{Int64, 1}(undef, length(nodes_j))
+		#quick fix to have the values in some order
+	    for node_id in sort(collect(keys(nodes_j)))
+	        temp_id_j[controller_index][node_id] = node_counter
+			node_counter += 1
+	    end
+	end
+	n_nodes_j = length(temp_id_j)
+	@deb("total nodes in j: $n_nodes_j", :multiple)
+	#M[s, nj, ni, s', nj', ni']
+    M = zeros(n_states, n_nodes_j, n_nodes, n_states, n_nodes_j, n_nodes)
+    b = zeros(n_states, n_nodes_j, n_nodes)
     #compute coefficients for sum(a)[R(s|a)*P(a|n)+gamma*sum(z, n', s')[P(s'|s,a)*P(z|s',a)*P(a|n)*P(n'|z)*V(nz, s')]]
 	start_time("eval_coeff")
 	for (ni_id, ni) in nodes
@@ -82,45 +94,50 @@ function evaluate!(controller::InteractiveController{A,W},  controller_j::Abstra
         #variables are all pairs of n,s
         for s_index in 1:n_states
             s = states[s_index]
-            for (nj_id, nj) in nodes_j
-                M[s_index, temp_id_j[nj_id], temp_id[ni_id], s_index, temp_id_j[nj_id], temp_id[ni_id]] +=1
-                for (ai, p_ai) in ni.actionProb
-                    #@deb("ai = $ai")
-                    @deb("ai = $ai")
-                    for (aj, p_aj) in nj.actionProb
-                        #@deb("aj = $aj")
-                        @deb("aj = $aj")
-                        r = IPOMDPs.reward(ipomdp_i, s, ai, aj)
-                        #@deb("r = $s")
-                        @deb("r = $r")
-                        b[s_index, temp_id_j[nj_id], temp_id[ni_id]] += p_ai * p_aj * r
-                        for (zi, obs_dict_i) in ni.edges[ai]
-                            @deb("zi = $zi")
-                            for s_prime_index in 1:n_states
-                                s_prime = states[s_prime_index]
-                                @deb("s_prime = $s_prime")
-                                transition_i = POMDPModelTools.pdf(IPOMDPs.transition(ipomdp_i, s, ai, aj), s_prime)
-                                observation_i = POMDPModelTools.pdf(IPOMDPs.observation(ipomdp_i, s_prime, ai, aj), zi)
-								partial_mult_start = p_ai * p_aj * IPOMDPs.discount(ipomdp_i) * transition_i * observation_i
-								@deb(transition_i)
-                                @deb(observation_i)
-                                for (zj, obs_dict_j) in nj.edges[aj]
-                                    @deb("zj = $zj")
-                                    observation_j = POMDPModelTools.pdf(observation(frame_j, s_prime, aj, ai), zj)
-									partial_mult_zj = partial_mult_start * observation_j
-                                    for (n_prime_j, prob_j) in nj.edges[aj][zj]
-										partial_mult_pj = partial_mult_zj * prob_j
-                                        for (n_prime_i, prob_i) in ni.edges[ai][zi]
-                                            M[s_index, temp_id_j[nj_id], temp_id[ni_id], s_prime_index, temp_id_j[n_prime_j.id], temp_id[n_prime_i.id]] -= partial_mult_pj * prob_i
-											#M[s_index, temp_id_j[nj_id], temp_id[ni_id], s_prime_index, temp_id_j[n_prime_j.id], temp_id[n_prime_i.id]] -= p_ai * p_aj * IPOMDPs.discount(ipomdp_i) * transition_i * observation_i * observation_j * prob_j * prob_i
-                                        end
-                                    end
-                                end
-                            end
-                        end
-                    end
-                end
-            end
+			for controller_index in 1:n_controllers_j
+				controller_j = controllers_j[controller_index]
+				nodes_j = controller_j.nodes
+				frame_j = controller_j.frame
+	            for (nj_id, nj) in nodes_j
+	                M[s_index, temp_id_j[controller_index][nj_id], temp_id[ni_id], s_index, temp_id_j[controller_index][nj_id], temp_id[ni_id]] +=1
+	                for (ai, p_ai) in ni.actionProb
+	                    #@deb("ai = $ai")
+	                    @deb("ai = $ai")
+	                    for (aj, p_aj) in nj.actionProb
+	                        #@deb("aj = $aj")
+	                        @deb("aj = $aj")
+	                        r = IPOMDPs.reward(ipomdp_i, s, ai, aj)
+	                        #@deb("r = $s")
+	                        @deb("r = $r")
+	                        b[s_index, temp_id_j[controller_index][nj_id], temp_id[ni_id]] += p_ai * p_aj * r
+	                        for (zi, obs_dict_i) in ni.edges[ai]
+	                            @deb("zi = $zi")
+	                            for s_prime_index in 1:n_states
+	                                s_prime = states[s_prime_index]
+	                                @deb("s_prime = $s_prime")
+	                                transition_i = POMDPModelTools.pdf(IPOMDPs.transition(ipomdp_i, s, ai, aj), s_prime)
+	                                observation_i = POMDPModelTools.pdf(IPOMDPs.observation(ipomdp_i, s_prime, ai, aj), zi)
+									partial_mult_start = p_ai * p_aj * IPOMDPs.discount(ipomdp_i) * transition_i * observation_i
+									@deb(transition_i)
+	                                @deb(observation_i)
+	                                for (zj, obs_dict_j) in nj.edges[aj]
+	                                    @deb("zj = $zj")
+	                                    observation_j = POMDPModelTools.pdf(observation(frame_j, s_prime, aj, ai), zj)
+										partial_mult_zj = partial_mult_start * observation_j
+	                                    for (n_prime_j, prob_j) in nj.edges[aj][zj]
+											partial_mult_pj = partial_mult_zj * prob_j
+	                                        for (n_prime_i, prob_i) in ni.edges[ai][zi]
+	                                            M[s_index, temp_id_j[controller_index][nj_id], temp_id[ni_id], s_prime_index, temp_id_j[controller_index][n_prime_j.id], temp_id[n_prime_i.id]] -= partial_mult_pj * prob_i
+												#M[s_index, temp_id_j[controller_index][nj_id], temp_id[ni_id], s_prime_index, temp_id_j[controller_index][n_prime_j.id], temp_id[n_prime_i.id]] -= p_ai * p_aj * IPOMDPs.discount(ipomdp_i) * transition_i * observation_i * observation_j * prob_j * prob_i
+	                                        end
+	                                    end
+	                                end
+	                            end
+	                        end
+	                    end
+	                end
+	            end
+			end
         end
     end
 	#TL, all njs, only ni = 1, goes to TL
@@ -160,29 +177,22 @@ function actions(frame::Any)
 	end
 end
 
-function partial_backup!(controller::InteractiveController{A, W}, controller_j::AbstractController; minval = 1e-10, add_one = true, debug_node = 0) where {S, A, W}
+function partial_backup!(controller::InteractiveController{A, W}, controllers_j::Array{AbstractController, 1}; minval = 1e-10, add_one = true) where {S, A, W}
 	#debug = Set([:flow])
 	#this time the matrix form is a1x1+...+anxn = b1
 	#sum(a,s)[sum(nz)[canz*[R(s,a)+gamma*sum(s')p(s'|s, a)p(z|s', a)v(nz,s')]] -eps = V(n,s)
 	#number of variables is |A||Z||N|+1 (canz and eps)
 	start_time("partial")
-	type = :none
 	frame = controller.frame
-	frame_j = controller_j.frame
 	nodes = controller.nodes
-	nodes_j = controller_j.nodes
+	n_controllers_j = length(controllers_j)
 	n_nodes = length(nodes)
-	#@deb(n_nodes)
-	n_nodes_j = length(nodes_j)
 	states = IPOMDPs.states(frame)
 	n_states = length(states)
 	actions_i = actions(frame)
 	n_actions = length(actions_i)
-	actions_j = actions(frame_j)
 	observations_i = observations(frame)
-	observations_j = observations(frame)
 	n_observations = length(observations_i)
-	constraints = Array{ConstraintRef}(undef, n_states, n_nodes_j)
 	#vector containing the tangent belief states for all modified nodes
 	tangent_b = Dict{Int64, Array{Float64}}()
 	#dim = n_nodes*n_actions*n_observations
@@ -195,11 +205,24 @@ function partial_backup!(controller::InteractiveController{A, W}, controller_j::
 			temp_id[real_id] = length(temp_id)+1
 			#@deb("Node $real_id becomes $node_counter")
 	end
-	temp_id_j = Dict{Int64, Int64}()
-	for real_id_j in sort(collect(keys(nodes_j)))
-			temp_id_j[real_id_j] = length(temp_id_j)+1
-			#@deb("Node $real_id becomes $node_counter")
+
+	temp_id_j = Array{Array{Int64, 1}, 1}(undef, n_controllers_j)
+	node_counter = 1
+	for controller_index in 1:n_controllers_j
+		controller_j = controllers_j[controller_index]
+		nodes_j = controller_j.nodes
+		#initialize inner array
+		temp_id_j[controller_index] = Array{Int64, 1}(undef, length(nodes_j))
+		#quick fix to have the values in some order
+	    for node_id in sort(collect(keys(nodes_j)))
+	        temp_id_j[controller_index][node_id] = node_counter
+			node_counter += 1
+	    end
 	end
+	n_nodes_j = length(temp_id_j)
+	@deb("total nodes in j: $n_nodes_j", :multiple)
+	constraints = Array{ConstraintRef}(undef, n_states, n_nodes_j)
+
 	nodecounter= 0
 	for (n_id, node) in nodes
 
@@ -224,60 +247,65 @@ function partial_backup!(controller::InteractiveController{A, W}, controller_j::
 		for s_index in 1:n_states
 			s = states[s_index]
 			@deb("state $s", :lpdual)
-			for (nj_id, nj) in nodes_j
-				M = zeros(n_actions, n_observations, n_nodes)
-				M_a = zeros(n_actions)
-				@deb("\tnode_j $nj_id ")
-				for ai_index in 1:n_actions
-					ai = actions_i[ai_index]
-					@deb("\t\tai = $ai ")
-					for (aj, p_aj) in nj.actionProb
-						r = IPOMDPs.reward(frame, s, ai, aj)
-						# @deb("\t\t\taj = $aj p_aj = $p_aj, r = $r", :lpdual)
-						M_a[ai_index] += r * p_aj
-						for zi_index in 1:n_observations
-							zi = observations_i[zi_index]
-							#array of edges given observation
-							for s_prime_index in 1:length(states)
-								s_prime = states[s_prime_index]
-								transition_i =POMDPModelTools.pdf(IPOMDPs.transition(frame,s,ai, aj), s_prime)
-								observation_i = POMDPModelTools.pdf(observation(frame, s_prime, ai, aj), zi)
-								partial_mult_s_prime = p_aj * transition_i * observation_i
-								if transition_i != 0.0 && observation_i != 0.0
-									for (zj, obs_dict_j) in nj.edges[aj]
-										observation_j = POMDPModelTools.pdf(observation(frame_j, s_prime, aj, ai), zj)
-										partial_mult_zj = partial_mult_s_prime * observation_j
-										if observation_j != 0.0
-											for (n_prime_j, prob_j) in obs_dict_j
-												partial_mult_pj = partial_mult_zj * prob_j
-												for (n_prime_i_index, n_prime_i) in nodes
-													#n_prime_j is always n1 when you have two nodes!
-													v_nz_sp = n_prime_i.value[s_prime_index,temp_id_j[n_prime_j.id]]
-													#M[ai_index, zi_index, temp_id[n_prime_i_index]]+= p_aj* transition_i * observation_i * observation_j * prob_j * v_nz_sp
-													M[ai_index, zi_index, temp_id[n_prime_i_index]]+= partial_mult_pj * v_nz_sp
-													# if p_aj* transition_i * observation_i * observation_j * prob_j * v_nz_sp - partial_mult_pj * v_nz_sp > 1e-10
-													# 	error("Wrong partial mult")
-													# end
+			for controller_index in 1:n_controllers_j
+				controller_j = controllers_j[controller_index]
+				frame_j = controller_j.frame
+				nodes_j = controller_j.nodes
+				for (nj_id, nj) in nodes_j
+					M = zeros(n_actions, n_observations, n_nodes)
+					M_a = zeros(n_actions)
+					@deb("\tnode_j $nj_id ")
+					for ai_index in 1:n_actions
+						ai = actions_i[ai_index]
+						@deb("\t\tai = $ai ")
+						for (aj, p_aj) in nj.actionProb
+							r = IPOMDPs.reward(frame, s, ai, aj)
+							# @deb("\t\t\taj = $aj p_aj = $p_aj, r = $r", :lpdual)
+							M_a[ai_index] += r * p_aj
+							for zi_index in 1:n_observations
+								zi = observations_i[zi_index]
+								#array of edges given observation
+								for s_prime_index in 1:length(states)
+									s_prime = states[s_prime_index]
+									transition_i =POMDPModelTools.pdf(IPOMDPs.transition(frame,s,ai, aj), s_prime)
+									observation_i = POMDPModelTools.pdf(observation(frame, s_prime, ai, aj), zi)
+									partial_mult_s_prime = p_aj * transition_i * observation_i
+									if transition_i != 0.0 && observation_i != 0.0
+										for (zj, obs_dict_j) in nj.edges[aj]
+											observation_j = POMDPModelTools.pdf(observation(frame_j, s_prime, aj, ai), zj)
+											partial_mult_zj = partial_mult_s_prime * observation_j
+											if observation_j != 0.0
+												for (n_prime_j, prob_j) in obs_dict_j
+													partial_mult_pj = partial_mult_zj * prob_j
+													for (n_prime_i_index, n_prime_i) in nodes
+														#n_prime_j is always n1 when you have two nodes!
+														v_nz_sp = n_prime_i.value[s_prime_index,temp_id_j[controller_index][n_prime_j.id]]
+														#M[ai_index, zi_index, temp_id[n_prime_i_index]]+= p_aj* transition_i * observation_i * observation_j * prob_j * v_nz_sp
+														M[ai_index, zi_index, temp_id[n_prime_i_index]]+= partial_mult_pj * v_nz_sp
+														# if p_aj* transition_i * observation_i * observation_j * prob_j * v_nz_sp - partial_mult_pj * v_nz_sp > 1e-10
+														# 	error("Wrong partial mult")
+														# end
+													end
 												end
 											end
 										end
 									end
+									#@deb("M[$a_index, $obs_index, $nz_id] = $(M[a_index, obs_index, nz_id])")
 								end
-								#@deb("M[$a_index, $obs_index, $nz_id] = $(M[a_index, obs_index, nz_id])")
 							end
 						end
 					end
-				end
-				# @deb("state $s, node $nj_id", :lpdual)
-				@deb(M, :data)
+					# @deb("state $s, node $nj_id", :lpdual)
+					@deb(M, :data)
 
-				#@deb(M_a)
-				#node.value[s_index, temp_id_j[nj_id]] is V(n, is)
-				if :data in debug
-					debug_complete_M[s_index] = copy(M)
+					#@deb(M_a)
+					#node.value[s_index, temp_id_j[controller_index][nj_id]] is V(n, is)
+					if :data in debug
+						debug_complete_M[s_index] = copy(M)
+					end
+					constraints[s_index, temp_id_j[controller_index][nj_id]] = @constraint(lpmodel, e + node.value[s_index, temp_id_j[controller_index][nj_id]] <= sum( M_a[a]*ca[a]+ IPOMDPs.discount(frame)*sum(sum( M[a, z, n] * canz[a, z, n] for n in 1:n_nodes) for z in 1:n_observations) for a in 1:n_actions))
+					#set_name(con, "$(s_index)_$(temp_id_j[controller_index][nj_id])")
 				end
-				constraints[s_index, temp_id_j[nj_id]] = @constraint(lpmodel, e + node.value[s_index, temp_id_j[nj_id]] <= sum( M_a[a]*ca[a]+ IPOMDPs.discount(frame)*sum(sum( M[a, z, n] * canz[a, z, n] for n in 1:n_nodes) for z in 1:n_observations) for a in 1:n_actions))
-				#set_name(con, "$(s_index)_$(temp_id_j[nj_id])")
 			end
 		end
 		stop_time("partial_coeff")
@@ -389,24 +417,29 @@ function partial_backup!(controller::InteractiveController{A, W}, controller_j::
 		#@deb("No node improved", :flow)
 		tangent_belief = Array{Float64}(undef, n_states, n_nodes_j)
 		for s_index in 1:n_states
-			for nj_id in keys(nodes_j)
-				# con = constraint_by_name(lpmodel, "$(s_index)_$(temp_id_j[nj_id])")
-				@deb("state $s_index node $nj_id", :lpdual)
-				@deb(shadow_price(constraints[s_index, temp_id_j[nj_id]]), :lpdual)
-				tangent_belief[s_index, temp_id_j[nj_id]] =  shadow_price(constraints[s_index, temp_id_j[nj_id]])
-				# @deb(dual(constraints[s_index, temp_id_j[nj_id]]), :lpdual)
-				# tangent_belief[s_index, temp_id_j[nj_id]] =  -1*dual(constraints[s_index, temp_id_j[nj_id]])
+			for controller_index in 1:n_controllers_j
+				controller_j = controllers_j[controller_index]
+				frame_j = controller_j.frame
+				nodes_j = controller_j.nodes
+				for nj_id in keys(nodes_j)
+					# con = constraint_by_name(lpmodel, "$(s_index)_$(temp_id_j[controller_index][nj_id])")
+					@deb("state $s_index node $nj_id", :lpdual)
+					@deb(shadow_price(constraints[s_index, temp_id_j[controller_index][nj_id]]), :lpdual)
+					tangent_belief[s_index, temp_id_j[controller_index][nj_id]] =  shadow_price(constraints[s_index, temp_id_j[controller_index][nj_id]])
+					# @deb(dual(constraints[s_index, temp_id_j[controller_index][nj_id]]), :lpdual)
+					# tangent_belief[s_index, temp_id_j[controller_index][nj_id]] =  -1*dual(constraints[s_index, temp_id_j[controller_index][nj_id]])
 
 
 
-				# if tangent_belief[s_index, temp_id_j[nj_id]] <= 0.0
-				# 	@warn "belief == $(tangent_belief[s_index, temp_id_j[nj_id]])"
-				# end
+					# if tangent_belief[s_index, temp_id_j[controller_index][nj_id]] <= 0.0
+					# 	@warn "belief == $(tangent_belief[s_index, temp_id_j[controller_index][nj_id]])"
+					# end
 
-				# if :data in debug
-				# 	println(constraints[s_index, temp_id_j[nj_id]])
-				# end
-				#@deb(-1*dual(constraints[s_index, temp_id_j[nj_id]]), :data)
+					# if :data in debug
+					# 	println(constraints[s_index, temp_id_j[controller_index][nj_id]])
+					# end
+					#@deb(-1*dual(constraints[s_index, temp_id_j[controller_index][nj_id]]), :data)
+				end
 			end
 		end
 		@deb(tangent_belief, :lpdual)
@@ -443,11 +476,21 @@ function full_backup_generate_nodes(controller::InteractiveController{A, W}, con
 		println("Current controller:")
 		println(controller)
 	end
-	temp_id_j = Dict{Int64, Int64}()
-	for real_id in sort(collect(keys(nodes_j)))
-			temp_id_j[real_id] = length(temp_id_j)+1
-			#@deb("Node $real_id becomes $node_counter")
+	temp_id_j = Array{Array{Int64, 1}, 1}(undef, n_controllers_j)
+	node_counter = 1
+	for controller_index in 1:n_controllers_j
+		controller_j = controllers_j[controller_index]
+		nodes_j = controller_j.nodes
+		#initialize inner array
+		temp_id_j[controller_index] = Array{Int64, 1}(undef, length(nodes_j))
+		#quick fix to have the values in some order
+	    for node_id in sort(collect(keys(nodes_j)))
+	        temp_id_j[controller_index][node_id] = node_counter
+			node_counter += 1
+	    end
 	end
+	n_nodes_j = length(temp_id_j)
+	@deb("total nodes in j: $n_nodes_j", :multiple)
 
 	new_nodes = Set{Node}()
 	#new nodes counter used mainly for debugging, counts backwards (gets overwritten eventually)

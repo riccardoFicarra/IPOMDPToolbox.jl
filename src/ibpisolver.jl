@@ -76,23 +76,38 @@ ibpisolver.jl:
 
     struct IBPIPolicy{S, A, W}
         #so far it's controller level -> controller
-        #level 0 is the pompdp, max level is the chosen agent controller
-        controllers::Dict{Int64, AbstractController}
+        #level 0 is the pompdp
+        controllers::Array{Array{AbstractController,1}}
+		maxlevel::Int64
     end
 
-    function IBPIPolicy(ipomdp::IPOMDP{S, A, W}, pomdp::POMDP{A, W}, maxlevel::Int64; force = 0) where {S, A, W}
-		if force == 0
-			controllers = init_controllers(ipomdp, pomdp, maxlevel)
-		else
-			controllers = init_controllers(ipomdp, pomdp, maxlevel; force=force)
+	"""
+	maxlevelframe is the frame of the agent we want to build
+	add as many frame arrays as levels, in descending order.
+	"""
+    function IBPIPolicy(maxlevelframe::IPOMDP{S, A, W}, emulated_frames...; force = 0) where {S, A, W}
+		#i dont consider maxlevelframe because we're starting from lv0
+		maxlevel = length(emulated_frames)+1
+		@deb("maxlevel = $maxlevel", :multiple)
+		controllers = Array{Array{AbstractController, 1}}(undef, maxlevel)
+		max_level_controller = InteractiveController(maxlevel, maxlevelframe; force = force)
+		controllers[maxlevel] = [max_level_controller]
+		#emulated_frames is a tuple{vector{IPOMDP}}
+		for i in 1:maxlevel-2
+			controllers[maxlevel-i] = [InteractiveController(maxlevel-i, emulated_frames[i][frame]; force = force) for frame in 1:length(emulated_frames[i])]
 		end
-        return IBPIPolicy{S, A, W}(controllers)
+		#pomdp part, level 1
+		controllers[1] = [Controller( emulated_frames[maxlevel-1][frame]; force = force) for frame in 1:length(emulated_frames[maxlevel-1])]
+        return IBPIPolicy{S, A, W}(controllers, maxlevel)
     end
 
 	function Base.println(policy::IBPIPolicy)
-		for l in 0:length(policy.controllers)-1
-		    println("Level $l")
-		    println(policy.controllers[l])
+		for l in 1:policy.maxlevel
+			println("Level $l")
+			for frame_index in 1:length(policy.controllers[l])
+				println("Frame $frame_index:  $(typeof(policy.controllers[l][frame_index].frame))")
+			    println(policy.controllers[l][frame_index])
+			end
 		end
 	end
 
