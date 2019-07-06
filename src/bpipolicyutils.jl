@@ -1086,7 +1086,7 @@ IBPIPolicyUtils:
 									prob = 1.0
 								end
 								if prob < 0.0 || prob > 1.0
-									error("Probability outside of bounds: $prob")
+									#error("Probability outside of bounds: $prob")
 								end
 								if prob > 0.0
 									obs_total+= prob

@@ -119,7 +119,7 @@ ibpisolver.jl:
         @deb("evaluating level $level", :flow)
     	if level == 0
             tangent_b_vec = Vector{Dict{Int64, Array{Float64}}}(undef, maxlevel+1)
-            @deb("Level 0", :flow)
+            println("Level 0 : $(length(policy.controllers[0].nodes)) nodes")
 
     		evaluate!(policy.controllers[0])
             @deb(policy.controllers[0], :data)
@@ -136,7 +136,7 @@ ibpisolver.jl:
 				improved == improved || escaped
 			end
     	else
-            @deb("Level $level", :flow)
+            println("Level $level : $(length(policy.controllers[level].nodes)) nodes")
     		evaluate!(policy.controllers[level], policy.controllers[level-1])
 
             @deb(policy.controllers[level], :data)
