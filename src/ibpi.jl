@@ -201,7 +201,6 @@ function partial_backup!(controller::InteractiveController{A, W}, controllers_j:
 	#M_TR =  zeros(n_actions, n_observations, n_nodes)
 	#M_TL =  zeros(n_actions, n_observations, n_nodes)
 	temp_id = Dict{Int64, Int64}()
-	debug_complete_M = Vector{Array{Float64}}(undef,n_states)
 	for real_id in keys(nodes)
 			temp_id[real_id] = length(temp_id)+1
 			#@deb("Node $real_id becomes $node_counter")
@@ -245,6 +244,7 @@ function partial_backup!(controller::InteractiveController{A, W}, controllers_j:
 		@objective(lpmodel, Max, e)
 		#define constraints
 		start_time("partial_coeff")
+		@deb("Started computing coeff", :multiple)
 		for s_index in 1:n_states
 			s = states[s_index]
 			@deb("state $s", :lpdual)
@@ -280,7 +280,8 @@ function partial_backup!(controller::InteractiveController{A, W}, controllers_j:
 													partial_mult_pj = partial_mult_zj * prob_j
 													for (n_prime_i_index, n_prime_i) in nodes
 														#n_prime_j is always n1 when you have two nodes!
-														v_nz_sp = n_prime_i.value[s_prime_index,temp_id_j[controller_index][n_prime_j.id]]
+
+														v_nz_sp = n_prime_i.value[s_prime_index, temp_id_j[controller_index][n_prime_j.id]]
 														#M[ai_index, zi_index, temp_id[n_prime_i_index]]+= p_aj* transition_i * observation_i * observation_j * prob_j * v_nz_sp
 														M[ai_index, zi_index, temp_id[n_prime_i_index]]+= partial_mult_pj * v_nz_sp
 														# if p_aj* transition_i * observation_i * observation_j * prob_j * v_nz_sp - partial_mult_pj * v_nz_sp > 1e-10
@@ -301,11 +302,12 @@ function partial_backup!(controller::InteractiveController{A, W}, controllers_j:
 
 					#@deb(M_a)
 					#node.value[s_index, temp_id_j[controller_index][nj_id]] is V(n, is)
-					if :data in debug
-						debug_complete_M[s_index] = copy(M)
-					end
-					constraints[s_index, temp_id_j[controller_index][nj_id]] = @constraint(lpmodel, e + node.value[s_index, temp_id_j[controller_index][nj_id]] <= sum( M_a[a]*ca[a]+ IPOMDPs.discount(frame)*sum(sum( M[a, z, n] * canz[a, z, n] for n in 1:n_nodes) for z in 1:n_observations) for a in 1:n_actions))
+					@deb("$(node.value)", :multiple)
+					@deb("$(temp_id_j[controller_index][nj_id])", :multiple)
+					constraints[s_index, temp_id_j[controller_index][nj_id]] = @constraint(lpmodel, e + node.value[s_index, temp_id_j[controller_index][nj_id] ] <= sum( M_a[a]*ca[a]+ IPOMDPs.discount(frame)*sum(sum( M[a, z, n] * canz[a, z, n] for n in 1:n_nodes) for z in 1:n_observations) for a in 1:n_actions))
 					#set_name(con, "$(s_index)_$(temp_id_j[controller_index][nj_id])")
+					@deb("constraint set", :multiple)
+
 				end
 			end
 		end
@@ -414,6 +416,7 @@ function partial_backup!(controller::InteractiveController{A, W}, controllers_j:
 				return true, Dict{Int64, Array{Float64}}()
 			end
 		end
+		@deb("Node changed", :multiple)
 		#constraint_list = JuMP.all_constraints(lpmodel, GenericAffExpr{Float64,VariableRef}, MOI.LessThan{Float64})
 		#@deb("No node improved", :flow)
 		tangent_belief = Array{Float64}(undef, n_states, n_nodes_j)
@@ -452,59 +455,78 @@ function partial_backup!(controller::InteractiveController{A, W}, controllers_j:
 end
 
 
+# function full_backup_stochastic!(controller::InteractiveController{A, W}, controllers_j::Array{AbstractController, 1}; minval = 1e-10) where {A, W}
+# 	debug = Set{Symbol}([])
+# 	nodes = controller.nodes
+# 	# observations = observations(controller_i.frame)
+# 	#tentative from incpruning
+# 	#prder of it -> actions, obs
+# 	#for each a, z produce n new nodes (iterate on nodes)
+# 	#for each node iterate on s and s' to produce a new node
+# 	#new node is tied to old node?, action a and obs z
+# 	#with stochastic pruning we get the cis needed
+# 	new_nodes = full_backup_generate_nodes(controller, controllers_j)
+# 	#before performing filtering with the old nodes update incomingEdge structure of old nodes
+# 	#also assign permanent ids
+# 	nodes_counter = controller.maxId+1
+# 	for new_node in new_nodes
+# 		@deb("Node $(new_node.id) becomes node $(nodes_counter)", :data)
+# 		new_node.id = nodes_counter
+# 		if :data in debug
+# 			println(new_node)
+# 		end
+# 		nodes_counter+=1
+# 		for (action, observation_map) in new_node.edges
+# 			for (observation, edge_map) in observation_map
+# 				#@deb("Obs $observation")
+# 				for (next, prob) in edge_map
+# 					#@deb("adding incoming edge from $(new_node.id) to $(next.id) ($action, $observation)")
+# 					if haskey(next.incomingEdgeDicts, new_node)
+# 						#@deb("it was the $(length(next.incomingEdgeDicts[new_node])+1)th")
+# 						push!(next.incomingEdgeDicts[new_node], edge_map)
+# 					else
+# 						#@deb("it was the first edge for $(new_node.id)")
+# 						next.incomingEdgeDicts[new_node] = [edge_map]
+# 					end
+# 				end
+# 			end
+# 		end
+# 	end
+# 	new_max_id = nodes_counter-1
+# 	#add new nodes to controller
+# 	#i want to have the new nodes first, so in case there are two nodes with identical value the newer node is pruned and we skip rewiring
+# 	#no need to sort, just have new nodes examined before old nodes
+# 	#the inner union is needed to have an orderedset as first parameter, as the result of union({ordered}, {not ordered}) = {ordered}
+# 	orderedset = union(union(OrderedSet{Node}(), new_nodes), Set{Node}(oldnode for oldnode in values(nodes)))
+# 	all_nodes = filterNodes(orderedset, minval)
+# 	new_controller_nodes = Dict{Int64, Node{A, W}}()
+# 	for node in all_nodes
+# 		#add nodes to the controller
+# 		checkNode(node, controller, minval; normalize = true, checkDistinct = false)
+# 		new_controller_nodes[node.id] = node
+# 	end
+# 	controller.nodes = new_controller_nodes
+# 	controller.maxId = new_max_id
+# end
+
 function full_backup_stochastic!(controller::InteractiveController{A, W}, controllers_j::Array{AbstractController, 1}; minval = 1e-10) where {A, W}
-	debug = Set{Symbol}([])
-	nodes = controller.nodes
-	# observations = observations(controller_i.frame)
-	#tentative from incpruning
-	#prder of it -> actions, obs
-	#for each a, z produce n new nodes (iterate on nodes)
-	#for each node iterate on s and s' to produce a new node
-	#new node is tied to old node?, action a and obs z
-	#with stochastic pruning we get the cis needed
-	new_nodes = full_backup_generate_nodes(controller, controllers_j)
-	#before performing filtering with the old nodes update incomingEdge structure of old nodes
-	#also assign permanent ids
-	nodes_counter = controller.maxId+1
-	for new_node in new_nodes
-		@deb("Node $(new_node.id) becomes node $(nodes_counter)", :data)
-		new_node.id = nodes_counter
-		if :data in debug
-			println(new_node)
-		end
-		nodes_counter+=1
-		for (action, observation_map) in new_node.edges
-			for (observation, edge_map) in observation_map
-				#@deb("Obs $observation")
-				for (next, prob) in edge_map
-					#@deb("adding incoming edge from $(new_node.id) to $(next.id) ($action, $observation)")
-					if haskey(next.incomingEdgeDicts, new_node)
-						#@deb("it was the $(length(next.incomingEdgeDicts[new_node])+1)th")
-						push!(next.incomingEdgeDicts[new_node], edge_map)
-					else
-						#@deb("it was the first edge for $(new_node.id)")
-						next.incomingEdgeDicts[new_node] = [edge_map]
-					end
-				end
+	initial_node = controller.nodes[1]
+	already_present_action = first(controller.nodes[1].actionProb)
+
+	for a in actions(controller.frame)
+		if a != already_present_action
+			actionProb = Dict{A, Float64}(a => 1)
+			edges = Dict{A, Dict{W, Dict{Node, Float64}}}( a => Dict{W, Dict{Node, Float64}}() )
+			for z in observations(controller.frame)
+				edges[a][z] = Dict{Node, Float64}(initial_node => 1)
 			end
+			new_node = Node(controller.maxId + 1, actionProb, edges, Array{Float64, 2}(undef, 0, 0), Dict{Node, Array{Dict{Node, Float64}, 1}}())
+			controller.nodes[new_node.id] = new_node
+			controller.maxId = new_node.id
 		end
 	end
-	new_max_id = nodes_counter-1
-	#add new nodes to controller
-	#i want to have the new nodes first, so in case there are two nodes with identical value the newer node is pruned and we skip rewiring
-	#no need to sort, just have new nodes examined before old nodes
-	#the inner union is needed to have an orderedset as first parameter, as the result of union({ordered}, {not ordered}) = {ordered}
-	orderedset = union(union(OrderedSet{Node}(), new_nodes), Set{Node}(oldnode for oldnode in values(nodes)))
-	all_nodes = filterNodes(orderedset, minval)
-	new_controller_nodes = Dict{Int64, Node{A, W}}()
-	for node in all_nodes
-		#add nodes to the controller
-		checkNode(node, controller, minval; normalize = true, checkDistinct = false)
-		new_controller_nodes[node.id] = node
-	end
-	controller.nodes = new_controller_nodes
-	controller.maxId = new_max_id
 end
+
 
 function full_backup_generate_nodes(controller::InteractiveController{A, W}, controllers_j::Array{AbstractController, 1}) where {A, W}
 	@deb("Generating nodes", :full)
@@ -787,7 +809,7 @@ function belief_update(start_b::Array{Float64}, ai::A, zi::W, frame_i::IPOMDP, c
 				frame_j = controller_j.frame
 				for (nj_id, nj) in nodes_j
 					@deb("$(start_b[s_index, temp_id_j[nj_id]])")
-					if start_b[s_index, temp_id_j[nj_id]] == 0.0
+					if start_b[s_index, temp_id_j[controller_index][nj_id]] == 0.0
 						continue
 					end
 					for (aj, aj_prob) in nj.actionProb
@@ -808,8 +830,8 @@ function belief_update(start_b::Array{Float64}, ai::A, zi::W, frame_i::IPOMDP, c
 								@deb("start_b = $(start_b[s_index, temp_id_j[nj_id]])")
 								@deb("adding $(start_b[s_index, temp_id_j[nj_id]]) * $aj_prob * $transition_i* $observation_i * $observation_j * $prob_j")
 								@deb("adding $(start_b[s_index, temp_id_j[nj_id]] * aj_prob * transition_i* observation_i * observation_j * prob_j)")
-								new_b[s_prime_index, temp_id_j[n_prime_j.id]] += start_b[s_index, temp_id_j[nj_id]] * aj_prob * transition_i* observation_i * observation_j * prob_j
-								normalize += start_b[s_index, temp_id_j[nj_id]] * aj_prob * transition_i* observation_i * observation_j * prob_j
+								new_b[s_prime_index, temp_id_j[controller_index][n_prime_j.id]] += start_b[s_index, temp_id_j[controller_index][nj_id]] * aj_prob * transition_i* observation_i * observation_j * prob_j
+								normalize += start_b[s_index, temp_id_j[controller_index][nj_id]] * aj_prob * transition_i* observation_i * observation_j * prob_j
 							end
 						end
 					end
@@ -845,7 +867,7 @@ end
 
 
 
-function generate_node_directly(controller_i::InteractiveController{A, W}, controllers_j::Array{AbstractController, 1}, start_b::Array{Float64}, temp_id_j::Dict{Int64, Int64}) where {A, W, S}
+function generate_node_directly(controller_i::InteractiveController{A, W}, controllers_j::Array{AbstractController, 1}, start_b::Array{Float64}, temp_id_j::Array{Array{Int64,1},1}) where {A, W, S}
 	start_time("escape_generate_node")
 	frame_i = controller_i.frame
 	actions_i = actions(frame_i)
@@ -862,7 +884,7 @@ function generate_node_directly(controller_i::InteractiveController{A, W}, contr
 			#find the best edge (aka the best next node) for each observation
 			z = observations_i[z_index]
 			#compute the result belief of executing action a and receiving obs z starting from belief b.
-			result_b = belief_update(start_b,a,z,frame_i, controller_j)
+			result_b = belief_update(start_b,a,z,frame_i, controllers_j)
 			#get the best node in the controller for the updated beief
 			best_next_node, best_value_obs = get_best_node(result_b, collect(values(controller_i.nodes)))
 			new_v = node_value(best_next_node, a, z, controllers_j, frame_i, temp_id_j)

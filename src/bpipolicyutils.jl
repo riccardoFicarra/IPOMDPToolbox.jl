@@ -65,7 +65,7 @@ IBPIPolicyUtils:
 		println("Value vector = $(node.value)")
 	end
 
-	
+
 	"""
 	Builds a node with only 1 randomly chosen action and with all observation edges
 	pointing back to itself
@@ -461,61 +461,79 @@ IBPIPolicyUtils:
 		#all new nodes, final filtering
 		return filterNodes(new_nodes, minval)
 	end
-	"""
-	Perform a full backup operation according to Pourpart and Boutilier's paper on Bounded finite state controllers
-	"""
-	function full_backup_stochastic!(controller::Controller{A, W}; minval=1e-10) where {A, W}
-		pomdp = controller.frame
-		nodes = controller.nodes
-		observations = POMDPs.observations(pomdp)
-		#tentative from incpruning
-		#prder of it -> actions, obs
-		#for each a, z produce n new nodes (iterate on nodes)
-		#for each node iterate on s and s' to produce a new node
-		#new node is tied to old node?, action a and obs z
-		#with stochastic pruning we get the cis needed
-		new_nodes = full_backup_generate_nodes(controller, minval)
-		#before performing filtering with the old nodes update incomingEdge structure of old nodes
-		#also assign permanent ids
-		nodes_counter = controller.maxId+1
-		for new_node in new_nodes
-			@deb("Node $(new_node.id) becomes node $(nodes_counter)", :data)
-			new_node.id = nodes_counter
-			if :data in debug
-				println(new_node)
-			end
-			nodes_counter+=1
-			for (action, observation_map) in new_node.edges
-				for (observation, edge_map) in observation_map
-					#@deb("Obs $observation")
-					for (next, prob) in edge_map
-						#@deb("adding incoming edge from $(new_node.id) to $(next.id) ($action, $observation)")
-						if haskey(next.incomingEdgeDicts, new_node)
-							#@deb("it was the $(length(next.incomingEdgeDicts[new_node])+1)th")
-							push!(next.incomingEdgeDicts[new_node], edge_map)
-						else
-							#@deb("it was the first edge for $(new_node.id)")
-							next.incomingEdgeDicts[new_node] = [edge_map]
-						end
-					end
+	# """
+	# Perform a full backup operation according to Pourpart and Boutilier's paper on Bounded finite state controllers
+	# """
+	# function full_backup_stochastic!(controller::Controller{A, W}; minval=1e-10) where {A, W}
+	# 	pomdp = controller.frame
+	# 	nodes = controller.nodes
+	# 	observations = POMDPs.observations(pomdp)
+	# 	#tentative from incpruning
+	# 	#prder of it -> actions, obs
+	# 	#for each a, z produce n new nodes (iterate on nodes)
+	# 	#for each node iterate on s and s' to produce a new node
+	# 	#new node is tied to old node?, action a and obs z
+	# 	#with stochastic pruning we get the cis needed
+	# 	new_nodes = full_backup_generate_nodes(controller, minval)
+	# 	#before performing filtering with the old nodes update incomingEdge structure of old nodes
+	# 	#also assign permanent ids
+	# 	nodes_counter = controller.maxId+1
+	# 	for new_node in new_nodes
+	# 		@deb("Node $(new_node.id) becomes node $(nodes_counter)", :data)
+	# 		new_node.id = nodes_counter
+	# 		if :data in debug
+	# 			println(new_node)
+	# 		end
+	# 		nodes_counter+=1
+	# 		for (action, observation_map) in new_node.edges
+	# 			for (observation, edge_map) in observation_map
+	# 				#@deb("Obs $observation")
+	# 				for (next, prob) in edge_map
+	# 					#@deb("adding incoming edge from $(new_node.id) to $(next.id) ($action, $observation)")
+	# 					if haskey(next.incomingEdgeDicts, new_node)
+	# 						#@deb("it was the $(length(next.incomingEdgeDicts[new_node])+1)th")
+	# 						push!(next.incomingEdgeDicts[new_node], edge_map)
+	# 					else
+	# 						#@deb("it was the first edge for $(new_node.id)")
+	# 						next.incomingEdgeDicts[new_node] = [edge_map]
+	# 					end
+	# 				end
+	# 			end
+	# 		end
+	# 	end
+	# 	new_max_id = nodes_counter-1
+	# 	#add new nodes to controller
+	# 	#i want to have the new nodes first, so in case there are two nodes with identical value the newer node is pruned and we skip rewiring
+	# 	#no need to sort, just have new nodes examined before old nodes
+	# 	#the inner union is needed to have an orderedset as first parameter, as the result of union({ordered}, {not ordered}) = {ordered}
+	# 	orderedset = union(union(OrderedSet{Node}(), new_nodes), Set{Node}(oldnode for oldnode in values(nodes)))
+	# 	all_nodes = filterNodes(orderedset, minval)
+	# 	new_controller_nodes = Dict{Int64, Node}()
+	# 	for node in all_nodes
+	# 		#add nodes to the controller
+	# 		new_controller_nodes[node.id] = node
+	# 		checkNode(node, controller, minval; checkDistinct = false)
+	# 	end
+	# 	controller.nodes = new_controller_nodes
+	# 	controller.maxId = new_max_id
+	# end
+
+	function full_backup_stochastic!(controller::Controller{A, W}; minval = 1e-10) where {A, W}
+		initial_node = controller.nodes[1]
+		already_present_action = first(controller.nodes[1].actionProb)
+
+		for a in actions(controller.frame)
+			if a != already_present_action
+				actionProb = Dict{A, Float64}(a => 1)
+				edges = Dict{A, Dict{W, Dict{Node, Float64}}}( a => Dict{W, Dict{Node, Float64}}() )
+				for z in observations(controller.frame)
+					edges[a][z] = Dict{Node, Float64}(initial_node => 1)
 				end
+				new_node = Node(controller.maxId + 1, actionProb, edges, Array{Float64, 2}(undef, 0, 0), Dict{Node, Array{Dict{Node, Float64}, 1}}())
+				controller.nodes[new_node.id] = new_node
+				controller.maxId = new_node.id
 			end
 		end
-		new_max_id = nodes_counter-1
-		#add new nodes to controller
-		#i want to have the new nodes first, so in case there are two nodes with identical value the newer node is pruned and we skip rewiring
-		#no need to sort, just have new nodes examined before old nodes
-		#the inner union is needed to have an orderedset as first parameter, as the result of union({ordered}, {not ordered}) = {ordered}
-		orderedset = union(union(OrderedSet{Node}(), new_nodes), Set{Node}(oldnode for oldnode in values(nodes)))
-		all_nodes = filterNodes(orderedset, minval)
-		new_controller_nodes = Dict{Int64, Node}()
-		for node in all_nodes
-			#add nodes to the controller
-			new_controller_nodes[node.id] = node
-			checkNode(node, controller, minval; checkDistinct = false)
-		end
-		controller.nodes = new_controller_nodes
-		controller.maxId = new_max_id
 	end
 
 	"""

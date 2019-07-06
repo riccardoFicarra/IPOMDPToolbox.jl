@@ -129,37 +129,37 @@ ibpisolver.jl:
 		maxlevel = length(policy.controllers)
         improved = false
     	if level >= 2
-    		improved, tangent_b_vec = eval_and_improve!(policy, level)
+    		improved, tangent_b_vec = eval_and_improve!(policy, level-1)
     	end
         @deb("evaluating level $level", :flow)
     	if level == 1
             tangent_b_vec = Vector{Dict{Int64, Array{Float64}}}(undef, maxlevel)
-            println("Level 0 : $(length(policy.controllers[1].nodes)) nodes")
 			for controller in policy.controllers[1]
     			evaluate!(controller)
+				println("Level 1 : $(length(controller.nodes)) nodes")
 				@deb(controller, :data)
 				start_time = datetime2unix(now())
 
 	    		improved, tangent_b_vec[1]  = partial_backup!(controller ; minval = config.minval, add_one = true)
 				@deb("Elapsed time for level $level: $(datetime2unix(now()) - start_time)",:stats)
 	            if improved
-	                @deb("Improved level 0", :flow)
-	                @deb(policy.controllers[0], :data)
+	                @deb("Improved level 1", :flow)
+	                @deb(policy.controllers[1], :data)
 	            else
-					@deb("Did not improve level 0", :flow)
+					@deb("Did not improve level 1", :flow)
 					escaped = escape_optima_standard!(controller, tangent_b_vec[1]; add_one = false, minval = 1e-10)
 					improved == improved || escaped
 				end
 			end
     	else
 			for controller in policy.controllers[level]
-	            println("Level $level : $(length(policy.controllers[level].nodes)) nodes")
+	            println("Level $level : $(length(controller.nodes)) nodes")
 	    		evaluate!(controller, policy.controllers[level-1])
 
 	            @deb(controller, :data)
 				start_time = datetime2unix(now())
 
-	    		improved_single, tangent_b_vec[level+1] = partial_backup!(controller, policy.controllers[level]; minval = config.minval, add_one = true)
+	    		improved_single, tangent_b_vec[level] = partial_backup!(controller, policy.controllers[level-1]; minval = config.minval, add_one = true)
 
 				@deb("Elapsed time for level $level: $(datetime2unix(now()) - start_time)", :stats)
 
@@ -193,17 +193,17 @@ ibpisolver.jl:
 			@deb(controller, :flow)
 		end
 
-		# for level in 2:policy.maxlevel
-		# 	for controller in policy.controllers[level]
-		# 		evaluate!(controller, policy.controllers[level-1])
-		# 		checkController(controller, config.minval)
-		# 		if length(controller.nodes) <= 1
-		# 			full_backup_stochastic!(controller, policy.controllers[level-1]; minval = config.minval)
-		# 			@deb("Level $level after full backup", :flow)
-		# 			@deb(controller, :flow)
-		# 		end
-		# 	end
-		# end
+		for level in 2:policy.maxlevel
+			for controller in policy.controllers[level]
+				evaluate!(controller, policy.controllers[level-1])
+				checkController(controller, config.minval)
+				if length(controller.nodes) <= 1
+					full_backup_stochastic!(controller, policy.controllers[level-1]; minval = config.minval)
+					@deb("Level $level after full backup", :flow)
+					@deb(controller, :flow)
+				end
+			end
+		end
 		#start of the actual algorithm
         while escaped  && iterations <= config.maxrep
             escaped = false
@@ -211,7 +211,7 @@ ibpisolver.jl:
             tangent_b_vec = nothing
             while improved && iterations <= config.maxrep && datetime2unix(now()) < start_time+config.timeout
                 #@deb("Iteration $iterations / $max_iterations", :flow)
-                improved, tangent_b_vec = eval_and_improve!(policy, maxlevel)
+                improved, tangent_b_vec = eval_and_improve!(policy, policy.maxlevel)
                 iterations += 1
 				if !improved
 					println("Algorithm stopped because it could not improve controllers anymore")
@@ -285,7 +285,7 @@ ibpisolver.jl:
 	end
 
 	function compute_observation(s_prime::S, ai::A, aj::A, frame::IPOMDP) where {S, A}
-		dist = IPOMDPs.observation(ipomdp, s_prime, ai, aj)
+		dist = IPOMDPs.observation(frame, s_prime, ai, aj)
 		items = dist.probs
 		randn = rand() #number in [0, 1)
 		for i in 1:length(dist.vals)
@@ -315,22 +315,24 @@ ibpisolver.jl:
 	function IBPIsimulate(policy::IBPIPolicy, maxsteps::Int64) where {S, A, W}
 		stats_i = stats()
 		stats_j = stats()
-		maxlevel = length(policy.controllers) -1
-		frame_i = policy.controllers[maxlevel].frame
-		anynode = first(policy.controllers[maxlevel].nodes)[2]
+		maxlevel = length(policy.controllers)
+		controller_i = policy.controllers[maxlevel][1]
+		controller_j = policy.controllers[maxlevel-1][1]
+		frame_i = controller_i.frame
+		anynode = first(controller_i.nodes)[2]
 		initial = ones(size(anynode.value))
 		initial = initial ./ length(initial)
-		agent_i = IBPIAgent(policy.controllers[maxlevel], initial)
+		agent_i = IBPIAgent(controller_i, initial)
 
-		frame_j = policy.controllers[maxlevel-1].frame
-		anynode_j = first(policy.controllers[maxlevel-1].nodes)[2]
+		frame_j = controller_j.frame
+		anynode_j = first(controller_j.nodes)[2]
 		initial_j = ones(size(anynode_j.value))
 		initial_j = initial_j ./ length(initial_j)
 		if maxlevel - 1 == 0
-			agent_j = IBPIAgent(policy.controllers[maxlevel-1], initial_j)
+			agent_j = IBPIAgent(controller_j, initial_j)
 
 		else
-			agent_j = IBPIAgent(policy.controllers[maxlevel-1], initial_j)
+			agent_j = IBPIAgent(controller_j, initial_j)
 		end
 		state = randn() > 0.5 ? :TL : :TR
 		value = 0.0
