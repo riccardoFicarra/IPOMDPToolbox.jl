@@ -245,6 +245,8 @@ IBPIPolicyUtils:
 		frame::POMDP{A, W}
 		nodes::Dict{Int64, Node{A, W}}
 		maxId::Int64
+		stats::solver_statistics
+		converged::Bool
 	end
 	"""
 	Initialize a controller with only one standard initial node
@@ -255,7 +257,7 @@ IBPIPolicyUtils:
 		else
 			newNode = InitialNode(pomdp; force = force)
 		end
-		Controller{A, W}(pomdp, Dict(1 => newNode), 1)
+		Controller{A, W}(pomdp, Dict(1 => newNode), 1, solver_statistics(), true)
 	end
 
 	function checkController(controller::AbstractController, minval::Float64; checkDistinct = false)
@@ -520,10 +522,11 @@ IBPIPolicyUtils:
 
 	function full_backup_stochastic!(controller::Controller{A, W}; minval = 1e-10) where {A, W}
 		initial_node = controller.nodes[1]
-		already_present_action = first(controller.nodes[1].actionProb)
-
+		already_present_action = first(controller.nodes[1].actionProb)[1]
+		@deb("already_present = $already_present_action", :shortfull)
 		for a in actions(controller.frame)
 			if a != already_present_action
+				@deb("adding node with action $a", :shortfull)
 				actionProb = Dict{A, Float64}(a => 1)
 				edges = Dict{A, Dict{W, Dict{Node, Float64}}}( a => Dict{W, Dict{Node, Float64}}() )
 				for z in observations(controller.frame)
@@ -989,7 +992,7 @@ IBPIPolicyUtils:
 	Tries to improve the controller by checking if each node can be replaced by a convex combination of the other nodes.
 	Default behavior is to stop after a single node is modified.
 	first return value is whether it has improved at least one node, second is the tangent belief point (see paper)
-	# Return Boolean, Vector{Float64}
+	# Return Bool, Vector{Float64}
 	"""
 	function partial_backup!(controller::Controller{A, W}; minval = 0.0, add_one = true, debug_node = 0) where {A, W}
 		pomdp = controller.frame

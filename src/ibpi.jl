@@ -4,6 +4,9 @@ mutable struct InteractiveController{S, A, W} <: AbstractController
 	frame::IPOMDP{S, A, W}
 	nodes::Dict{Int64, Node{A, W}}
 	maxId::Int64
+	stats::solver_statistics
+	converged::Bool
+
 end
 
 
@@ -32,7 +35,7 @@ function InteractiveController(level::Int64, ipomdp::IPOMDP{S, A, W}; force=0) w
 	else
 		newNode = InitialNode(actions_agent(ipomdp), observations_agent(ipomdp); force=force)
 	end
-    return InteractiveController{S, A, W}(level, ipomdp, Dict(1 => newNode), 1)
+    return InteractiveController{S, A, W}(level, ipomdp, Dict(1 => newNode), 1, solver_statistics(), false)
 end
 
 
@@ -49,7 +52,7 @@ end
 
 
 function evaluate!(controller::InteractiveController{A,W}, controllers_j::Array{AbstractController, 1}) where {S, A, W}
-	start_time("eval")
+	start_time(controller.stats, length(controller.nodes),  "eval")
 	ipomdp_i = controller.frame
     nodes = controller.nodes
     n_nodes = length(controller.nodes)
@@ -88,7 +91,7 @@ function evaluate!(controller::InteractiveController{A,W}, controllers_j::Array{
     M = zeros(n_states, n_nodes_j, n_nodes, n_states, n_nodes_j, n_nodes)
     b = zeros(n_states, n_nodes_j, n_nodes)
     #compute coefficients for sum(a)[R(s|a)*P(a|n)+gamma*sum(z, n', s')[P(s'|s,a)*P(z|s',a)*P(a|n)*P(n'|z)*V(nz, s')]]
-	start_time("eval_coeff")
+	start_time(controller.stats, length(controller.nodes), "eval_coeff")
 	for (ni_id, ni) in nodes
         #M is the coefficient matrix (form x1 = a2x2+...+anxn+b)
         #b is the constant term vector
@@ -145,17 +148,17 @@ function evaluate!(controller::InteractiveController{A,W}, controllers_j::Array{
 	@deb(M[1, :, temp_id[1], 1, :, temp_id[1]], :multiple)
     M_2d = reshape(M,n_states* n_nodes_j* n_nodes, n_states* n_nodes_j* n_nodes)
     b_1d = reshape(b, n_states* n_nodes_j* n_nodes)
-	stop_time("eval_coeff")
-	start_time("eval_solve")
+	stop_time(controller.stats, "eval_coeff")
+	start_time(controller.stats, length(controller.nodes), "eval_solve")
     res_1d = M_2d \ b_1d
-	stop_time("eval_solve")
+	stop_time(controller.stats, "eval_solve")
     res = reshape(res_1d, n_states, n_nodes_j, n_nodes)
     #copy respective value functions in nodes
     for (n_id, node) in nodes
         node.value = copy(res[:, :, temp_id[n_id]])
         @deb("Value vector of node $n_id = $(nodes[n_id].value)")
     end
-	stop_time("eval")
+	stop_time(controller.stats, "eval")
 end
 
 function observations(frame::Any)
@@ -183,7 +186,7 @@ function partial_backup!(controller::InteractiveController{A, W}, controllers_j:
 	#this time the matrix form is a1x1+...+anxn = b1
 	#sum(a,s)[sum(nz)[canz*[R(s,a)+gamma*sum(s')p(s'|s, a)p(z|s', a)v(nz,s')]] -eps = V(n,s)
 	#number of variables is |A||Z||N|+1 (canz and eps)
-	start_time("partial")
+	start_time(controller.stats, length(controller.nodes), "partial")
 	frame = controller.frame
 	nodes = controller.nodes
 	n_controllers_j = length(controllers_j)
@@ -243,7 +246,7 @@ function partial_backup!(controller::InteractiveController{A, W}, controllers_j:
 		@variable(lpmodel, e)
 		@objective(lpmodel, Max, e)
 		#define constraints
-		start_time("partial_coeff")
+		start_time(controller.stats, length(controller.nodes), "partial_coeff")
 		@deb("Started computing coeff", :multiple)
 		for s_index in 1:n_states
 			s = states[s_index]
@@ -311,7 +314,7 @@ function partial_backup!(controller::InteractiveController{A, W}, controllers_j:
 				end
 			end
 		end
-		stop_time("partial_coeff")
+		stop_time(controller.stats, "partial_coeff")
 
 		#sum canz over a,n,z = 1
 		@constraint(lpmodel, con_sum[a=1:n_actions, z=1:n_observations], sum(canz[a, z, n] for n in 1:n_nodes) == ca[a])
@@ -320,9 +323,9 @@ function partial_backup!(controller::InteractiveController{A, W}, controllers_j:
 		# if :lpdual in debug
 		# 	print(lpmodel)
 		# end
-		start_time("partial_optimize")
+		start_time(controller.stats, length(controller.nodes), "partial_optimize")
 		optimize!(lpmodel)
-		stop_time("partial_optimize")
+		stop_time(controller.stats, "partial_optimize")
 
 		@deb("has duals=$(has_duals(lpmodel))", :lpdual)
 
@@ -450,7 +453,7 @@ function partial_backup!(controller::InteractiveController{A, W}, controllers_j:
 		tangent_b[n_id] = tangent_belief
 	end
 	println()
-	stop_time("partial")
+	stop_time(controller.stats, "partial")
 	return changed, tangent_b
 end
 
@@ -511,7 +514,7 @@ end
 
 function full_backup_stochastic!(controller::InteractiveController{A, W}, controllers_j::Array{AbstractController, 1}; minval = 1e-10) where {A, W}
 	initial_node = controller.nodes[1]
-	already_present_action = first(controller.nodes[1].actionProb)
+	already_present_action = first(controller.nodes[1].actionProb)[1]
 
 	for a in actions(controller.frame)
 		if a != already_present_action
@@ -664,7 +667,7 @@ end
 
 function escape_optima_standard!(controller::InteractiveController{A, W}, controllers_j::Array{AbstractController,1}, tangent_b::Dict{Int64, Array{Float64}}; add_one = false, minval = 0.0) where {A, W}
 	@deb("Entered escape_optima", :flow)
-	start_time("escape")
+	start_time(controller.stats, length(controller.nodes), "escape")
 	frame_i = controller.frame
 	nodes = controller.nodes
 	n_nodes = length(nodes)
@@ -721,12 +724,12 @@ function escape_optima_standard!(controller::InteractiveController{A, W}, contro
 		@deb("$id - >$start_b", :belief)
 		for ai in keys(nodes[id].actionProb)
 			for zi in observations_i
-				new_b = belief_update(start_b, ai, zi, frame_i, controllers_j)
+				new_b = belief_update(start_b, ai, zi, controller, controllers_j)
 				#node = generate_node_directly(controller, controller_j, new_b)
 				@deb("from belief $start_b action $ai and obs $zi -> $new_b", :belief)
 				if add_one
 					escaped =  add_escape_node(new_b, controller, controllers_j, temp_id_j)
-					stop_time("escape")
+					stop_time(controller.stats, "escape")
 					return escaped
 				else
 					push!(reachable_beliefs, new_b)
@@ -742,7 +745,7 @@ function escape_optima_standard!(controller::InteractiveController{A, W}, contro
 		end
 	end
 	#@deb("$reachable_b")
-	stop_time("escape")
+	stop_time(controller.stats, "escape")
 	return escaped
 end
 
@@ -772,8 +775,9 @@ function add_escape_node!(new_b::Array{Float64}, controller::InteractiveControll
 	return false
 end
 
-function belief_update(start_b::Array{Float64}, ai::A, zi::W, frame_i::IPOMDP, controllers_j::Array{AbstractController, 1}) where {A, W}
-	start_time("escape_belief_update")
+function belief_update(start_b::Array{Float64}, ai::A, zi::W, controller::InteractiveController, controllers_j::Array{AbstractController, 1}) where {A, W}
+	start_time(controller.stats, length(controller.nodes), "escape_belief_update")
+	frame_i = controller.frame
 	n_controllers_j = length(controllers_j)
 	states = IPOMDPs.states(frame_i)
 	n_states = length(states)
@@ -843,7 +847,7 @@ function belief_update(start_b::Array{Float64}, ai::A, zi::W, frame_i::IPOMDP, c
 		error("normalization constant is $normalize !")
 	end
 	new_b = new_b  ./ normalize
-	stop_time("escape_belief_update")
+	stop_time(controller.stats, "escape_belief_update")
 	return new_b
 end
 
@@ -867,9 +871,9 @@ end
 
 
 
-function generate_node_directly(controller_i::InteractiveController{A, W}, controllers_j::Array{AbstractController, 1}, start_b::Array{Float64}, temp_id_j::Array{Array{Int64,1},1}) where {A, W, S}
-	start_time("escape_generate_node")
-	frame_i = controller_i.frame
+function generate_node_directly(controller::InteractiveController{A, W}, controllers_j::Array{AbstractController, 1}, start_b::Array{Float64}, temp_id_j::Array{Array{Int64,1},1}) where {A, W, S}
+	start_time(controller.stats, length(controller.nodes), "escape_generate_node")
+	frame_i = controller.frame
 	actions_i = actions(frame_i)
 	observations_i = observations(frame_i)
 	n_observations = length(observations_i)
@@ -884,19 +888,19 @@ function generate_node_directly(controller_i::InteractiveController{A, W}, contr
 			#find the best edge (aka the best next node) for each observation
 			z = observations_i[z_index]
 			#compute the result belief of executing action a and receiving obs z starting from belief b.
-			result_b = belief_update(start_b,a,z,frame_i, controllers_j)
+			result_b = belief_update(start_b,a,z, controller, controllers_j)
 			#get the best node in the controller for the updated beief
-			best_next_node, best_value_obs = get_best_node(result_b, collect(values(controller_i.nodes)))
+			best_next_node, best_value_obs = get_best_node(result_b, collect(values(controller.nodes)))
 			new_v = node_value(best_next_node, a, z, controllers_j, frame_i, temp_id_j)
 			@deb("new_v = $new_v", :generatenode)
-			new_node_partial = build_node(controller_i.maxId+1, a, z, best_next_node, new_v)
+			new_node_partial = build_node(controller.maxId+1, a, z, best_next_node, new_v)
 			@deb("new partial node:", :generatenode)
 			@deb(new_node_partial, :generatenode)
 			#add that edge to the node and update the value vector
 			if z_index ==1
 				new_node = new_node_partial
 			else
-				new_node = mergeNode(new_node, new_node_partial, a, controller_i.maxId+1)
+				new_node = mergeNode(new_node, new_node_partial, a, controller.maxId+1)
 				@deb("after merge:", :generatenode)
 				@deb(new_node, :generatenode)
 			end
@@ -908,6 +912,6 @@ function generate_node_directly(controller_i::InteractiveController{A, W}, contr
 			best_value = new_value
 		end
 	end
-	stop_time("escape_generate_node")
+	stop_time(controller.stats, "escape_generate_node")
 	return best_node, best_value
 end

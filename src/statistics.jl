@@ -71,16 +71,19 @@ function average_correct_obs(stats::agent_stats)
 end
 
 mutable struct solver_statistics
-    timers::Dict{String, Float64}
+    n_nodes::Array{Int64, 1}
+    timers::Dict{String, Array{Float64, 1}}
     start_times::Dict{String, Float64}
 end
 
-solver_statistics() = solver_statistics(Dict{String, Float64}(), Dict{String, Float64}())
+solver_statistics() = solver_statistics(Array{Int64, 1}(undef, 0), Dict{String, Array{Float64, 1}}(), Dict{String, Float64}())
 
-function start_time(stats::solver_statistics, name::String)
+function start_time(stats::solver_statistics, n_nodes::Int64, name::String)
     stats.start_times[name] = datetime2unix(now())
     @deb("Set start time $(stats.start_times[name]) for $name", :time)
+    push!(stats.n_nodes, n_nodes)
 end
+
 
 function stop_time(stats::solver_statistics,name::String)
     end_time = datetime2unix(now())
@@ -93,9 +96,9 @@ function stop_time(stats::solver_statistics,name::String)
         error("start_time has been used more than one time")
     end
     if haskey(stats.timers, name)
-        stats.timers[name] += end_time - stats.start_times[name]
+        push!(stats.timers[name], end_time - stats.start_times[name])
     else
-        stats.timers[name] = end_time - stats.start_times[name]
+        stats.timers[name] = [ end_time - stats.start_times[name] ]
     end
     stats.start_times[name] = 0.0
 end
@@ -106,10 +109,10 @@ end
 
 function reset_timers(stats::solver_statistics)
     @deb("Reset all timers", :time)
-    stats = solver_statistics(Dict{String, Float64}(), Dict{String, Float64}())
+    stats = solver_statistics()
 end
 
-function print_solvere_stats(stats::solver_statistics)
+function print_solver_stats(stats::solver_statistics)
     for name in sort(collect(keys(stats.timers)))
         println("$name : $(stats.timers[name])")
     end
