@@ -884,7 +884,7 @@ function generate_node_directly(controller_i::InteractiveController{A, W}, contr
 			#find the best edge (aka the best next node) for each observation
 			z = observations_i[z_index]
 			#compute the result belief of executing action a and receiving obs z starting from belief b.
-			result_b = belief_update(start_b,a,z,frame_i, controller_j)
+			result_b = belief_update(start_b,a,z,frame_i, controllers_j)
 			#get the best node in the controller for the updated beief
 			best_next_node, best_value_obs = get_best_node(result_b, collect(values(controller_i.nodes)))
 			new_v = node_value(best_next_node, a, z, controllers_j, frame_i, temp_id_j)
