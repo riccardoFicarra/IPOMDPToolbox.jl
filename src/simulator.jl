@@ -6,6 +6,7 @@ mutable struct IBPIAgent
     controller::AbstractController
     current_node::Node
     value::Float64
+    stats::agent_stats
 end
 function IBPIAgent(controller::AbstractController, initial_belief::Array{Float64})
     best_node = nothing
@@ -17,7 +18,7 @@ function IBPIAgent(controller::AbstractController, initial_belief::Array{Float64
             best_value = new_value
         end
     end
-    return IBPIAgent(controller, best_node, 0.0)
+    return IBPIAgent(controller, best_node, 0.0, agent_stats())
 end
 function best_action(agent::IBPIAgent)
     return chooseWithProbability(agent.current_node.actionProb)
@@ -82,8 +83,6 @@ function compute_observation(s_prime::S, ai::A, aj::A, frame::POMDP) where {S, A
 end
 
 function IBPIsimulate(policy::IBPIPolicy, maxsteps::Int64) where {S, A, W}
-    stats_i = stats()
-    stats_j = stats()
     maxlevel = length(policy.controllers)
     controller_i = policy.controllers[maxlevel][1]
     controller_j = policy.controllers[maxlevel-1][1]
@@ -127,11 +126,11 @@ function IBPIsimulate(policy::IBPIPolicy, maxsteps::Int64) where {S, A, W}
         @deb("zi -> $zi, zj -> $zj", :sim)
         update_agent!(agent_i, ai, zi)
         update_agent!(agent_j, aj, zj)
-        stats_i = computestats(stats_i, ai, aj, state, s_prime, zi, zj)
-        stats_j = computestats(stats_j, aj, ai, state, s_prime, zj, zi)
+        computestats!(stats_i, ai, aj, state, s_prime, zi, zj)
+        computestats!(stats_j, aj, ai, state, s_prime, zj, zi)
 
         state = s_prime
     end
     println()
-    return value/maxsteps , stats_i, stats_j
+    return value/maxsteps, agent_i.stats, agent_j.stats
 end

@@ -38,13 +38,8 @@ ibpisolver.jl:
 	"""
     struct IBPISolver
         # Here should go some settings
-		#TODO add solver parameters here and pass this to all functions (or find a way to make all functions see this object)
-		#minval
 		force::Int64
-		#partial_backup_add_one
-		#escape_optima_add_one
 		maxrep::Int64
-		#timeout
 		minval::Float64
         timeout::Int64
     end
@@ -79,6 +74,7 @@ ibpisolver.jl:
         #level 0 is the pompdp
         controllers::Array{Array{AbstractController,1}}
 		maxlevel::Int64
+		stats::solver_statistics
     end
 
 	"""
@@ -98,7 +94,7 @@ ibpisolver.jl:
 		end
 		#pomdp part, level 1
 		controllers[1] = [Controller( emulated_frames[maxlevel-1][frame]; force = force) for frame in 1:length(emulated_frames[maxlevel-1])]
-        return IBPIPolicy{S, A, W}(controllers, maxlevel)
+        return IBPIPolicy{S, A, W}(controllers, maxlevel, solver_statistics())
     end
 
 	function Base.println(policy::IBPIPolicy)
@@ -109,6 +105,7 @@ ibpisolver.jl:
 			    println(policy.controllers[l][frame_index])
 			end
 		end
+		print_solver_stats(policy.stats)
 	end
 
     """

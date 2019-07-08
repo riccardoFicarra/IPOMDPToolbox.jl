@@ -1,7 +1,7 @@
 # @Author: Ficarra Riccardo
 # @Date:   02-04-2019
 # @Last modified by:   Ficarra Riccardo
-# @Last modified time: 03-26-2019
+# @Last modified time: 07-08-2019
 
 
 
@@ -13,11 +13,11 @@ version = "0.1.0"
 [deps]
 BeliefUpdaters = "8bb6e9a1-7d73-552c-a44a-e5dc5634aac4"
 DataStructures = "864edb3b-99cc-5e75-8d2d-829cb0a9cfe8"
+Dates = "ade2ca70-3891-5945-98fb-dc099432e06a"
 GLPK = "60bf3e95-4087-53dc-ae20-288a0d20c6a6"
 IPOMDPs = "400b8fa6-c29f-11e8-147f-97038bb7f9c1"
 JuMP = "4076af6c-e467-56ae-b986-b466b2749572"
 LinearAlgebra = "37e2e46d-f89d-539d-b4ee-838fcccc9c8e"
-Plots = "91a5bcdd-55d7-5caf-9e0b-520d859cae80"
 POMDPModelTools = "08074719-1b2a-587c-a292-00f91cc44415"
 POMDPs = "a93abf59-7444-517b-a68a-c42f96afdd7d"
 SARSOP = "cef570c6-3a94-5604-96b7-1a5e143043f2"

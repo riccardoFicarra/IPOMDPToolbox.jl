@@ -1,4 +1,6 @@
-mutable struct stats
+#agent stats part
+
+mutable struct agent_stats
 
     #agent_i
     correct::Int64
@@ -12,13 +14,11 @@ mutable struct stats
     wrong_z_l::Int64
     wrong_z_ol::Int64
     wrong_z_or::Int64
-
-    benchmark_data::Array{Float64, 2}
 end
 
-stats() = stats(0,0,0,0,0,0,0,0,0,zeros(0,0))
+agent_stats() = agent_stats(0,0,0,0,0,0,0,0,0)
 
-function computestats(stats::stats, ai::A, aj::A, state::S, s_prime::S, zi::W, zj::W) where {S, A, W}
+function computestats!(stats::agent_stats, ai::A, aj::A, state::S, s_prime::S, zi::W, zj::W) where {S, A, W}
     #action stats
     if ai != :L
         if (ai == :OL && state == :TR) || (ai == :OR && state == :TL)
@@ -52,17 +52,16 @@ function computestats(stats::stats, ai::A, aj::A, state::S, s_prime::S, zi::W, z
             end
         end
     end
-    return stats
 end
 
 
-function average_listens(stats::stats)
+function average_listens(stats::agent_stats)
     avg_l = stats.listen / (stats.correct + stats.wrong)
     println("Average listens per opening: $avg_l")
 
 end
 
-function average_correct_obs(stats::stats)
+function average_correct_obs(stats::agent_stats)
     avg_l = stats.correct_z_l / (stats.wrong_z_l + stats.correct_z_l)
     avg_or = stats.correct_z_or / (stats.wrong_z_or + stats.correct_z_or)
     avg_ol = stats.correct_z_ol / (stats.wrong_z_ol + stats.correct_z_ol)
@@ -71,52 +70,52 @@ function average_correct_obs(stats::stats)
     println("avg_ol: $avg_ol")
 end
 
-mutable struct time_statistics
+mutable struct solver_statistics
     timers::Dict{String, Float64}
     start_times::Dict{String, Float64}
 end
-time_statistics() = time_statistics(Dict{String, Float64}(), Dict{String, Float64}())
-global time_stats = time_statistics(Dict{String, Float64}(), Dict{String, Float64}())
 
-function start_time(name::String)
-    global time_stats.start_times[name] = datetime2unix(now())
-    @deb("Set start time $(time_stats.start_times[name]) for $name", :time)
+solver_statistics() = solver_statistics(Dict{String, Float64}(), Dict{String, Float64}())
+
+function start_time(stats::solver_statistics, name::String)
+    stats.start_times[name] = datetime2unix(now())
+    @deb("Set start time $(stats.start_times[name]) for $name", :time)
 end
 
-function stop_time(name::String)
+function stop_time(stats::solver_statistics,name::String)
     end_time = datetime2unix(now())
     @deb("End time $(end_time) for $name", :time)
-    @deb("Difference: $(end_time - time_stats.start_times[name])", :time)
-    if !haskey(time_stats.start_times, name)
+    @deb("Difference: $(end_time - stats.start_times[name])", :time)
+    if !haskey(stats.start_times, name)
         error("Timer $name has not been set")
     end
-    if time_stats.start_times[name] == 0.0
+    if stats.start_times[name] == 0.0
         error("start_time has been used more than one time")
     end
-    if haskey(time_stats.timers, name)
-        global time_stats.timers[name] += end_time - time_stats.start_times[name]
+    if haskey(stats.timers, name)
+        stats.timers[name] += end_time - stats.start_times[name]
     else
-        global time_stats.timers[name] = end_time - time_stats.start_times[name]
+        stats.timers[name] = end_time - stats.start_times[name]
     end
-    global time_stats.start_times[name] = 0.0
+    stats.start_times[name] = 0.0
 end
 
-function reset_time(name::String)
-    global time_stats.timers[name] = 0.0
+function reset_time(stats::solver_statistics,name::String)
+    stats.timers[name] = 0.0
 end
 
-function reset_timers()
+function reset_timers(stats::solver_statistics)
     @deb("Reset all timers", :time)
-    global time_stats = time_statistics(Dict{String, Float64}(), Dict{String, Float64}())
+    stats = solver_statistics(Dict{String, Float64}(), Dict{String, Float64}())
 end
 
-function print_time_stats()
-    for name in sort(collect(keys(time_stats.timers)))
-        println("$name : $(time_stats.timers[name])")
+function print_solvere_stats(stats::solver_statistics)
+    for name in sort(collect(keys(stats.timers)))
+        println("$name : $(stats.timers[name])")
     end
 end
 
-function print_time_stats(local_stats::time_statistics)
+function print_time_stats(stats::solver_statistics)
     for name in sort(collect(keys(local_stats.timers)))
         println("$name : $(local_stats.timers[name])")
     end
