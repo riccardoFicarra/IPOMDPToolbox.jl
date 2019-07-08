@@ -1,12 +1,5 @@
 
-function save_policy(policy::IBPIPolicy, name::String)
-    @save "savedcontrollers/$name.jld2" policy #time_stats
-end
 
-function load_policy(name::String)
-    @load "savedcontrollers/$name.jld2" policy #time_stats
-    return policy, time_stats
-end
 #include("bpigraph.jl")
 
 mutable struct IBPIAgent

@@ -223,6 +223,15 @@ ibpisolver.jl:
         end
     end
 
+	function save_policy(policy::IBPIPolicy, name::String)
+	    @save "savedcontrollers/$name.jld2" policy time_stats
+	end
+
+	function load_policy(name::String)
+	    @load "savedcontrollers/$name.jld2" policy time_stats
+	    return policy, time_stats
+	end
+
 	function solve_fresh(policy::IBPIPolicy, n_steps::Int64, step_length::Int64, maxsimsteps::Int64 ; save = "", benchmark = true)
 		force = 3
 		max_iterations = 1000
@@ -231,6 +240,7 @@ ibpisolver.jl:
 		# benchmark_data[3] = time
 		# benchmark_data[4] = value
 		benchmark_data = zeros(4, n_steps)
+		reset_timers()
 		for step in 1:n_steps
 		    filename_dst = "$(save)_$(step*step)m"
 		    set_solver_params(force,max_iterations,1e-10,step_length*60)
@@ -259,7 +269,7 @@ ibpisolver.jl:
 		        save_policy(policy, filename_dst)
 		    end
 		end
-		return policy
+		return policy, time_Stats
 	end
 
 	function continue_solving(src_filename::String, n_steps::Int64, step_length::Int64; benchmark = true)
@@ -272,7 +282,7 @@ ibpisolver.jl:
 		name = split(src_filename, "_")
 		prefix = name[1]
 		start_duration = parse(Int64,name[2])
-		
+
 		for step in 1:n_steps
 		    filename_dst = "$(prefix)_$(start_duration + step*step)m"
 		    set_solver_params(force,max_iterations,1e-10,step_length*60)
@@ -298,6 +308,6 @@ ibpisolver.jl:
 		    save_policy(policy, filename_dst)
 		end
 		old_benchmark_data = hcat(old_benchmark_data, new_benchmark)
-		return policy
+		return policy, time_stats
 	end
 	include("./simulator.jl")

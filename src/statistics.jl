@@ -12,9 +12,11 @@ mutable struct stats
     wrong_z_l::Int64
     wrong_z_ol::Int64
     wrong_z_or::Int64
+
+    benchmark_data::Array{Float64, 2}
 end
 
-stats() = stats(0,0,0,0,0,0,0,0,0)
+stats() = stats(0,0,0,0,0,0,0,0,0,zeros(0,0))
 
 function computestats(stats::stats, ai::A, aj::A, state::S, s_prime::S, zi::W, zj::W) where {S, A, W}
     #action stats
