@@ -243,10 +243,10 @@ ibpisolver.jl:
 	    return policy
 	end
 
-	function solve_fresh(policy::IBPIPolicy, n_steps::Int64, step_length::Int64, maxsimsteps::Int64 ; save = "", force = 3, max_iterations = -1)
+	function solve_fresh!(policy::IBPIPolicy, n_steps::Int64, step_length::Int64, maxsimsteps::Int64 ; save = "", force = 3, max_iterations = -1)
 
 		for step in 1:n_steps
-		    filename_dst = "$(save)_$(step*step)m"
+		    filename_dst = "$(save)_$(step*step_length)"
 		    set_solver_params(force,max_iterations,1e-10,step_length*60)
 
 	        ibpi!(policy)
@@ -255,8 +255,6 @@ ibpisolver.jl:
 		        save_policy(policy, filename_dst)
 		    end
 		end
-		print_solver_stats(policy)
-		return policy
 	end
 
 	function print_solver_stats(policy::IBPIPolicy)
@@ -269,42 +267,19 @@ ibpisolver.jl:
 		end
 	end
 
-	function continue_solving(src_filename::String, n_steps::Int64, step_length::Int64; benchmark = true)
-		force = 3
-		max_iterations = 1000
-		policy, saved_time_stats = load_policy(filename_src)
-		global time_stats = saved_time_stats
-		new_benchmark = zeros(4, n_steps)
-
-		name = split(src_filename, "_")
-		prefix = name[1]
-		start_duration = parse(Int64,name[2])
-
+	function continue_solving(src_filename::String, n_steps::Int64, step_length::Int64, maxsimsteps::Int64; force = 3, max_iterations = -1)
+		policy = load_policy(src_filename)
+		name = split(src_filename, "_")[1]
+		src_duration = parse(Int64, split(src_filename, "_")[2])
 		for step in 1:n_steps
-		    filename_dst = "$(prefix)_$(start_duration + step*step)m"
+		    filename_dst = "$(name)_$(src_duration+step*step_length)"
 		    set_solver_params(force,max_iterations,1e-10,step_length*60)
 
-	        start_time("ibpi")
 	        ibpi!(policy)
-	        stop_time("ibpi")
-	        println(policy)
-
-
-			if benchmark
-				value,stats_i, stats_j = IBPIsimulate(policy,maxsimsteps)
-				for level in 1:policy.maxlevel
-					if level == policy.maxlevel
-						new_benchmark[1][step] = length(policy.controllers[level].nodes)
-					end
-					new_benchmark[2][step] += length(policy.controllers[level].nodes)
-				end
-				new_benchmark[3] = step * step_length
-				new_benchmark[4] = value
-			end
 
 		    save_policy(policy, filename_dst)
 		end
-		old_benchmark_data = hcat(old_benchmark_data, new_benchmark)
-		return policy, time_stats
+		return policy
 	end
+
 	include("./simulator.jl")
