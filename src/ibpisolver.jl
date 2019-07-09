@@ -276,7 +276,6 @@ ibpisolver.jl:
 		    set_solver_params(force,max_iterations,1e-10,step_length*60)
 
 	        ibpi!(policy)
-
 		    save_policy(policy, filename_dst)
 		end
 		return policy
