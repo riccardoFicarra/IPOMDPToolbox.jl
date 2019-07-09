@@ -267,7 +267,7 @@ ibpisolver.jl:
 		end
 	end
 
-	function continue_solving(src_filename::String, n_steps::Int64, step_length::Int64, maxsimsteps::Int64; benchmark = 0, force = 3, max_iterations = -1)
+	function continue_solving(src_filename::String, n_steps::Int64, step_length::Int64, maxsimsteps::Int64; force = 3, max_iterations = -1)
 		policy = load_policy(src_filename)
 		name = split(src_filename, "_")[1]
 		src_duration = parse(Int64, split(src_filename, "_")[2])
