@@ -74,6 +74,7 @@ mutable struct solver_statistics
     n_nodes::Array{Int64, 1}
     timers::Dict{String, Array{Float64, 1}}
     start_times::Dict{String, Float64}
+    avg_value::Float64
 end
 
 solver_statistics() = solver_statistics(Array{Int64, 1}(undef, 0), Dict{String, Array{Float64, 1}}(), Dict{String, Float64}())
