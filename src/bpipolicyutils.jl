@@ -14,7 +14,7 @@ IBPIPolicyUtils:
 	Basic data structure for controllers.
 
 	"""
-	mutable struct Node{A, W}
+	struct Node{A, W}
 		id::Int64
 		actionProb::Dict{A, Float64}
 		#action -> observation -> node -> prob
@@ -961,7 +961,7 @@ IBPIPolicyUtils:
 		res_2d = reshape(res, n_nodes, n_states)
 		for node in nodes
 			#create a new node identical to the old one but with updated value
-			node.value =  copy( res_2d[node.id, :])
+			controller.nodes[node.id] = Node(node.id, node.actionProb, node.edges, copy( res_2d[node.id, :]))
 			@deb("Value vector of node $n_id = $(nodes[node.id].value)")
 			#set old node to nothing to make sure it's garbage collected
 			node = nothing
@@ -1150,9 +1150,11 @@ IBPIPolicyUtils:
 						end
 					end
 				end
-				node.actions = new_actions
-				node.edges = new_edges
-				checkNode(node, controller, minval)
+				new_node = Node(node.id, new_actions, new_edges, [])
+				checkNode(new_node, controller, minval)
+				controller[new_node.id] = new_node
+				#make sure it's garbage collected!
+				node = nothing
 				if !add_one
 					if :example in debug
 						println("Changed controller after eval")
