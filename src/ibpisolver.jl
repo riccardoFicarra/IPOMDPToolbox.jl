@@ -227,7 +227,7 @@ ibpisolver.jl:
 			elseif config.maxrep >= 0 && iterations >= config.maxrep
 				println("maxrep exceeded $iterations")
 				break
-			elseif	datetime2unix(now()) < start_time+config.timeout
+			elseif	datetime2unix(now()) >= start_time+config.timeout
 				println("timeout exceeded")
 				break
 			end
