@@ -132,5 +132,5 @@ function IBPIsimulate(policy::IBPIPolicy, maxsteps::Int64) where {S, A, W}
         state = s_prime
     end
     println()
-    return value/maxsteps, agent_i.stats, agent_j.stats
+    return value/maxsteps
 end

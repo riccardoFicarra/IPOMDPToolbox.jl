@@ -243,7 +243,7 @@ ibpisolver.jl:
 	    return policy
 	end
 
-	function solve_fresh!(policy::IBPIPolicy, n_steps::Int64, step_length::Int64, maxsimsteps::Int64 ; save = "", force = 3, max_iterations = -1)
+	function solve_fresh!(policy::IBPIPolicy, n_steps::Int64, step_length::Int64, maxsimsteps::Int64 ; benchmark = 0, save = "", force = 3, max_iterations = -1)
 
 		for step in 1:n_steps
 		    filename_dst = "$(save)_$(step*step_length)"
@@ -251,6 +251,13 @@ ibpisolver.jl:
 
 	        ibpi!(policy)
 
+			if benchmark > 0
+				value = 0.0
+				for i in 1:benchmark
+					value += IBPIsimulate(policy, maxsimsteps)
+				end
+				policy.controller[policy.maxlevel].stats.avg_value = value / benchmark
+			end
 		    if save != ""
 		        save_policy(policy, filename_dst)
 		    end
@@ -267,7 +274,7 @@ ibpisolver.jl:
 		end
 	end
 
-	function continue_solving(src_filename::String, n_steps::Int64, step_length::Int64, maxsimsteps::Int64; force = 3, max_iterations = -1)
+	function continue_solving(src_filename::String, n_steps::Int64, step_length::Int64, maxsimsteps::Int64; benchmark = 0, force = 3, max_iterations = -1)
 		policy = load_policy(src_filename)
 		name = split(src_filename, "_")[1]
 		src_duration = parse(Int64, split(src_filename, "_")[2])
@@ -276,7 +283,13 @@ ibpisolver.jl:
 		    set_solver_params(force,max_iterations,1e-10,step_length*60)
 
 	        ibpi!(policy)
-
+			if benchmark > 0
+				value = 0.0
+				for i in 1:benchmark
+					value += IBPIsimulate(policy, maxsimsteps)
+				end
+					policy.controller[policy.maxlevel].stats.avg_value = value / benchmark
+			end
 		    save_policy(policy, filename_dst)
 		end
 		return policy
