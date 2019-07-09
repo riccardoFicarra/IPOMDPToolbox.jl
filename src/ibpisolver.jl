@@ -15,6 +15,11 @@ ibpisolver.jl:
 	"""
 	abstract type AbstractController end
 
+
+	function frametype(controller::AbstractController)
+		return split("$(typeof(controller.frame))", ".")[3]
+	end
+
     """
     Snippet to have debug utility. Use @deb(String) to print debug info
     """
@@ -100,7 +105,7 @@ ibpisolver.jl:
 		for l in 1:policy.maxlevel
 			println("Level $l")
 			for frame_index in 1:length(policy.controllers[l])
-				println("Frame $frame_index:  $(typeof(policy.controllers[l][frame_index].frame))")
+				println("Frame $frame_index:  $(frametype(policy.controllers[l][frame_index]))")
 			    println(policy.controllers[l][frame_index])
 			end
 		end
@@ -131,7 +136,7 @@ ibpisolver.jl:
 				#experimental: if controller of level 0 has converged skip it to avoid losing time
 				if !controller.converged
 
-					println("Level 1, frame $(typeof(controller.frame)): $(length(controller.nodes)) nodes")
+					println("Level 1, frame $(frametype(controller)): $(length(controller.nodes)) nodes")
 	    			evaluate!(controller)
 					@deb(controller, :data)
 					start_time = datetime2unix(now())
@@ -149,14 +154,14 @@ ibpisolver.jl:
 					#if the controller failed both improvement and escape mark it as converged.
 					controller.converged = !improved
 					if controller.converged
-						println("Level 1, frame $(typeof(controller.frame)): $(length(controller.nodes)) nodes has converged")
+						println("Level 1, frame $(frametype(controller)): $(length(controller.nodes)) nodes has converged")
 					end
 				end
 			end
     	else
 			for controller in policy.controllers[level]
 				if !controller.converged
-		            println("Level $level, frame $(typeof(controller.frame)) : $(length(controller.nodes)) nodes")
+		            println("Level $level, frame $(frametype(controller)) : $(length(controller.nodes)) nodes")
 		    		evaluate!(controller, policy.controllers[level-1])
 
 		            @deb(controller, :data)
@@ -177,7 +182,7 @@ ibpisolver.jl:
 					#a controller has converged only if also all lower level controllers have converged
 					controller.converged = !improved && !improved_lower
 					if controller.converged
-						println("Level $level, frame $(typeof(controller.frame)) : $(length(controller.nodes)) nodes")
+						println("Level $level, frame $(frametype(controller)) : $(length(controller.nodes)) nodes")
 					end
 				end
 			end
@@ -250,7 +255,18 @@ ibpisolver.jl:
 		        save_policy(policy, filename_dst)
 		    end
 		end
+		print_solver_stats(policy)
 		return policy
+	end
+
+	function print_solver_stats(policy::IBPIPolicy)
+		for level in 1:policy.maxlevel
+			println("Level $level")
+			for controller in policy.controllers[level]
+				println("\tFrame $(frametype(controller))")
+				print_solver_stats(controller.stats)
+			end
+		end
 	end
 
 	function continue_solving(src_filename::String, n_steps::Int64, step_length::Int64; benchmark = true)

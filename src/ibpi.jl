@@ -52,7 +52,8 @@ end
 
 
 function evaluate!(controller::InteractiveController{A,W}, controllers_j::Array{AbstractController, 1}) where {S, A, W}
-	start_time(controller.stats, length(controller.nodes),  "eval")
+	log_n_nodes(controller.stats, length(controller.nodes))
+	start_time(controller.stats,  "eval")
 	ipomdp_i = controller.frame
     nodes = controller.nodes
     n_nodes = length(controller.nodes)
@@ -91,7 +92,7 @@ function evaluate!(controller::InteractiveController{A,W}, controllers_j::Array{
     M = zeros(n_states, n_nodes_j, n_nodes, n_states, n_nodes_j, n_nodes)
     b = zeros(n_states, n_nodes_j, n_nodes)
     #compute coefficients for sum(a)[R(s|a)*P(a|n)+gamma*sum(z, n', s')[P(s'|s,a)*P(z|s',a)*P(a|n)*P(n'|z)*V(nz, s')]]
-	start_time(controller.stats, length(controller.nodes), "eval_coeff")
+	start_time(controller.stats, "eval_coeff")
 	for (ni_id, ni) in nodes
         #M is the coefficient matrix (form x1 = a2x2+...+anxn+b)
         #b is the constant term vector
@@ -149,7 +150,7 @@ function evaluate!(controller::InteractiveController{A,W}, controllers_j::Array{
     M_2d = reshape(M,n_states* n_nodes_j* n_nodes, n_states* n_nodes_j* n_nodes)
     b_1d = reshape(b, n_states* n_nodes_j* n_nodes)
 	stop_time(controller.stats, "eval_coeff")
-	start_time(controller.stats, length(controller.nodes), "eval_solve")
+	start_time(controller.stats, "eval_solve")
     res_1d = M_2d \ b_1d
 	stop_time(controller.stats, "eval_solve")
     res = reshape(res_1d, n_states, n_nodes_j, n_nodes)
@@ -186,7 +187,7 @@ function partial_backup!(controller::InteractiveController{A, W}, controllers_j:
 	#this time the matrix form is a1x1+...+anxn = b1
 	#sum(a,s)[sum(nz)[canz*[R(s,a)+gamma*sum(s')p(s'|s, a)p(z|s', a)v(nz,s')]] -eps = V(n,s)
 	#number of variables is |A||Z||N|+1 (canz and eps)
-	start_time(controller.stats, length(controller.nodes), "partial")
+	start_time(controller.stats, "partial")
 	frame = controller.frame
 	nodes = controller.nodes
 	n_controllers_j = length(controllers_j)
@@ -246,7 +247,7 @@ function partial_backup!(controller::InteractiveController{A, W}, controllers_j:
 		@variable(lpmodel, e)
 		@objective(lpmodel, Max, e)
 		#define constraints
-		start_time(controller.stats, length(controller.nodes), "partial_coeff")
+		start_time(controller.stats, "partial_coeff")
 		@deb("Started computing coeff", :multiple)
 		for s_index in 1:n_states
 			s = states[s_index]
@@ -323,7 +324,7 @@ function partial_backup!(controller::InteractiveController{A, W}, controllers_j:
 		# if :lpdual in debug
 		# 	print(lpmodel)
 		# end
-		start_time(controller.stats, length(controller.nodes), "partial_optimize")
+		start_time(controller.stats, "partial_optimize")
 		optimize!(lpmodel)
 		stop_time(controller.stats, "partial_optimize")
 
@@ -667,7 +668,7 @@ end
 
 function escape_optima_standard!(controller::InteractiveController{A, W}, controllers_j::Array{AbstractController,1}, tangent_b::Dict{Int64, Array{Float64}}; add_one = false, minval = 0.0) where {A, W}
 	@deb("Entered escape_optima", :flow)
-	start_time(controller.stats, length(controller.nodes), "escape")
+	start_time(controller.stats, "escape")
 	frame_i = controller.frame
 	nodes = controller.nodes
 	n_nodes = length(nodes)
@@ -776,7 +777,7 @@ function add_escape_node!(new_b::Array{Float64}, controller::InteractiveControll
 end
 
 function belief_update(start_b::Array{Float64}, ai::A, zi::W, controller::InteractiveController, controllers_j::Array{AbstractController, 1}) where {A, W}
-	start_time(controller.stats, length(controller.nodes), "escape_belief_update")
+	start_time(controller.stats, "escape_belief_update")
 	frame_i = controller.frame
 	n_controllers_j = length(controllers_j)
 	states = IPOMDPs.states(frame_i)
@@ -872,7 +873,7 @@ end
 
 
 function generate_node_directly(controller::InteractiveController{A, W}, controllers_j::Array{AbstractController, 1}, start_b::Array{Float64}, temp_id_j::Array{Array{Int64,1},1}) where {A, W, S}
-	start_time(controller.stats, length(controller.nodes), "escape_generate_node")
+	start_time(controller.stats, "escape_generate_node")
 	frame_i = controller.frame
 	actions_i = actions(frame_i)
 	observations_i = observations(frame_i)

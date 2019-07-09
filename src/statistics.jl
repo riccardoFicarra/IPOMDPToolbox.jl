@@ -78,15 +78,26 @@ end
 
 solver_statistics() = solver_statistics(Array{Int64, 1}(undef, 0), Dict{String, Array{Float64, 1}}(), Dict{String, Float64}())
 
-function start_time(stats::solver_statistics, n_nodes::Int64, name::String)
+function start_time(stats::solver_statistics, name::String)
     stats.start_times[name] = datetime2unix(now())
     @deb("Set start time $(stats.start_times[name]) for $name", :time)
+    if haskey(stats.timers, name)
+        while length(stats.timers[name]) < length(stats.n_nodes)
+            @deb("$(length(stats.timers[name])) < $(length(stats.n_nodes))", :time)
+            push!(stats.timers[name], 0.0)
+        end
+    else
+        stats.timers[name] = zeros(length(stats.n_nodes))
+    end
+end
+
+function log_n_nodes(stats::solver_statistics, n_nodes::Int64)
     push!(stats.n_nodes, n_nodes)
 end
 
-
 function stop_time(stats::solver_statistics,name::String)
     end_time = datetime2unix(now())
+    t = length(stats.n_nodes)
     @deb("End time $(end_time) for $name", :time)
     @deb("Difference: $(end_time - stats.start_times[name])", :time)
     if !haskey(stats.start_times, name)
@@ -96,9 +107,7 @@ function stop_time(stats::solver_statistics,name::String)
         error("start_time has been used more than one time")
     end
     if haskey(stats.timers, name)
-        push!(stats.timers[name], end_time - stats.start_times[name])
-    else
-        stats.timers[name] = [ end_time - stats.start_times[name] ]
+        stats.timers[name][t] +=  end_time - stats.start_times[name]
     end
     stats.start_times[name] = 0.0
 end
@@ -113,13 +122,9 @@ function reset_timers(stats::solver_statistics)
 end
 
 function print_solver_stats(stats::solver_statistics)
-    for name in sort(collect(keys(stats.timers)))
-        println("$name : $(stats.timers[name])")
-    end
-end
-
-function print_time_stats(stats::solver_statistics)
-    for name in sort(collect(keys(local_stats.timers)))
-        println("$name : $(local_stats.timers[name])")
+    names = sort(collect(keys(stats.timers)))
+    println("$(stats.n_nodes)")
+    for name in names
+        println("$name\n$(stats.timers[name]) ")
     end
 end
