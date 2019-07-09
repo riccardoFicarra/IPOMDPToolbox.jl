@@ -126,8 +126,8 @@ function IBPIsimulate(policy::IBPIPolicy, maxsteps::Int64) where {S, A, W}
         @deb("zi -> $zi, zj -> $zj", :sim)
         update_agent!(agent_i, ai, zi)
         update_agent!(agent_j, aj, zj)
-        computestats!(stats_i, ai, aj, state, s_prime, zi, zj)
-        computestats!(stats_j, aj, ai, state, s_prime, zj, zi)
+        computestats!(agent_i.stats, ai, aj, state, s_prime, zi, zj)
+        computestats!(agent_j.stats, aj, ai, state, s_prime, zj, zi)
 
         state = s_prime
     end
