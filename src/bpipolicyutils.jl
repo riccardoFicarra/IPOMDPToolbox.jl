@@ -14,7 +14,7 @@ IBPIPolicyUtils:
 	Basic data structure for controllers.
 
 	"""
-	mutable struct Node{A, W}
+	struct Node{A, W}
 		id::Int64
 		actionProb::Dict{A, Float64}
 		#action -> observation -> node -> prob
@@ -22,7 +22,7 @@ IBPIPolicyUtils:
 		value::Array{Float64}
 		#needed to efficiently redirect edges during pruning
 		#srcNode -> vectors of dictionaries that contains edge to this node
-		incomingEdgeDicts::Dict{Node, Vector{Dict{Node, Float64}}}
+		#incomingEdgeDicts::Dict{Node, Vector{Dict{Node, Float64}}}
 	end
 
 	#overload hash and isequal to use only id as keys in dicts
@@ -39,7 +39,7 @@ IBPIPolicyUtils:
 		for i in 1:length(actions)
 			actionProb[actions[i]] = 1/length(actions)
 		end
-		return Node(id::Int64, actionProb::Dict{A, Float64}, Dict{A, Dict{W, Dict{Node, Float64}}}(), Vector{Float64}(), Dict{Node, Vector{Dict{Node, Float64}}}())
+		return Node(id::Int64, actionProb::Dict{A, Float64}, Dict{A, Dict{W, Dict{Node, Float64}}}(), Vector{Float64}())
 	end
 
 	function Base.println(node::Node)
@@ -83,14 +83,11 @@ IBPIPolicyUtils:
 	        end
 	        n = Node(1, [actions[actionindex]], observations)
 	        obsdict = Dict{W, Dict{Node, Float64}}()
-	        n.incomingEdgeDicts[n] = Vector{Dict{Node, Float64}}(undef, 0)
 	        for obs in observations
 	            edges = Dict{Node, Float64}(n => 1.0)
 	            obsdict[obs] = edges
-	            push!(n.incomingEdgeDicts[n], edges)
 	        end
 	        n.edges[actions[actionindex]] = obsdict
-	        n.value = []
 	        return n
 	end
 	"""
@@ -243,8 +240,7 @@ IBPIPolicyUtils:
 	mutable struct Controller{A, W} <: AbstractController
 		#level::Int64
 		frame::POMDP{A, W}
-		nodes::Dict{Int64, Node{A, W}}
-		maxId::Int64
+		nodes::Vector{Node{A, W}}
 		stats::solver_statistics
 		converged::Bool
 	end
@@ -257,7 +253,7 @@ IBPIPolicyUtils:
 		else
 			newNode = InitialNode(pomdp; force = force)
 		end
-		Controller{A, W}(pomdp, Dict(1 => newNode), 1, solver_statistics(), true)
+		Controller{A, W}(pomdp, [newNode], solver_statistics(), true)
 	end
 
 	function checkController(controller::AbstractController, minval::Float64; checkDistinct = false)
@@ -415,7 +411,7 @@ IBPIPolicyUtils:
 	function build_node(node_id::Int64, action::A, observation::W, next_node::Node{A, W}, value::Array{Float64}) where {A, W}
 		actionprob = Dict{A, Float64}(action => 1.0)
 		edges = Dict{A, Dict{W, Dict{Node, Float64}}}(action => Dict{W, Dict{Node, Float64}}(observation => Dict{Node, Float64}(next_node=> 1.0)))
-		return Node(node_id, actionprob, edges, value, Dict{Node, Vector{Dict{Node, Float64}}}())
+		return Node(node_id, actionprob, edges, value)
 	end
 	"""
 	Computes all the possible new nodes that can be added to the controller using Incremental pruning with stochastic filtering.
@@ -644,7 +640,7 @@ IBPIPolicyUtils:
 				edges[action][obs][node] = prob
 			end
 		end
-		return Node(id, actionProb, edges, a.value+b.value, Dict{Node, Vector{Dict{Node, Float64}}}())
+		return Node(id, actionProb, edges, a.value+b.value)
 	end
 
 	"""
@@ -902,92 +898,95 @@ IBPIPolicyUtils:
 	Computes all value vectors of the nodes in a non-interactive controller.
 	"""
 	function evaluate!(controller::Controller{A,W}) where {A, W}
-			#solve V(n,s) = R(s, a(n)) + gamma*sumz(P(s'|s,a(n))Pr(z|s',a(n))V(beta(n,z), s'))
-			#R(s,a(n)) is the reward function
-			pomdp = controller.frame
-			nodes = controller.nodes
-			n_nodes = length(keys(controller.nodes))
-			states = POMDPs.states(pomdp)
-			n_states = POMDPs.n_states(pomdp)
-			M = zeros(n_nodes, n_states, n_nodes, n_states)
-			b = zeros(n_nodes, n_states)
+		#solve V(n,s) = R(s, a(n)) + gamma*sumz(P(s'|s,a(n))Pr(z|s',a(n))V(beta(n,z), s'))
+		#R(s,a(n)) is the reward function
+		pomdp = controller.frame
+		nodes = controller.nodes
+		n_nodes = length(keys(controller.nodes))
+		states = POMDPs.states(pomdp)
+		n_states = POMDPs.n_states(pomdp)
+		M = zeros(n_nodes, n_states, n_nodes, n_states)
+		b = zeros(n_nodes, n_states)
 
-			#dictionary used for recompacting ids
-			temp_id = Dict{Int64, Int64}()
-			for (node_id, node) in nodes
-				temp_id[node_id] = length(temp_id)+1
-			end
+		# #dictionary used for recompacting ids
+		# temp_id = Dict{Int64, Int64}()
+		# for (node_id, node) in nodes
+		# 	temp_id[node_id] = length(temp_id)+1
+		# end
 
-			#compute coefficients for sum(a)[R(s|a)*P(a|n)+gamma*sum(z, n', s')[P(s'|s,a)*P(z|s',a)*P(a|n)*P(n'|z)*V(nz, s')]]
-			for (n_id, node) in nodes
-				#M is the coefficient matrix (form x1 = a2x2+...+anxn+b)
-				#b is the constant term vector
-				#variables are all pairs of n,s
-				actions = keys(node.actionProb)
-				for s_index in 1:n_states
-					s = POMDPs.states(pomdp)[s_index]
-					for a in actions
-						@deb("action = $a")
-						p_a_n = node.actionProb[a]
-						b[temp_id[n_id], s_index] += POMDPs.reward(pomdp, s, a) * p_a_n
-						@deb("b($n_id, $s) = $(POMDPs.reward(pomdp, s, a)*p_a_n)")
-						M[temp_id[n_id], s_index, temp_id[n_id], s_index] += 1
-						@deb("M[$n_id, $s][$n_id, $s] = 1")
-						s_primes = POMDPs.transition(pomdp,s,a).vals
-						possible_obs = keys(node.edges[a])  #only consider observations possible from current node/action combo
-						for obs in possible_obs
-							@deb("obs = $obs")
-							for s_prime_index in 1:length(s_primes)
-								s_prime = s_primes[s_prime_index]
-								p_s_prime =POMDPModelTools.pdf(POMDPs.transition(pomdp,s,a), s_prime)
-								if p_s_prime == 0.0
-									continue
+		#compute coefficients for sum(a)[R(s|a)*P(a|n)+gamma*sum(z, n', s')[P(s'|s,a)*P(z|s',a)*P(a|n)*P(n'|z)*V(nz, s')]]
+		for node in nodes
+			n_id = node.id
+			#M is the coefficient matrix (form x1 = a2x2+...+anxn+b)
+			#b is the constant term vector
+			#variables are all pairs of n,s
+			actions = keys(node.actionProb)
+			for s_index in 1:n_states
+				s = POMDPs.states(pomdp)[s_index]
+				for a in actions
+					@deb("action = $a")
+					p_a_n = node.actionProb[a]
+					b[n_id, s_index] += POMDPs.reward(pomdp, s, a) * p_a_n
+					@deb("b($n_id, $s) = $(POMDPs.reward(pomdp, s, a)*p_a_n)")
+					M[n_id, s_index, n_id, s_index] += 1
+					@deb("M[$n_id, $s][$n_id, $s] = 1")
+					s_primes = POMDPs.transition(pomdp,s,a).vals
+					possible_obs = keys(node.edges[a])  #only consider observations possible from current node/action combo
+					for obs in possible_obs
+						@deb("obs = $obs")
+						for s_prime_index in 1:length(s_primes)
+							s_prime = s_primes[s_prime_index]
+							p_s_prime =POMDPModelTools.pdf(POMDPs.transition(pomdp,s,a), s_prime)
+							if p_s_prime == 0.0
+								continue
+							end
+							p_z = POMDPModelTools.pdf(POMDPs.observation(pomdp,s_prime, a), obs)
+							@deb("p_z = $p_z")
+							partial_mult = p_a_n * POMDPs.discount(pomdp) * p_s_prime * p_z
+							for (next, prob) in node.edges[a][obs]
+								if next.id > length(controller.nodes)
+									error("Node $(next.id) not present in nodes")
 								end
-								p_z = POMDPModelTools.pdf(POMDPs.observation(pomdp,s_prime, a), obs)
-								@deb("p_z = $p_z")
-								partial_mult = p_a_n * POMDPs.discount(pomdp) * p_s_prime * p_z
-								for (next, prob) in node.edges[a][obs]
-									if !haskey(controller.nodes, next.id)
-										error("Node $(next.id) not present in nodes")
-									end
-									M[temp_id[n_id], s_index, temp_id[next.id], s_prime_index]-= partial_mult * prob
-									@deb("M[$n_id, $s][$(next.id), $s_prime] = gamma=$(POMDPs.discount(pomdp))*ps'=$p_s_prime*pz=$p_z*pa=$p_a_n*pn'=$prob = $(M[composite_index([temp_id[n_id], s_index],[n_nodes, n_states]), composite_index([temp_id[next.id], s_prime_index],[n_nodes,n_states])])")
-								end
+								M[n_id, s_index, next.id, s_prime_index]-= partial_mult * prob
 							end
 						end
 					end
 				end
 			end
-			@deb("M = $M")
-			@deb("b = $b")
-			res = reshape(M, n_nodes * n_states, n_nodes * n_states) \ reshape(b, n_nodes * n_states)
-			#copy respective value functions in nodes
-			res_2d = reshape(res, n_nodes, n_states)
-			for (n_id, node) in nodes
-				node.value = copy(res_2d[temp_id[n_id], :])
-				@deb("Value vector of node $n_id = $(nodes[n_id].value)")
-			end
+		end
+		@deb("M = $M")
+		@deb("b = $b")
+		res = reshape(M, n_nodes * n_states, n_nodes * n_states) \ reshape(b, n_nodes * n_states)
+		#copy respective value functions in nodes
+		res_2d = reshape(res, n_nodes, n_states)
+		for node in nodes
+			#create a new node identical to the old one but with updated value
+			controller.nodes[node.id] = Node(node.id, node.actionProb, node.edges, copy( res_2d[node.id, :]))
+			@deb("Value vector of node $n_id = $(nodes[node.id].value)")
+			#set old node to nothing to make sure it's garbage collected
+			node = nothing
+		end
 	end
-	"""
-	Given multiple indexes of a multidimensional matrix with dimension specified by lengths return the index in the corresponding 1D vector
-	lengths[1] is actually never used, but it is there for consistency (can actually be set to any number)
-	"""
-	function composite_index(dimension::Vector{Int64}, lengths::Vector{Int64})
-		#return (primary-1)*secondary_len+secondary
-		if length(dimension) != length(lengths)
-			error("Dimension and lengths vector have different length!")
-		end
-		for d in 1:length(dimension)
-			if dimension[d] > lengths[d]
-				error("Dimension cannot be greater than dimension length")
-			end
-		end
-		index = 0
-		for i in 1:length(dimension)
-			index= index*lengths[i]+(dimension[i]-1)
-		end
-		return index+1
-	end
+	# """
+	# Given multiple indexes of a multidimensional matrix with dimension specified by lengths return the index in the corresponding 1D vector
+	# lengths[1] is actually never used, but it is there for consistency (can actually be set to any number)
+	# """
+	# function composite_index(dimension::Vector{Int64}, lengths::Vector{Int64})
+	# 	#return (primary-1)*secondary_len+secondary
+	# 	if length(dimension) != length(lengths)
+	# 		error("Dimension and lengths vector have different length!")
+	# 	end
+	# 	for d in 1:length(dimension)
+	# 		if dimension[d] > lengths[d]
+	# 			error("Dimension cannot be greater than dimension length")
+	# 		end
+	# 	end
+	# 	index = 0
+	# 	for i in 1:length(dimension)
+	# 		index= index*lengths[i]+(dimension[i]-1)
+	# 	end
+	# 	return index+1
+	# end
 	"""
 	Tries to improve the controller by checking if each node can be replaced by a convex combination of the other nodes.
 	Default behavior is to stop after a single node is modified.
@@ -997,7 +996,7 @@ IBPIPolicyUtils:
 	function partial_backup!(controller::Controller{A, W}; minval = 0.0, add_one = true, debug_node = 0) where {A, W}
 		pomdp = controller.frame
 		nodes = controller.nodes
-		n_nodes = length(keys(controller.nodes))
+		n_nodes = length(controller.nodes)
 		states = POMDPs.states(pomdp)
 		n_states = POMDPs.n_states(pomdp)
 		actions = POMDPs.actions(pomdp)
@@ -1011,16 +1010,17 @@ IBPIPolicyUtils:
 		#if at least one node has been modified.
 		changed = false
 		#recompacting dict for controller
-		node_counter = 1
-		temp_id = Dict{Int64, Int64}()
-		for real_id in keys(nodes)
-				temp_id[real_id] = node_counter
-				@deb("Node $real_id becomes $node_counter", :data )
-				node_counter+=1
-		end
+		# node_counter = 1
+		# temp_id = Dict{Int64, Int64}()
+		# for real_id in keys(nodes)
+		# 		temp_id[real_id] = node_counter
+		# 		@deb("Node $real_id becomes $node_counter", :data )
+		# 		node_counter+=1
+		# end
 		#start of actual algorithm
 		nodecounter= 0
-		for (n_id, node) in nodes
+		for node in nodes
+			n_id = node.id
 			@deb("Node to be improved: $n_id", :checkNodes)
 
 			nodecounter += 1
@@ -1055,10 +1055,10 @@ IBPIPolicyUtils:
 							p_s_prime =POMDPModelTools.pdf(POMDPs.transition(pomdp,s,action), s_prime)
 							p_z = POMDPModelTools.pdf(POMDPs.observation(pomdp, s_prime, action), obs)
 							if p_s_prime != 0.0 && p_z != 0.0
-								for (nz_id, nz) in nodes
+								for n_prime in nodes
 									#iterate over all possible n_prime
-									v_nz_sp = nz.value[POMDPs.stateindex(pomdp, s_prime)]
-									M[a_index, obs_index, temp_id[nz_id]]+= p_s_prime*p_z*v_nz_sp
+									v_nz_sp = n_prime.value[POMDPs.stateindex(pomdp, s_prime)]
+									M[a_index, obs_index, n_prime.id]+= p_s_prime*p_z*v_nz_sp
 								end
 							end
 						end
@@ -1097,8 +1097,9 @@ IBPIPolicyUtils:
 							obs_total = 0.0
 							#fill a temporary edge dict with unnormalized probs
 							temp_edge_dict = Dict{Node, Float64}()
-							for (nz_id, nz) in nodes
-								prob = JuMP.value(canz[action_index, obs_index, temp_id[nz_id]])/ca_v
+							for nz in nodes
+								nz_id = nz.id
+								prob = JuMP.value(canz[action_index, obs_index, nz_id])/ca_v
 								#@deb("canz $(observations[obs_index]) -> $nz_id = $prob")
 								if prob < 0.0
 									@deb("Set prob to 0 even though it was negative")
@@ -1149,13 +1150,15 @@ IBPIPolicyUtils:
 						end
 					end
 				end
-				node.edges = new_edges
-				node.actionProb = new_actions
-				checkNode(node, controller, minval)
+				new_node = Node(node.id, new_actions, new_edges, [])
+				checkNode(new_node, controller, minval)
+				controller[new_node.id] = new_node
+				#make sure it's garbage collected!
+				node = nothing
 				if !add_one
 					if :example in debug
 						println("Changed controller after eval")
-						for (n_id, node) in controller.nodes
+						for node in controller.nodes
 							println(node)
 						end
 					end
@@ -1182,7 +1185,7 @@ IBPIPolicyUtils:
 		#@deb("$tangent_b")
 		pomdp = controller.frame
 		nodes = controller.nodes
-		n_nodes = length(keys(controller.nodes))
+		n_nodes = length(controller.nodes)
 		states = POMDPs.states(pomdp)
 		n_states = POMDPs.n_states(pomdp)
 		actions = POMDPs.actions(pomdp)
@@ -1236,7 +1239,7 @@ IBPIPolicyUtils:
 	end
 
 	function add_escape_node!(reachable_b::Array{Float64}, controller::Controller{A, W}) where {A, W}
-		best_old_node, best_old_value = get_best_node(reachable_b, collect(values(controller.nodes)))
+		best_old_node, best_old_value = get_best_node(reachable_b, controller.nodes)
 		#generate node directly
 		best_new_node, best_new_value = generate_node_directly(controller, reachable_b)
 		if best_new_value - best_old_value > config.minval
@@ -1244,8 +1247,7 @@ IBPIPolicyUtils:
 			@deb("best old node:", :generatenode)
 			@deb(best_old_node, :generatenode)
 			checkNode(best_new_node, controller, config.minval)
-			controller.nodes[best_new_node.id] = best_new_node
-			controller.maxId+=1
+			push!(controller.nodes, best_new_node)
 			@deb("Added node $(best_new_node.id) to improve $reachable_b", :flow)
 			@deb(best_new_node, :flow)
 			return true
@@ -1345,14 +1347,14 @@ IBPIPolicyUtils:
 				#compute the result belief of executing action a and receiving obs z starting from belief b.
 				result_b = belief_update(start_b,a,z,controller.frame)
 				#get the best node in the controller for the updated beief
-				best_next_node, best_value_obs = get_best_node(result_b, collect(values(controller.nodes)))
+				best_next_node, best_value_obs = get_best_node(result_b, controller.nodes)
 				new_v = node_value(best_next_node, a, z, controller.frame)
-				new_node_partial = build_node(controller.maxId+1, a, z, best_next_node, new_v)
+				new_node_partial = build_node(length(controller.nodes)+1, a, z, best_next_node, new_v)
 				#add that edge to the node and update the value vector
 				if z_index ==1
 					new_node = new_node_partial
 				else
-					new_node = mergeNode(new_node, new_node_partial, a,  controller.maxId+1)
+					new_node = mergeNode(new_node, new_node_partial, a,  length(controller.nodes)+1)
 				end
 			end
 			#compute the best node (choose between actions)

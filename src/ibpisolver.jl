@@ -67,7 +67,7 @@ ibpisolver.jl:
 	end
 
     function Base.println(controller::AbstractController)
-		for (id,node) in controller.nodes
+		for node in controller.nodes
             println(node)
         end
 		println("$(length(controller.nodes)) nodes")
