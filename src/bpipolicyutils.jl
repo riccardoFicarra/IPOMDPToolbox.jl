@@ -134,7 +134,7 @@ IBPIPolicyUtils:
 			for (obs, next_dict) in obs_dict
 				tot = 0.0
 				for (next, prob_next) in next_dict
-					if !haskey(controller.nodes, next.id)
+					if next.id > length(controller.nodes)
 						error("Node $(next.id) not present in controller")
 					end
 					tot+= prob_next
@@ -152,7 +152,7 @@ IBPIPolicyUtils:
 			end
 		end
 		if checkDistinct
-			for (id, other_node) in controller.nodes
+			for other_node in controller.nodes
 				if node.id != other_node.id && nodeequal(node, other_node) && nodeequal(other_node, node)
 					println("new node:")
 					println(node)
@@ -257,7 +257,7 @@ IBPIPolicyUtils:
 	end
 
 	function checkController(controller::AbstractController, minval::Float64; checkDistinct = false)
-		for (n_id, node) in controller.nodes
+		for node in controller.nodes
 			checkNode(node, controller, minval; checkDistinct = true)
 		end
 	end
@@ -528,9 +528,8 @@ IBPIPolicyUtils:
 				for z in observations(controller.frame)
 					edges[a][z] = Dict{Node, Float64}(initial_node => 1)
 				end
-				new_node = Node(controller.maxId + 1, actionProb, edges, Array{Float64, 2}(undef, 0, 0), Dict{Node, Array{Dict{Node, Float64}, 1}}())
-				controller.nodes[new_node.id] = new_node
-				controller.maxId = new_node.id
+				new_node = Node(length(controller.nodes)+1, actionProb, edges, Array{Float64, 2}(undef, 0, 0) )
+				push!(controller.nodes, new_node)
 			end
 		end
 	end

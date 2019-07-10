@@ -2,8 +2,7 @@
 mutable struct InteractiveController{S, A, W} <: AbstractController
 	level::Int64
 	frame::IPOMDP{S, A, W}
-	nodes::Dict{Int64, Node{A, W}}
-	maxId::Int64
+	nodes::Vector{Node{A, W}}
 	stats::solver_statistics
 	converged::Bool
 
@@ -35,7 +34,7 @@ function InteractiveController(level::Int64, ipomdp::IPOMDP{S, A, W}; force=0) w
 	else
 		newNode = InitialNode(actions_agent(ipomdp), observations_agent(ipomdp); force=force)
 	end
-    return InteractiveController{S, A, W}(level, ipomdp, Dict(1 => newNode), 1, solver_statistics(), false)
+    return InteractiveController{S, A, W}(level, ipomdp, [newNode], solver_statistics(), false)
 end
 
 
@@ -63,12 +62,12 @@ function evaluate!(controller::InteractiveController{A,W}, controllers_j::Array{
 	n_controllers_j = length(controllers_j)
 	@deb("length of controllers_j = $n_controllers_j", :multiple)
 
-    #dictionary used for recompacting ids
-    temp_id = Dict{Int64, Int64}()
-
-    for (node_id, node) in nodes
-        temp_id[node_id] = length(temp_id)+1
-    end
+    # #dictionary used for recompacting ids
+    # temp_id = Dict{Int64, Int64}()
+	#
+    # for (node_id, node) in nodes
+    #     temp_id[node_id] = length(temp_id)+1
+    # end
 
     #dictionary used for recompacting ids -> they are sorted!
 	#concatenate all nodes from all lower level controllers
@@ -78,7 +77,7 @@ function evaluate!(controller::InteractiveController{A,W}, controllers_j::Array{
 		controller_j = controllers_j[controller_index]
 		nodes_j = controller_j.nodes
 		#initialize inner array
-		temp_id_j[controller_index] = Array{Int64, 1}(undef, controller_j.maxId)
+		temp_id_j[controller_index] = Array{Int64, 1}(undef, length(controller_j.nodes))
 		#quick fix to have the values in some order
 	    for node_id in sort(collect(keys(nodes_j)))
 	        temp_id_j[controller_index][node_id] = node_counter
@@ -93,7 +92,8 @@ function evaluate!(controller::InteractiveController{A,W}, controllers_j::Array{
     b = zeros(n_states, n_nodes_j, n_nodes)
     #compute coefficients for sum(a)[R(s|a)*P(a|n)+gamma*sum(z, n', s')[P(s'|s,a)*P(z|s',a)*P(a|n)*P(n'|z)*V(nz, s')]]
 	start_time(controller.stats, "eval_coeff")
-	for (ni_id, ni) in nodes
+	for ni in nodes
+		ni_id = ni.id
         #M is the coefficient matrix (form x1 = a2x2+...+anxn+b)
         #b is the constant term vector
         #variables are all pairs of n,s
@@ -103,8 +103,9 @@ function evaluate!(controller::InteractiveController{A,W}, controllers_j::Array{
 				controller_j = controllers_j[controller_index]
 				nodes_j = controller_j.nodes
 				frame_j = controller_j.frame
-	            for (nj_id, nj) in nodes_j
-	                M[s_index, temp_id_j[controller_index][nj_id], temp_id[ni_id], s_index, temp_id_j[controller_index][nj_id], temp_id[ni_id]] +=1
+	            for nj in nodes_j
+					nj_id = nj.id
+	                M[s_index, temp_id_j[controller_index][nj_id], ni_id, s_index, temp_id_j[controller_index][nj_id], ni_id] +=1
 	                for (ai, p_ai) in ni.actionProb
 	                    #@deb("ai = $ai")
 	                    @deb("ai = $ai")
@@ -114,7 +115,7 @@ function evaluate!(controller::InteractiveController{A,W}, controllers_j::Array{
 	                        r = IPOMDPs.reward(ipomdp_i, s, ai, aj)
 	                        #@deb("r = $s")
 	                        @deb("r = $r")
-	                        b[s_index, temp_id_j[controller_index][nj_id], temp_id[ni_id]] += p_ai * p_aj * r
+	                        b[s_index, temp_id_j[controller_index][nj_id], ni_id] += p_ai * p_aj * r
 	                        for (zi, obs_dict_i) in ni.edges[ai]
 	                            @deb("zi = $zi")
 	                            for s_prime_index in 1:n_states
@@ -132,8 +133,8 @@ function evaluate!(controller::InteractiveController{A,W}, controllers_j::Array{
 	                                    for (n_prime_j, prob_j) in nj.edges[aj][zj]
 											partial_mult_pj = partial_mult_zj * prob_j
 	                                        for (n_prime_i, prob_i) in ni.edges[ai][zi]
-	                                            M[s_index, temp_id_j[controller_index][nj_id], temp_id[ni_id], s_prime_index, temp_id_j[controller_index][n_prime_j.id], temp_id[n_prime_i.id]] -= partial_mult_pj * prob_i
-												#M[s_index, temp_id_j[controller_index][nj_id], temp_id[ni_id], s_prime_index, temp_id_j[controller_index][n_prime_j.id], temp_id[n_prime_i.id]] -= p_ai * p_aj * IPOMDPs.discount(ipomdp_i) * transition_i * observation_i * observation_j * prob_j * prob_i
+	                                            M[s_index, temp_id_j[controller_index][nj_id], ni_id, s_prime_index, temp_id_j[controller_index][n_prime_j.id], n_prime_i.id] -= partial_mult_pj * prob_i
+												#M[s_index, temp_id_j[controller_index][nj_id], ni_id, s_prime_index, temp_id_j[controller_index][n_prime_j.id], temp_id[n_prime_i.id]] -= p_ai * p_aj * IPOMDPs.discount(ipomdp_i) * transition_i * observation_i * observation_j * prob_j * prob_i
 	                                        end
 	                                    end
 	                                end
@@ -146,7 +147,7 @@ function evaluate!(controller::InteractiveController{A,W}, controllers_j::Array{
         end
     end
 	#TL, all njs, only ni = 1, goes to TL
-	@deb(M[1, :, temp_id[1], 1, :, temp_id[1]], :multiple)
+	@deb(M[1, :, 1, 1, :, 1], :multiple)
     M_2d = reshape(M,n_states* n_nodes_j* n_nodes, n_states* n_nodes_j* n_nodes)
     b_1d = reshape(b, n_states* n_nodes_j* n_nodes)
 	stop_time(controller.stats, "eval_coeff")
@@ -155,9 +156,10 @@ function evaluate!(controller::InteractiveController{A,W}, controllers_j::Array{
 	stop_time(controller.stats, "eval_solve")
     res = reshape(res_1d, n_states, n_nodes_j, n_nodes)
     #copy respective value functions in nodes
-    for (n_id, node) in nodes
-        node.value = copy(res[:, :, temp_id[n_id]])
-        @deb("Value vector of node $n_id = $(nodes[n_id].value)")
+    for node in nodes
+        controller.nodes[node.id] = Node(node.id, node.actionProb, node.edges, copy(res[:, :, node.id]))
+        @deb("Value vector of node $node.id = $(nodes[node.id].value)")
+		node = nothing
     end
 	stop_time(controller.stats, "eval")
 end
@@ -204,11 +206,11 @@ function partial_backup!(controller::InteractiveController{A, W}, controllers_j:
 	changed = false
 	#M_TR =  zeros(n_actions, n_observations, n_nodes)
 	#M_TL =  zeros(n_actions, n_observations, n_nodes)
-	temp_id = Dict{Int64, Int64}()
-	for real_id in keys(nodes)
-			temp_id[real_id] = length(temp_id)+1
-			#@deb("Node $real_id becomes $node_counter")
-	end
+	# temp_id = Dict{Int64, Int64}()
+	# for real_id in keys(nodes)
+	# 		temp_id[real_id] = length(temp_id)+1
+	# 		#@deb("Node $real_id becomes $node_counter")
+	# end
 
 	temp_id_j = Array{Array{Int64, 1}, 1}(undef, n_controllers_j)
 	node_counter = 1
@@ -216,7 +218,7 @@ function partial_backup!(controller::InteractiveController{A, W}, controllers_j:
 		controller_j = controllers_j[controller_index]
 		nodes_j = controller_j.nodes
 		#initialize inner array
-		temp_id_j[controller_index] = Array{Int64, 1}(undef, controller_j.maxId)
+		temp_id_j[controller_index] = Array{Int64, 1}(undef, length(controller_j.nodes))
 		#quick fix to have the values in some order
 	    for node_id in sort(collect(keys(nodes_j)))
 	        temp_id_j[controller_index][node_id] = node_counter
@@ -228,8 +230,8 @@ function partial_backup!(controller::InteractiveController{A, W}, controllers_j:
 	constraints = Array{ConstraintRef}(undef, n_states, n_nodes_j)
 
 	nodecounter= 0
-	for (n_id, node) in nodes
-
+	for node in nodes
+		n_id = node.id
 		@deb("Node to be improved: $n_id", :checkNodes)
 		nodecounter += 1
 		if nodecounter >= (length(nodes)/100)
@@ -256,7 +258,8 @@ function partial_backup!(controller::InteractiveController{A, W}, controllers_j:
 				controller_j = controllers_j[controller_index]
 				frame_j = controller_j.frame
 				nodes_j = controller_j.nodes
-				for (nj_id, nj) in nodes_j
+				for nj in nodes_j
+					nj_id = nj.id
 					M = zeros(n_actions, n_observations, n_nodes)
 					M_a = zeros(n_actions)
 					@deb("\tnode_j $nj_id ")
@@ -282,12 +285,12 @@ function partial_backup!(controller::InteractiveController{A, W}, controllers_j:
 											if observation_j != 0.0
 												for (n_prime_j, prob_j) in obs_dict_j
 													partial_mult_pj = partial_mult_zj * prob_j
-													for (n_prime_i_index, n_prime_i) in nodes
+													for n_prime_i in nodes
 														#n_prime_j is always n1 when you have two nodes!
-
+														n_prime_i_index = n_prime_i.id
 														v_nz_sp = n_prime_i.value[s_prime_index, temp_id_j[controller_index][n_prime_j.id]]
 														#M[ai_index, zi_index, temp_id[n_prime_i_index]]+= p_aj* transition_i * observation_i * observation_j * prob_j * v_nz_sp
-														M[ai_index, zi_index, temp_id[n_prime_i_index]]+= partial_mult_pj * v_nz_sp
+														M[ai_index, zi_index, n_prime_i_index]+= partial_mult_pj * v_nz_sp
 														# if p_aj* transition_i * observation_i * observation_j * prob_j * v_nz_sp - partial_mult_pj * v_nz_sp > 1e-10
 														# 	error("Wrong partial mult")
 														# end
@@ -354,8 +357,9 @@ function partial_backup!(controller::InteractiveController{A, W}, controllers_j:
 						obs_total = 0.0
 						#fill a temporary edge dict with unnormalized probs
 						temp_edge_dict = Dict{Node, Float64}()
-						for (nz_id, nz) in nodes
-							prob = JuMP.value(canz[action_index, obs_index, temp_id[nz_id]])
+						for nz in nodes
+							nz_id = nz.id
+							prob = JuMP.value(canz[action_index, obs_index,nz_id])
 							#@deb("canz $(observations[obs_index]) -> $nz_id = $prob")
 							if prob < 0.0
 								@deb("Set prob to 0 even though it was negative", :data)
@@ -375,8 +379,8 @@ function partial_backup!(controller::InteractiveController{A, W}, controllers_j:
 							end
 						end
 						if obs_total == 0.0
-							for nz_id in keys(nodes)
-								println("$(JuMP.value(canz[action_index, obs_index, temp_id[nz_id]]))")
+							for nz_id in 1:length(nodes)
+								println("$(JuMP.value(canz[action_index, obs_index, nz_id]))")
 							end
 							error("sum of prob for obs $(observations_i[obs_index]) == 0")
 						end
@@ -393,14 +397,6 @@ function partial_backup!(controller::InteractiveController{A, W}, controllers_j:
 						#@deb("length of dict for obs $(observations[obs_index]) = $(length(new_edge_dict))")
 						if length(new_edge_dict) != 0
 							new_obs[observations_i[obs_index]] = new_edge_dict
-							#update incoming edge vector for other node
-							for (next, prob) in new_edge_dict
-								if haskey(next.incomingEdgeDicts, node)
-									push!(next.incomingEdgeDicts[node], new_edge_dict)
-								else
-									next.incomingEdgeDicts[node] = [new_edge_dict]
-								end
-							end
 						end
 					end
 					if length(keys(new_obs)) != 0
@@ -409,14 +405,15 @@ function partial_backup!(controller::InteractiveController{A, W}, controllers_j:
 					end
 				end
 			end
-			node.edges = new_edges
-			node.actionProb = new_actions
-			checkNode(node, controller, minval; normalize = true)
+			new_node = Node(node.id, new_actions, new_edges, Array{Float64}(undef, 0,0))
+			checkNode(new_node, controller, minval; normalize = true)
+			controller.nodes[new_node.id] = new_node
+			node = nothing
 			if add_one
 				#no need to update tangent points because they wont be used!
 				println()
 				@deb("Changed node after eval", :flow)
-				@deb(node, :flow)
+				@deb(new_node, :flow)
 				return true, Dict{Int64, Array{Float64}}()
 			end
 		end
@@ -524,9 +521,8 @@ function full_backup_stochastic!(controller::InteractiveController{A, W}, contro
 			for z in observations(controller.frame)
 				edges[a][z] = Dict{Node, Float64}(initial_node => 1)
 			end
-			new_node = Node(controller.maxId + 1, actionProb, edges, Array{Float64, 2}(undef, 0, 0), Dict{Node, Array{Dict{Node, Float64}, 1}}())
+			new_node = Node(length(controller.nodes), actionProb, edges, Array{Float64, 2}(undef, 0, 0))
 			controller.nodes[new_node.id] = new_node
-			controller.maxId = new_node.id
 		end
 	end
 end
@@ -558,7 +554,7 @@ end
 # 		controller_j = controllers_j[controller_index]
 # 		nodes_j = controller_j.nodes
 # 		#initialize inner array
-# 		temp_id_j[controller_index] = Array{Int64, 1}(undef, controller_j.maxId)
+# 		temp_id_j[controller_index] = Array{Int64, 1}(undef, length(controller_j.nodes))
 # 		#quick fix to have the values in some order
 # 	    for node_id in sort(collect(keys(nodes_j)))
 # 	        temp_id_j[controller_index][node_id] = node_counter
@@ -633,7 +629,8 @@ function node_value(ni::Node{A, W}, ai::A, zi::W, controllers_j::Array{AbstractC
 			controller_j = controllers_j[controller_index]
 			frame_j = controller_j.frame
 			nodes_j = controller_j.nodes
-			for (nj_id, nj) in nodes_j
+			for nj in nodes_j
+				nj_id = nj.id
 				immediate_reward = 0.0
 				future_reward = 0.0
 				for (aj, aj_prob) in nj.actionProb
@@ -692,7 +689,7 @@ function escape_optima_standard!(controller::InteractiveController{A, W}, contro
 		controller_j = controllers_j[controller_index]
 		nodes_j = controller_j.nodes
 		#initialize inner array
-		temp_id_j[controller_index] = Array{Int64, 1}(undef, controller_j.maxId)
+		temp_id_j[controller_index] = Array{Int64, 1}(undef, length(controller_j.nodes))
 		#quick fix to have the values in some order
 	    for node_id in sort(collect(keys(nodes_j)))
 	        temp_id_j[controller_index][node_id] = node_counter
@@ -752,7 +749,7 @@ end
 
 function add_escape_node!(new_b::Array{Float64}, controller::InteractiveController{S, A, W}, controllers_j::Array{AbstractController, 1}, temp_id_j::Array{Array{Int64, 1}, 1}) where {S, A, W}
 	minval = config.minval
-	best_old_node, best_old_value = get_best_node(new_b, collect(values(controller.nodes)))
+	best_old_node, best_old_value = get_best_node(new_b, controller.nodes)
 	#@assert best_old_node_alt == best_old_node
 	if :escape in debug
 		println("Best old node:")
@@ -766,9 +763,7 @@ function add_escape_node!(new_b::Array{Float64}, controller::InteractiveControll
 		#controller.nodes[reworked_node.id] = reworked_node
 		@deb("Added node $(best_new_node.id) to improve belief $new_b", :flow)
 		checkNode(best_new_node, controller, minval; normalize = true)
-		controller.nodes[best_new_node.id] = best_new_node
-		#not the cleanest solution to keep track of ids but hey it works
-		controller.maxId+=1
+		push!(controller.nodes, best_new_node)
 
 		@deb(controller.nodes[best_new_node.id], :flow)
 		return true
@@ -793,7 +788,7 @@ function belief_update(start_b::Array{Float64}, ai::A, zi::W, controller::Intera
 		controller_j = controllers_j[controller_index]
 		nodes_j = controller_j.nodes
 		#initialize inner array
-		temp_id_j[controller_index] = Array{Int64, 1}(undef, controller_j.maxId)
+		temp_id_j[controller_index] = Array{Int64, 1}(undef, length(controller_j.nodes))
 		#quick fix to have the values in some order
 	    for node_id in sort(collect(keys(nodes_j)))
 	        temp_id_j[controller_index][node_id] = node_counter
@@ -812,7 +807,8 @@ function belief_update(start_b::Array{Float64}, ai::A, zi::W, controller::Intera
 				controller_j = controllers_j[controller_index]
 				nodes_j = controller_j.nodes
 				frame_j = controller_j.frame
-				for (nj_id, nj) in nodes_j
+				for nj in nodes_j
+					nj_id = nj.id
 					@deb("$(start_b[s_index, temp_id_j[nj_id]])")
 					if start_b[s_index, temp_id_j[controller_index][nj_id]] == 0.0
 						continue
@@ -891,17 +887,17 @@ function generate_node_directly(controller::InteractiveController{A, W}, control
 			#compute the result belief of executing action a and receiving obs z starting from belief b.
 			result_b = belief_update(start_b,a,z, controller, controllers_j)
 			#get the best node in the controller for the updated beief
-			best_next_node, best_value_obs = get_best_node(result_b, collect(values(controller.nodes)))
+			best_next_node, best_value_obs = get_best_node(result_b, controller.nodes)
 			new_v = node_value(best_next_node, a, z, controllers_j, frame_i, temp_id_j)
 			@deb("new_v = $new_v", :generatenode)
-			new_node_partial = build_node(controller.maxId+1, a, z, best_next_node, new_v)
+			new_node_partial = build_node(length(controller.nodes)+1, a, z, best_next_node, new_v)
 			@deb("new partial node:", :generatenode)
 			@deb(new_node_partial, :generatenode)
 			#add that edge to the node and update the value vector
 			if z_index ==1
 				new_node = new_node_partial
 			else
-				new_node = mergeNode(new_node, new_node_partial, a, controller.maxId+1)
+				new_node = mergeNode(new_node, new_node_partial, a, length(controller.nodes)+1)
 				@deb("after merge:", :generatenode)
 				@deb(new_node, :generatenode)
 			end
