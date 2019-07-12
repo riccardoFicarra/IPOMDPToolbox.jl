@@ -7,6 +7,7 @@ mutable struct IBPIAgent
     current_node::Node
     value::Float64
     stats::agent_stats
+    visited::Array{Int64}
 end
 function IBPIAgent(controller::AbstractController, initial_belief::Array{Float64})
     best_node = nothing
@@ -18,13 +19,14 @@ function IBPIAgent(controller::AbstractController, initial_belief::Array{Float64
             best_value = new_value
         end
     end
-    return IBPIAgent(controller, best_node, 0.0, agent_stats())
+    return IBPIAgent(controller, best_node, 0.0, agent_stats(), zeros(Int64, length(controller.nodes)))
 end
 function best_action(agent::IBPIAgent)
     return chooseWithProbability(agent.current_node.actionProb)
 end
 function update_agent!(agent::IBPIAgent, action::A, observation::W) where {A, W}
     agent.current_node = chooseWithProbability(agent.current_node.edges[action][observation])
+    agent.visited[agent.current_node.id]+=1
 end
 function compute_s_prime(state::S, ai::A, aj::A, frame::IPOMDP) where {S, A}
     dist = IPOMDPs.transition(frame, state, ai, aj)
@@ -82,26 +84,18 @@ function compute_observation(s_prime::S, ai::A, aj::A, frame::POMDP) where {S, A
     error("Out of dict bounds while choosing items")
 end
 
-function IBPIsimulate(policy::IBPIPolicy, maxsteps::Int64) where {S, A, W}
-    maxlevel = length(policy.controllers)
-    controller_i = policy.controllers[maxlevel][1]
-    controller_j = policy.controllers[maxlevel-1][1]
+function IBPIsimulate(controller_i::InteractiveController{S, A, W}, controller_j::AbstractController, maxsteps::Int64) where {S, A, W}
     frame_i = controller_i.frame
-    anynode = first(controller_i.nodes)[2]
-    initial = ones(size(anynode.value))
+    anynode = controller_i.nodes[1]
+    initial = ones(length(anynode.value))
     initial = initial ./ length(initial)
     agent_i = IBPIAgent(controller_i, initial)
 
     frame_j = controller_j.frame
-    anynode_j = first(controller_j.nodes)[2]
-    initial_j = ones(size(anynode_j.value))
+    anynode_j = controller_j.nodes[1]
+    initial_j = ones(length(anynode_j.value))
     initial_j = initial_j ./ length(initial_j)
-    if maxlevel - 1 == 0
-        agent_j = IBPIAgent(controller_j, initial_j)
-
-    else
-        agent_j = IBPIAgent(controller_j, initial_j)
-    end
+    agent_j = IBPIAgent(controller_j, initial_j)
     state = randn() > 0.5 ? :TL : :TR
     value = 0.0
     for i in 1:95
@@ -132,5 +126,5 @@ function IBPIsimulate(policy::IBPIPolicy, maxsteps::Int64) where {S, A, W}
         state = s_prime
     end
     println()
-    return value/maxsteps, agent_i.stats, agent_j.stats
+    return value/maxsteps, agent_i, agent_j
 end
