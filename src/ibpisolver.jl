@@ -8,7 +8,7 @@ ibpisolver.jl:
 	using IPOMDPs
 	using IPOMDPToolbox
 	using Dates
-	using JLD2
+	using Serialization
 
 	"""
 	Abstract type used for any controller, interactive or not.
@@ -47,11 +47,12 @@ ibpisolver.jl:
 		maxrep::Int64
 		minval::Float64
         timeout::Int64
+		min_improvement::Float64
     end
 	"""
 	Default config values
 	"""
-	config = IBPISolver(0, 10, 1e-10, 300)
+	config = IBPISolver(0, 10, 1e-10, 300, 1e-7)
 
 
 	"""
@@ -62,8 +63,8 @@ ibpisolver.jl:
 	- `minval::Float64`: if a number is below minval it is considered as zero.
 	- `timeout::Int64`: number of seconds after which the algorithm stops.
 	"""
-	function set_solver_params(force::Int64, maxrep::Int64, minval::Float64, timeout::Int64)
-		global config = IBPISolver(force, maxrep, minval, timeout)
+	function set_solver_params(force::Int64, maxrep::Int64, minval::Float64, timeout::Int64, min_improvement::Float64)
+		global config = IBPISolver(force, maxrep, minval, timeout, min_improvement)
 	end
 
     function Base.println(controller::AbstractController)
@@ -129,7 +130,6 @@ ibpisolver.jl:
     	if level >= 2
     		improved_lower = eval_and_improve!(policy, level-1)
     	end
-        @deb("evaluating level $level", :flow)
     	if level == 1
             tangent_b  = Dict{Int64, Array{Float64}}()
 			for controller in policy.controllers[1]
@@ -150,12 +150,11 @@ ibpisolver.jl:
 						@deb("Did not improve level 1", :flow)
 						escaped = escape_optima_standard!(controller, tangent_b; add_one = false, minval = 1e-10)
 						improved == improved || escaped
+						#if the controller failed both improvement and escape mark it as converged.
+						controller.converged = !escaped
 					end
-					#if the controller failed both improvement and escape mark it as converged.
-					controller.converged = !improved
-					if controller.converged
-						println("Level 1, frame $(frametype(controller)): $(length(controller.nodes)) nodes has converged")
-					end
+				else
+					println("Level 1, frame $(frametype(controller)): $(length(controller.nodes)) nodes has converged")
 				end
 			end
     	else
@@ -184,6 +183,8 @@ ibpisolver.jl:
 					if controller.converged
 						println("Level $level, frame $(frametype(controller)) : $(length(controller.nodes)) nodes")
 					end
+				else
+					println("Level $level, frame $(frametype(controller)): $(length(controller.nodes)) nodes has converged")
 				end
 			end
     	end
@@ -191,15 +192,14 @@ ibpisolver.jl:
     end
 
     function ibpi!(policy::IBPIPolicy)
-		iterations = 0
 		#full backup part to speed up
 		for controller in policy.controllers[1]
 			evaluate!(controller)
 			if length(controller.nodes) <= 1
 				full_backup_stochastic!(controller)
+				@deb("Level	1 after full backup", :flow)
+				@deb(controller, :flow)
 			end
-			@deb("Level	1 after full backup", :flow)
-			@deb(controller, :flow)
 		end
 
 		for level in 2:policy.maxlevel
@@ -216,16 +216,18 @@ ibpisolver.jl:
 		start_time = datetime2unix(now())
 
 		#start of the actual algorithm
+
+		iteration = 1
         while true
-			@deb("Iteration $iteration")
+			@deb("Iteration $iteration", :flow)
             improved = eval_and_improve!(policy, policy.maxlevel)
-            iterations += 1
+            iteration += 1
 
 			if !improved
 				println("Algorithm stopped because it could not improve controllers anymore")
 				break
-			elseif config.maxrep >= 0 && iterations >= config.maxrep
-				println("maxrep exceeded $iterations")
+			elseif config.maxrep >= 0 && iteration >= config.maxrep
+				println("maxrep exceeded $iteration")
 				break
 			elseif	datetime2unix(now()) >= start_time+config.timeout
 				println("timeout exceeded")
@@ -235,19 +237,21 @@ ibpisolver.jl:
     end
 
 	function save_policy(policy::IBPIPolicy, name::String)
-	    @save "savedcontrollers/$name.jld2" policy
+	    #@save "savedcontrollers/$name.jld2" policy
+		serialize("savedcontrollers/$name.policy", policy)
 	end
 
 	function load_policy(name::String)
-	    @load "savedcontrollers/$name.jld2" policy
-	    return policy
+	    #@load "savedcontrollers/$name.jld2" policy
+		policy = deserialize("savedcontrollers/$name.policy")
+		return policy
 	end
 
-	function solve_fresh!(policy::IBPIPolicy, n_steps::Int64, step_length::Int64, maxsimsteps::Int64 ; save = "", force = 3, max_iterations = -1)
+	function solve_fresh!(policy::IBPIPolicy{S, A, W}, n_steps::Int64, step_length::Int64, maxsimsteps::Int64, min_improvement::Float64 ; save = "", force = 3, max_iterations = -1) where {S, A, W}
 
 		for step in 1:n_steps
 		    filename_dst = "$(save)_$(step*step_length)"
-		    set_solver_params(force,max_iterations,1e-10,step_length*60)
+		    set_solver_params(force,max_iterations,1e-10,step_length*60, min_improvement)
 
 	        ibpi!(policy)
 
@@ -267,13 +271,13 @@ ibpisolver.jl:
 		end
 	end
 
-	function continue_solving(src_filename::String, n_steps::Int64, step_length::Int64, maxsimsteps::Int64; force = 3, max_iterations = -1)
+	function continue_solving(src_filename::String, n_steps::Int64, step_length::Int64, maxsimsteps::Int64, min_improvement::Float64; force = 3, max_iterations = -1)
 		policy = load_policy(src_filename)
 		name = split(src_filename, "_")[1]
 		src_duration = parse(Int64, split(src_filename, "_")[2])
 		for step in 1:n_steps
 		    filename_dst = "$(name)_$(src_duration+step*step_length)"
-		    set_solver_params(force,max_iterations,1e-10,step_length*60)
+		    set_solver_params(force,max_iterations,1e-10,step_length*60, min_improvement)
 
 	        ibpi!(policy)
 		    save_policy(policy, filename_dst)

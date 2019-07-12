@@ -56,9 +56,7 @@ end
 
 
 function average_listens(stats::agent_stats)
-    avg_l = stats.listen / (stats.correct + stats.wrong)
-    println("Average listens per opening: $avg_l")
-
+    return stats.listen / (stats.correct + stats.wrong)
 end
 
 function average_correct_obs(stats::agent_stats)

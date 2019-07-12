@@ -253,7 +253,7 @@ IBPIPolicyUtils:
 		else
 			newNode = InitialNode(pomdp; force = force)
 		end
-		Controller{A, W}(pomdp, [newNode], solver_statistics(), true)
+		Controller{A, W}(pomdp, [newNode], solver_statistics(), false)
 	end
 
 	function checkController(controller::AbstractController, minval::Float64; checkDistinct = false)
@@ -897,6 +897,8 @@ IBPIPolicyUtils:
 	Computes all value vectors of the nodes in a non-interactive controller.
 	"""
 	function evaluate!(controller::Controller{A,W}) where {A, W}
+		log_n_nodes(controller.stats, length(controller.nodes))
+		start_time(controller.stats, "eval")
 		#solve V(n,s) = R(s, a(n)) + gamma*sumz(P(s'|s,a(n))Pr(z|s',a(n))V(beta(n,z), s'))
 		#R(s,a(n)) is the reward function
 		pomdp = controller.frame
@@ -914,6 +916,7 @@ IBPIPolicyUtils:
 		# end
 
 		#compute coefficients for sum(a)[R(s|a)*P(a|n)+gamma*sum(z, n', s')[P(s'|s,a)*P(z|s',a)*P(a|n)*P(n'|z)*V(nz, s')]]
+		start_time(controller.stats, "eval_coeff")
 		for node in nodes
 			n_id = node.id
 			#M is the coefficient matrix (form x1 = a2x2+...+anxn+b)
@@ -953,10 +956,16 @@ IBPIPolicyUtils:
 				end
 			end
 		end
+		stop_time(controller.stats, "eval_coeff")
+
 		@deb("M = $M")
 		@deb("b = $b")
+		start_time(controller.stats, "eval_solve")
+
 		res = reshape(M, n_nodes * n_states, n_nodes * n_states) \ reshape(b, n_nodes * n_states)
 		#copy respective value functions in nodes
+		stop_time(controller.stats, "eval_solve")
+
 		res_2d = reshape(res, n_nodes, n_states)
 		for node in nodes
 			#create a new node identical to the old one but with updated value
@@ -965,6 +974,7 @@ IBPIPolicyUtils:
 			#set old node to nothing to make sure it's garbage collected
 			node = nothing
 		end
+		stop_time(controller.stats, "eval")
 	end
 	# """
 	# Given multiple indexes of a multidimensional matrix with dimension specified by lengths return the index in the corresponding 1D vector
@@ -993,6 +1003,7 @@ IBPIPolicyUtils:
 	# Return Bool, Vector{Float64}
 	"""
 	function partial_backup!(controller::Controller{A, W}; minval = 0.0, add_one = true, debug_node = 0) where {A, W}
+		start_time(controller.stats, "partial")
 		pomdp = controller.frame
 		nodes = controller.nodes
 		n_nodes = length(controller.nodes)
@@ -1037,6 +1048,7 @@ IBPIPolicyUtils:
 			@variable(lpmodel, e)
 			@objective(lpmodel, Max, e)
 			#define coefficients for constraints
+			start_time(controller.stats, "partial_coeff")
 			for s_index in 1:n_states
 				s = states[s_index]
 				#matrix of canz coefficients
@@ -1066,18 +1078,24 @@ IBPIPolicyUtils:
 				#set constraint for a state
 				constraints[s_index] = @constraint(lpmodel,  e + node.value[s_index] <= sum( M_a[a]*ca[a]+POMDPs.discount(pomdp)*sum(sum( M[a, z, n] * canz[a, z, n] for n in 1:n_nodes) for z in 1:n_observations) for a in 1:n_actions))
 			end
+			stop_time(controller.stats, "partial_coeff")
+
 			@constraint(lpmodel, con_sum[a=1:n_actions, z=1:n_observations], sum(canz[a, z, n] for n in 1:n_nodes) == ca[a])
 			@constraint(lpmodel, ca_sum, sum(ca[a] for a in 1:n_actions) == 1.0)
 
 			@deb(lpmodel, :data)
+			start_time(controller.stats, "partial_optimize")
 
 			optimize!(lpmodel)
+			stop_time(controller.stats, "partial_optimize")
 
 			@deb("$(termination_status(lpmodel))")
 			@deb("$(primal_status(lpmodel))")
 			@deb("$(dual_status(lpmodel))")
 			@deb("Obj = $(objective_value(lpmodel))", :data)
-			if JuMP.objective_value(lpmodel) > minval
+			delta = JuMP.objective_value(lpmodel)
+			if delta > config.min_improvement
+				@deb("Node improved by $delta", :flow)
 				#means that node can be improved!
 				changed = true
 				new_edges = Dict{A, Dict{W,Dict{Node, Float64}}}()
@@ -1133,14 +1151,6 @@ IBPIPolicyUtils:
 							#@deb("length of dict for obs $(observations[obs_index]) = $(length(new_edge_dict))")
 							if length(new_edge_dict) != 0
 								new_obs[observations[obs_index]] = new_edge_dict
-								#update incoming edge vector for other node
-								for (next, prob) in new_edge_dict
-									if haskey(next.incomingEdgeDicts, node)
-										push!(next.incomingEdgeDicts[node], new_edge_dict)
-									else
-										next.incomingEdgeDicts[node] = [new_edge_dict]
-									end
-								end
 							end
 						end
 						if length(keys(new_obs)) != 0
@@ -1149,9 +1159,9 @@ IBPIPolicyUtils:
 						end
 					end
 				end
-				new_node = Node(node.id, new_actions, new_edges, [])
+				new_node = Node(node.id, new_actions, new_edges, Array{Float64, 2}(undef, 0, 0))
 				checkNode(new_node, controller, minval)
-				controller[new_node.id] = new_node
+				controller.nodes[new_node.id] = new_node
 				#make sure it's garbage collected!
 				node = nothing
 				if !add_one
@@ -1166,7 +1176,7 @@ IBPIPolicyUtils:
 					#no need to update tangent points because they wont be used!
 					println()
 					@deb("Changed node, value still to be recomputed", :flow)
-					@deb(node, :flow)
+					@deb(new_node, :flow)
 					return true, Dict{Int64, Array{Float64}}()
 				end
 			end
@@ -1174,6 +1184,7 @@ IBPIPolicyUtils:
 			tangent_b[n_id] = [-1*dual(constraints[s_index]) for s_index in 1:n_states]
 		end
 		println()
+		stop_time(controller.stats, "partial")
 		return changed, tangent_b
 	end
 	"""
@@ -1182,6 +1193,8 @@ IBPIPolicyUtils:
 	"""
 	function escape_optima_standard!(controller::Controller{A, W}, tangent_b::Dict{Int64, Array{Float64}}; add_one=true, minval = 0.0) where {A, W}
 		#@deb("$tangent_b")
+		start_time(controller.stats, "escape")
+
 		pomdp = controller.frame
 		nodes = controller.nodes
 		n_nodes = length(controller.nodes)
@@ -1234,6 +1247,8 @@ IBPIPolicyUtils:
 			end
 		end
 		#@deb("$reachable_b")
+		stop_time(controller.stats, "escape")
+
 		return escaped
 	end
 
@@ -1241,7 +1256,7 @@ IBPIPolicyUtils:
 		best_old_node, best_old_value = get_best_node(reachable_b, controller.nodes)
 		#generate node directly
 		best_new_node, best_new_value = generate_node_directly(controller, reachable_b)
-		if best_new_value - best_old_value > config.minval
+		if best_new_value - best_old_value > config.min_improvement
 			@deb("in $reachable_b node $(best_new_node.id) has $best_new_value > $best_old_value", :escape)
 			@deb("best old node:", :generatenode)
 			@deb(best_old_node, :generatenode)

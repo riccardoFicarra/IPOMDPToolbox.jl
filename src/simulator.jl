@@ -11,7 +11,7 @@ end
 function IBPIAgent(controller::AbstractController, initial_belief::Array{Float64})
     best_node = nothing
     best_value = nothing
-    for (id, node) in controller.nodes
+    for node in controller.nodes
         new_value = sum(initial_belief[i]*node.value[i] for i in 1:length(initial_belief))
         if best_node == nothing || new_value > best_value
             best_node = node
@@ -82,49 +82,58 @@ function compute_observation(s_prime::S, ai::A, aj::A, frame::POMDP) where {S, A
     error("Out of dict bounds while choosing items")
 end
 
-function IBPIsimulate(policy::IBPIPolicy, maxsteps::Int64) where {S, A, W}
+function IBPIsimulate(policy::IBPIPolicy, agent_j_index::Int64, maxsteps::Int64; trace=false) where {S, A, W}
     maxlevel = length(policy.controllers)
     controller_i = policy.controllers[maxlevel][1]
-    controller_j = policy.controllers[maxlevel-1][1]
+    controller_j = policy.controllers[maxlevel-1][agent_j_index]
+    evaluate!(controller_i, policy.controllers[maxlevel-1])
+    if maxlevel - 1 == 1
+        evaluate!(controller_j)
+    else
+        evaluate!(controller_j, policy.controllers[maxlevel-2])
+    end
     frame_i = controller_i.frame
-    anynode = first(controller_i.nodes)[2]
+    anynode = controller_i.nodes[1]
     initial = ones(size(anynode.value))
     initial = initial ./ length(initial)
     agent_i = IBPIAgent(controller_i, initial)
 
     frame_j = controller_j.frame
-    anynode_j = first(controller_j.nodes)[2]
+    anynode_j = controller_j.nodes[1]
     initial_j = ones(size(anynode_j.value))
     initial_j = initial_j ./ length(initial_j)
-    if maxlevel - 1 == 0
-        agent_j = IBPIAgent(controller_j, initial_j)
-
-    else
-        agent_j = IBPIAgent(controller_j, initial_j)
-    end
+    agent_j = IBPIAgent(controller_j, initial_j)
     state = randn() > 0.5 ? :TL : :TR
     value = 0.0
-    for i in 1:95
-        print(" ")
+    if !trace
+        for i in 1:95
+            print(" ")
+        end
+        println("end v")
     end
-    println("end v")
     for i in 1:maxsteps
-        if i % (maxsteps/100) == 0
+        if i % (maxsteps/100) == 0 && !trace
             print("|")
         end
         ai = best_action(agent_i)
         aj = best_action(agent_j)
-        @deb("state: $state -> ai: $ai, aj: $aj", :sim)
-
+        if trace
+            println("state: $state -> ai: $ai, aj: $aj")
+        end
         value +=  IPOMDPs.reward(frame_i, state, ai, aj)
-        @deb("value this step: $(IPOMDPs.reward(frame_i, state, ai, aj))", :sim)
-
+        if trace
+            println("value this step: $(IPOMDPs.reward(frame_i, state, ai, aj))")
+        end
         s_prime = compute_s_prime(state, ai, aj, frame_i)
 
         zi = compute_observation(s_prime, ai, aj, frame_i)
         zj = compute_observation(s_prime, aj, ai, frame_j)
-        @deb("zi -> $zi, zj -> $zj", :sim)
+        if trace
+            println("zi -> $zi, zj -> $zj")
+        end
         update_agent!(agent_i, ai, zi)
+        @deb("new current node for I:", :sim)
+        @deb(agent_i.current_node, :sim)
         update_agent!(agent_j, aj, zj)
         computestats!(agent_i.stats, ai, aj, state, s_prime, zi, zj)
         computestats!(agent_j.stats, aj, ai, state, s_prime, zj, zi)

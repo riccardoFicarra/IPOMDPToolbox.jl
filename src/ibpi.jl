@@ -338,7 +338,8 @@ function partial_backup!(controller::InteractiveController{A, W}, controllers_j:
 		@deb("$(dual_status(lpmodel))", :lpdual)
 
 		@deb("Obj = $(objective_value(lpmodel))", :lpdual)
-		if JuMP.objective_value(lpmodel) > minval
+		if JuMP.objective_value(lpmodel) > config.min_improvement
+			@deb("Node improved by $(JuMP.objective_value(lpmodel))", :flow)
 			changed = true
 			# @deb("Node $n_id can be improved", :flow)
 			new_edges = Dict{A, Dict{W,Dict{Node, Float64}}}()
@@ -513,7 +514,7 @@ end
 function full_backup_stochastic!(controller::InteractiveController{A, W}, controllers_j::Array{AbstractController, 1}; minval = 1e-10) where {A, W}
 	initial_node = controller.nodes[1]
 	already_present_action = first(controller.nodes[1].actionProb)[1]
-
+	@deb("Already present action: $already_present_action", :full)
 	for a in actions(controller.frame)
 		if a != already_present_action
 			actionProb = Dict{A, Float64}(a => 1)
@@ -521,8 +522,10 @@ function full_backup_stochastic!(controller::InteractiveController{A, W}, contro
 			for z in observations(controller.frame)
 				edges[a][z] = Dict{Node, Float64}(initial_node => 1)
 			end
-			new_node = Node(length(controller.nodes), actionProb, edges, Array{Float64, 2}(undef, 0, 0))
-			controller.nodes[new_node.id] = new_node
+			new_node = Node(length(controller.nodes)+1, actionProb, edges, Array{Float64, 2}(undef, 0, 0))
+			@deb("Adding node", :full)
+			@deb(new_node, :full)
+			push!(controller.nodes, new_node)
 		end
 	end
 end
@@ -748,7 +751,6 @@ function escape_optima_standard!(controller::InteractiveController{A, W}, contro
 end
 
 function add_escape_node!(new_b::Array{Float64}, controller::InteractiveController{S, A, W}, controllers_j::Array{AbstractController, 1}, temp_id_j::Array{Array{Int64, 1}, 1}) where {S, A, W}
-	minval = config.minval
 	best_old_node, best_old_value = get_best_node(new_b, controller.nodes)
 	#@assert best_old_node_alt == best_old_node
 	if :escape in debug
@@ -757,7 +759,7 @@ function add_escape_node!(new_b::Array{Float64}, controller::InteractiveControll
 	end
 
 	best_new_node, best_new_value = generate_node_directly(controller, controllers_j, new_b, temp_id_j)
-	if best_new_value - best_old_value > minval
+	if best_new_value - best_old_value > config.min_improvement
 		@deb("in $new_b node $(best_new_node.id) has $best_new_value > $best_old_value", :escape)
 		#reworked_node = rework_node(controller, best_new_node)
 		#controller.nodes[reworked_node.id] = reworked_node
