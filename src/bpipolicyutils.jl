@@ -976,34 +976,15 @@ IBPIPolicyUtils:
 		end
 		stop_time(controller.stats, "eval")
 	end
-	# """
-	# Given multiple indexes of a multidimensional matrix with dimension specified by lengths return the index in the corresponding 1D vector
-	# lengths[1] is actually never used, but it is there for consistency (can actually be set to any number)
-	# """
-	# function composite_index(dimension::Vector{Int64}, lengths::Vector{Int64})
-	# 	#return (primary-1)*secondary_len+secondary
-	# 	if length(dimension) != length(lengths)
-	# 		error("Dimension and lengths vector have different length!")
-	# 	end
-	# 	for d in 1:length(dimension)
-	# 		if dimension[d] > lengths[d]
-	# 			error("Dimension cannot be greater than dimension length")
-	# 		end
-	# 	end
-	# 	index = 0
-	# 	for i in 1:length(dimension)
-	# 		index= index*lengths[i]+(dimension[i]-1)
-	# 	end
-	# 	return index+1
-	# end
 	"""
 	Tries to improve the controller by checking if each node can be replaced by a convex combination of the other nodes.
 	Default behavior is to stop after a single node is modified.
 	first return value is whether it has improved at least one node, second is the tangent belief point (see paper)
 	# Return Bool, Vector{Float64}
 	"""
-	function partial_backup!(controller::Controller{A, W}; minval = 0.0, add_one = true, debug_node = 0) where {A, W}
+	function partial_backup!(controller::Controller{A, W}; add_one = true, debug_node = 0) where {A, W}
 		start_time(controller.stats, "partial")
+		minval = config.minval
 		pomdp = controller.frame
 		nodes = controller.nodes
 		n_nodes = length(controller.nodes)
@@ -1165,7 +1146,7 @@ IBPIPolicyUtils:
 				#make sure it's garbage collected!
 				node = nothing
 				if !add_one
-					if :example in debug
+					if :flow in debug
 						println("Changed controller after eval")
 						for node in controller.nodes
 							println(node)
@@ -1380,3 +1361,31 @@ IBPIPolicyUtils:
 		end
 		return best_node, best_value
 	end
+
+
+function bpi!(policy::BPIPolicy)
+	controller = policy.controller
+	evaluate!(controller)
+
+	full_backup_stochastic!(controller; minval = config.minval)
+
+	iteration = 0
+	while iteration <= config.maxrep
+		println("Iteration $iteration")
+		evaluate!(controller)
+
+		improved, tangent_b = partial_backup!(controller; add_one = true)
+
+
+		if !improved
+			escaped = escape_optima_standard!(controller, tangent_b; add_one = false)
+			if !escaped
+				println("Convergence!")
+				return
+			end
+		end
+		iteration += 1
+	end
+	println("Maxrep exceeded")
+	return
+end
