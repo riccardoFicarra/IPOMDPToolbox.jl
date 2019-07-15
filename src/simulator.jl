@@ -10,17 +10,7 @@ mutable struct IBPIAgent
     visited::Array{Int64}
 end
 function IBPIAgent(controller::AbstractController, initial_belief::Array{Float64})
-    best_node = nothing
-    best_value = nothing
-    for node in controller.nodes
-        @assert length(initial_belief) == length(node.value) "Initial belief length doesnt match with value vector"
-
-        new_value = sum(initial_belief[i]*node.value[i] for i in 1:length(initial_belief))
-        if best_node == nothing || new_value > best_value
-            best_node = node
-            best_value = new_value
-        end
-    end
+    best_node, best_value = get_best_node(initial_belief, controller.nodes)
     return IBPIAgent(controller, best_node, 0.0, agent_stats(), zeros(Int64, length(controller.nodes)))
 end
 function best_action(agent::IBPIAgent)
