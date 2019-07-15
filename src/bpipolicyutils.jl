@@ -1279,14 +1279,15 @@ IBPIPolicyUtils:
 		@deb("started get_best_node", :bestnode)
 		best_node = nothing
 		best_value = 0.0
-		@assert length(belief) == length(nodes[1].value)
 		for node in nodes
-			@deb(" belief: $belief, value = $value")
-
+			if length(belief) != length(node.value)
+				@deb(belief, :bestnode)
+				@deb(node, :bestnode)
+				error("Dimension mismatch between belief and value vector")
+			end
 			value =  sum(belief[i] * node.value[i]  for i in 1:length(belief))
-			@deb(" new = $value, best =  $best_value", :bestnode)
+
 			if best_node == nothing || best_value < value
-				@deb("updating $(node.id)", :bestnode)
 				best_node = node
 				best_value = value
 			end
