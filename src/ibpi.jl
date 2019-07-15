@@ -344,6 +344,8 @@ function partial_backup!(controller::InteractiveController{A, W}, controllers_j:
 		@deb("Obj = $(objective_value(lpmodel))", :lpdual)
 		delta = JuMP.objective_value(lpmodel)
 		if delta > config.min_improvement
+			#just to go on a newline after the progress bar
+			@deb("", :flow)
 			@deb("Improvement $delta", :flow)
 			changed = true
 			# @deb("Node $n_id can be improved", :flow)
