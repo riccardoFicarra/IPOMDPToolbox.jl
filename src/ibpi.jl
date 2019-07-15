@@ -335,7 +335,9 @@ function partial_backup!(controller::InteractiveController{A, W}, controllers_j:
 		@deb("$(dual_status(lpmodel))", :lpdual)
 
 		@deb("Obj = $(objective_value(lpmodel))", :lpdual)
-		if JuMP.objective_value(lpmodel) > minval
+		delta = JuMP.objective_value(lpmodel)
+		if delta > config.min_improvement
+			@deb("Improvement $delta", :flow)
 			changed = true
 			# @deb("Node $n_id can be improved", :flow)
 			new_edges = Dict{A, Dict{W,Dict{Node, Float64}}}()
@@ -760,11 +762,13 @@ function add_escape_node!(new_b::Array{Float64}, controller::InteractiveControll
 	end
 
 	best_new_node, best_new_value = generate_node_directly(controller, controllers_j, new_b, temp_id_j)
-	if best_new_value - best_old_value > minval
+	if best_new_value - best_old_value > config.min_improvement
 		@deb("in $new_b node $(best_new_node.id) has $best_new_value > $best_old_value", :escape)
 		#reworked_node = rework_node(controller, best_new_node)
 		#controller.nodes[reworked_node.id] = reworked_node
 		@deb("Added node $(best_new_node.id) to improve belief $new_b", :flow)
+		@deb("Improvement $(best_new_value-best_old_value)", :flow)
+
 		checkNode(best_new_node, controller, minval; normalize = true)
 		controller.nodes[best_new_node.id] = best_new_node
 		#not the cleanest solution to keep track of ids but hey it works

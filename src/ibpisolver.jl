@@ -47,11 +47,12 @@ ibpisolver.jl:
 		maxrep::Int64
 		minval::Float64
         timeout::Int64
+		min_improvement::Float64
     end
 	"""
 	Default config values
 	"""
-	config = IBPISolver(0, 10, 1e-10, 300)
+	config = IBPISolver(0, 10, 1e-10, 300, 1e-10)
 
 
 	"""
@@ -62,8 +63,8 @@ ibpisolver.jl:
 	- `minval::Float64`: if a number is below minval it is considered as zero.
 	- `timeout::Int64`: number of seconds after which the algorithm stops.
 	"""
-	function set_solver_params(force::Int64, maxrep::Int64, minval::Float64, timeout::Int64)
-		global config = IBPISolver(force, maxrep, minval, timeout)
+	function set_solver_params(force::Int64, maxrep::Int64, minval::Float64, timeout::Int64, min_improvement::Float64)
+		global config = IBPISolver(force, maxrep, minval, timeout, min_improvement)
 	end
 
     function Base.println(controller::AbstractController)
@@ -232,6 +233,17 @@ ibpisolver.jl:
 				break
 			end
         end
+		#only needed when evaluation is cut short
+		#but it doesnt take that much time
+		for level in 1:policy.maxlevel
+			for controller in policy.controllers[level]
+				if level == 1
+					evaluate!(controller)
+				else
+					evaluate!(controller, policy.controllers[level-1])
+				end
+			end
+		end
     end
 
 	function save_policy(policy::IBPIPolicy, name::String)
@@ -243,11 +255,11 @@ ibpisolver.jl:
 	    return policy
 	end
 
-	function solve_fresh!(policy::IBPIPolicy, n_steps::Int64, step_length::Int64, maxsimsteps::Int64 ; save = "", force = 3, max_iterations = -1)
+	function solve_fresh!(policy::IBPIPolicy, n_steps::Int64, step_length::Int64, maxsimsteps::Int64, min_improvement::Float64 ; save = "", force = 3, max_iterations = -1)
 
 		for step in 1:n_steps
 		    filename_dst = "$(save)_$(step*step_length)"
-		    set_solver_params(force,max_iterations,1e-10,step_length*60)
+		    set_solver_params(force,max_iterations,1e-10,step_length*60, min_improvement)
 
 	        ibpi!(policy)
 
@@ -267,13 +279,13 @@ ibpisolver.jl:
 		end
 	end
 
-	function continue_solving(src_filename::String, n_steps::Int64, step_length::Int64, maxsimsteps::Int64; force = 3, max_iterations = -1)
+	function continue_solving(src_filename::String, n_steps::Int64, step_length::Int64, maxsimsteps::Int64, min_improvement; force = 3, max_iterations = -1)
 		policy = load_policy(src_filename)
 		name = split(src_filename, "_")[1]
 		src_duration = parse(Int64, split(src_filename, "_")[2])
 		for step in 1:n_steps
 		    filename_dst = "$(name)_$(src_duration+step*step_length)"
-		    set_solver_params(force,max_iterations,1e-10,step_length*60)
+		    set_solver_params(force,max_iterations,1e-10,step_length*60, min_improvement)
 
 	        ibpi!(policy)
 		    save_policy(policy, filename_dst)
