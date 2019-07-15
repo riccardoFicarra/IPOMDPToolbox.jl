@@ -71,22 +71,22 @@ IBPIPolicyUtils:
 	"""
 	#no need to init value vectors here, they will be set by evaluate.
 	function InitialNode(actions::Vector{A}, observations::Vector{W};  force = 0) where {S, A, W}
-	        if force == 0
-	            actionindex = rand(1:length(actions))
-	        else
-	            if force > length(actions)
-	                error("forced action outside of action vector length")
-	            end
-	            actionindex = force
-	        end
-	        n = Node(1, [actions[actionindex]], observations)
-	        obsdict = Dict{W, Vector{Pair{Int64, Float64}}}()
-	        for obs in observations
-	            edges = [(1 => 1.0)]
-	            obsdict[obs] = edges
-	        end
-	        n.edges[actions[actionindex]] = obsdict
-	        return n
+			if force == 0
+				actionindex = rand(1:length(actions))
+			else
+				if force > length(actions)
+					error("forced action outside of action vector length")
+				end
+				actionindex = force
+			end
+			n = Node(1, [actions[actionindex]], observations)
+			obsdict = Dict{W, Vector{Pair{Int64, Float64}}}()
+			for obs in observations
+				edges = [(1 => 1.0)]
+				obsdict[obs] = edges
+			end
+			n.edges[actions[actionindex]] = obsdict
+			return n
 	end
 	"""
 	Receives the pomdp frame
@@ -96,7 +96,7 @@ IBPIPolicyUtils:
 	"""
 	function InitialNode(pomdp::POMDP{A, W}; force = 0) where {A, W}
 		actions = POMDPs.actions(pomdp)
-	 	observations = POMDPs.observations(pomdp)
+		observations = POMDPs.observations(pomdp)
 		if force == 0
 			return InitialNode(actions, observations)
 		else
@@ -301,7 +301,7 @@ IBPIPolicyUtils:
 		if :data in debug
 			println("Optimal controller for tiger game:")
 			for (node_id, node) in controller.nodes
-			    println(node)
+				println(node)
 			end
 		end
 		return controller
@@ -337,7 +337,7 @@ IBPIPolicyUtils:
 		if :data in debug
 			println("Optimal controller for tiger game:")
 			for (node_id, node) in controller.nodes
-			    println(node)
+				println(node)
 			end
 		end
 		return controller
@@ -357,7 +357,7 @@ IBPIPolicyUtils:
 		if :data in debug
 			println("Optimal controller for tiger game:")
 			for (node_id, node) in controller.nodes
-			    println(node)
+				println(node)
 			end
 		end
 		return controller
@@ -380,8 +380,8 @@ IBPIPolicyUtils:
 	Wrapper data structure for a non-interactive policy.
 	"""
 	struct BPIPolicy{A, W}
-        controller::Controller{A, W}
-    end
+		controller::Controller{A, W}
+	end
 	"""
 	Create a BPIPolicy with a standard initial controller.
 	"""
@@ -391,7 +391,7 @@ IBPIPolicyUtils:
 		else
 			BPIPolicy(Controller(pomdp; force = force))
 		end
-    end
+	end
 
 	# function build_node(node_id::Int64, actions::Vector{A}, actionProb::Vector{Float64}, observations::Vector{Vector{W}}, observation_prob::Vector{Vector{Float64}}, next_nodes::Vector{Vector{Node{A,W}}}, value::Array{Float64}) where {A, W}
 	# 	if length(actions) != length(observations) || length(actions) != length(actionProb) || length(actions) != length(observation_prob) || length(actions) != length(next_nodes)
@@ -610,7 +610,7 @@ IBPIPolicyUtils:
 		@deb("$(length(A)) * $(length(B))", :full)
 		X = Set{Node}()
 		id = startId
-	    for a in A, b in B
+		for a in A, b in B
 			#each of the newly generated nodes only has one action!
 			@assert length(a.actionProb) == length(b.actionProb) == 1 "more than one action in freshly generated node"
 			a_action = collect(keys(a.actionProb))[1]
@@ -623,9 +623,9 @@ IBPIPolicyUtils:
 			end
 			id-=1
 			push!(X, c)
-	    end
+		end
 		#@deb("returned id = $id")
-	    return id, X
+		return id, X
 	end
 	"""
 		Merges two nodes into a new node with id = id
@@ -673,44 +673,44 @@ IBPIPolicyUtils:
 			#if there is only one node it is useless to try and prune anything
 			return nodes
 		end
-	    new_nodes = Dict{Int64, Node}()
-	    #careful, here dict key != node.id!!!!
-	    node_counter = 1
-	    for node in nodes
-	        new_nodes[node_counter] = node
-	        node_counter+=1
-	    end
+		new_nodes = Dict{Int64, Node}()
+		#careful, here dict key != node.id!!!!
+		node_counter = 1
+		for node in nodes
+			new_nodes[node_counter] = node
+			node_counter+=1
+		end
 		#this ensures that the value vector is flattened even if it has multiple dimension because of nodes/agents/frames
-	    n_states = length(new_nodes[1].value)
-	    for (temp_id, n) in new_nodes
+		n_states = length(new_nodes[1].value)
+		for (temp_id, n) in new_nodes
 			#remove the node we're testing from the node set (else we always get that a node dominates itself!)
 			if length(new_nodes) == 1
 				#only one node in the set, no reason to keep pruning
 				break;
 			end
 			pop!(new_nodes, temp_id)
-	        #@deb("$(length(new_nodes))")
-	        lpmodel = JuMP.Model(with_optimizer(GLPK.Optimizer))
-	        #define variables for LP. c(i)
-	        @variable(lpmodel, c[i=keys(new_nodes)] >= 0)
-	        #e to maximize
-	        @variable(lpmodel, e)
-	        @objective(lpmodel, Max, e)
-	        @constraint(lpmodel, con[s_index=1:n_states], n.value[s_index] + e <= sum(c[ni_id]*ni.value[s_index] for (ni_id, ni) in new_nodes))
-	        @constraint(lpmodel, con_sum, sum(c[i] for i in keys(new_nodes)) == 1)
-	        optimize!(lpmodel)
+			#@deb("$(length(new_nodes))")
+			lpmodel = JuMP.Model(with_optimizer(GLPK.Optimizer))
+			#define variables for LP. c(i)
+			@variable(lpmodel, c[i=keys(new_nodes)] >= 0)
+			#e to maximize
+			@variable(lpmodel, e)
+			@objective(lpmodel, Max, e)
+			@constraint(lpmodel, con[s_index=1:n_states], n.value[s_index] + e <= sum(c[ni_id]*ni.value[s_index] for (ni_id, ni) in new_nodes))
+			@constraint(lpmodel, con_sum, sum(c[i] for i in keys(new_nodes)) == 1)
+			optimize!(lpmodel)
 			if :data in debug
 				println("node $(n.id) -> eps = $(JuMP.value(e))")
 			end
-	        if JuMP.value(e) >= -1e-12
-	            #rewiring function here!
+			if JuMP.value(e) >= -1e-12
+				#rewiring function here!
 				if :data in debug
 					for i in keys(new_nodes)
 						print("c$(new_nodes[i].id) = $(JuMP.value(c[i])) ")
 					end
 					println("")
 				end
-	            #rewiring starts here!
+				#rewiring starts here!
 				#@deb("Start of rewiring")
 				for (src_node, dict_vect) in n.incomingEdgeDicts
 					#skip rewiring of edges from dominated node
@@ -750,7 +750,7 @@ IBPIPolicyUtils:
 					end
 				end
 				#@deb("End of rewiring")
-	            #end of rewiring, do not readd dominated node
+				#end of rewiring, do not readd dominated node
 				#remove incoming edge from pointed nodes
 				for (action, observation_map) in n.edges
 					for (observation, edge_map) in observation_map
@@ -768,13 +768,13 @@ IBPIPolicyUtils:
 				end
 				#set it to nothing just to be sure
 				n = nothing
-	        else
+			else
 				#if node is not dominated readd it to the dict!
 				new_nodes[temp_id] = n
 			end
-	    end
+		end
 
-	    return Set{Node}(node for node in values(new_nodes))
+		return Set{Node}(node for node in values(new_nodes))
 	end
 
 	"""
@@ -791,19 +791,19 @@ IBPIPolicyUtils:
 			#if there is only one node it is useless to try and prune anything
 			return nodes
 		end
-	    new_nodes = Dict{Int64, Node}()
-	    #careful, here dict key != node.id!!!!
-	    node_counter = 1
-	    for node in nodes
-	        new_nodes[node_counter] = node
+		new_nodes = Dict{Int64, Node}()
+		#careful, here dict key != node.id!!!!
+		node_counter = 1
+		for node in nodes
+			new_nodes[node_counter] = node
 			@deb("temp = $node_counter, id = $(node.id)", :data)
 			@deb(node, :data)
-	        node_counter+=1
-	    end
-	    n_states = length(new_nodes[1].value)
+			node_counter+=1
+		end
+		n_states = length(new_nodes[1].value)
 		#since we know temp_ids are contiguous we can iterate in order
 		#this way new nodes are checked first without need for an ordered dict nor sorting
-	    for temp_id in 1:length(new_nodes)
+		for temp_id in 1:length(new_nodes)
 			n = new_nodes[temp_id]
 			#@deb("temp_id = $temp_id, n.id = $(n.id)")
 			#remove the node we're testing from the node set (else we always get that a node dominates itself!)
@@ -812,28 +812,28 @@ IBPIPolicyUtils:
 				break;
 			end
 			pop!(new_nodes, temp_id)
-	        #@deb("$(length(new_nodes))")
-	        lpmodel = JuMP.Model(with_optimizer(GLPK.Optimizer))
-	        #define variables for LP. c(i)
-	        @variable(lpmodel, 0.0 <= c[i=keys(new_nodes)] <= 1.0)
-	        #e to maximize
-	        @variable(lpmodel, e)
-	        @objective(lpmodel, Max, e)
-	        @constraint(lpmodel, con[s_index=1:n_states], n.value[s_index] + e <= sum(c[ni_id]*ni.value[s_index] for (ni_id, ni) in new_nodes))
-	        @constraint(lpmodel, con_sum, sum(c[i] for i in keys(new_nodes)) == 1)
-	        optimize!(lpmodel)
+			#@deb("$(length(new_nodes))")
+			lpmodel = JuMP.Model(with_optimizer(GLPK.Optimizer))
+			#define variables for LP. c(i)
+			@variable(lpmodel, 0.0 <= c[i=keys(new_nodes)] <= 1.0)
+			#e to maximize
+			@variable(lpmodel, e)
+			@objective(lpmodel, Max, e)
+			@constraint(lpmodel, con[s_index=1:n_states], n.value[s_index] + e <= sum(c[ni_id]*ni.value[s_index] for (ni_id, ni) in new_nodes))
+			@constraint(lpmodel, con_sum, sum(c[i] for i in keys(new_nodes)) == 1)
+			optimize!(lpmodel)
 			if :data in debug
 				println("node $(n.id) -> eps = $(JuMP.value(e))")
 			end
-	        if JuMP.value(e) >= -1e-10
-	            #rewiring function here!
+			if JuMP.value(e) >= -1e-10
+				#rewiring function here!
 				if :data in debug
 					for i in keys(new_nodes)
 						print("c$(new_nodes[i].id) = $(JuMP.value(c[i])) ")
 					end
 					println("")
 				end
-	            #rewiring starts here!
+				#rewiring starts here!
 				@deb("Start of rewiring")
 				for (src_node, dict_vect) in n.incomingEdgeDicts
 					#skip rewiring of edges from dominated node
@@ -880,7 +880,7 @@ IBPIPolicyUtils:
 					end
 				end
 				@deb("End of rewiring")
-	            #end of rewiring, do not readd dominated node
+				#end of rewiring, do not readd dominated node
 				#remove incoming edge from pointed nodes
 				for (action, observation_map) in n.edges
 					for (observation, edge_map) in observation_map
@@ -898,13 +898,13 @@ IBPIPolicyUtils:
 				end
 				#set it to nothing just to be sure
 				n = nothing
-	        else
+			else
 				#if node is not dominated readd it to the dict!
 				new_nodes[temp_id] = n
 			end
-	    end
+		end
 
-	    return Set{Node}(node for node in values(new_nodes))
+		return Set{Node}(node for node in values(new_nodes))
 	end
 
 	"""
