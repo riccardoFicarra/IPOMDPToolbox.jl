@@ -184,7 +184,7 @@ function actions(frame::Any)
 	end
 end
 
-function partial_backup!(controller::InteractiveController{A, W}, controllers_j::Array{AbstractController, 1}; minval = 1e-10, add_one = true) where {S, A, W}
+function partial_backup!(controller::InteractiveController{A, W}, controllers_j::Array{AbstractController, 1}; minval = 1e-10,add_one = true) where {S, A, W}
 	#debug = Set([:flow])
 	#this time the matrix form is a1x1+...+anxn = b1
 	#sum(a,s)[sum(nz)[canz*[R(s,a)+gamma*sum(s')p(s'|s, a)p(z|s', a)v(nz,s')]] -eps = V(n,s)
