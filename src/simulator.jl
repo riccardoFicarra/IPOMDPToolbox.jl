@@ -13,6 +13,7 @@ function IBPIAgent(controller::AbstractController, initial_belief::Array{Float64
     best_node = nothing
     best_value = nothing
     for (id, node) in controller.nodes
+        @assert length(initial_belief) == length(node.value) "Initial belief length doesnt match with value vector"
         new_value = sum(initial_belief[i]*node.value[i] for i in 1:length(initial_belief))
         if best_node == nothing || new_value > best_value
             best_node = node
