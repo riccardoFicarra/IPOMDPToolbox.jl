@@ -994,7 +994,8 @@ IBPIPolicyUtils:
 	first return value is whether it has improved at least one node, second is the tangent belief point (see paper)
 	# Return Bool, Vector{Float64}
 	"""
-	function partial_backup!(controller::Controller{A, W}; minval = 0.0, add_one = true, debug_node = 0) where {A, W}
+	function partial_backup!(controller::Controller{A, W}; add_one = true, debug_node = 0) where {A, W}
+		minval = config.minval
 		pomdp = controller.frame
 		nodes = controller.nodes
 		n_nodes = length(keys(controller.nodes))
@@ -1153,7 +1154,7 @@ IBPIPolicyUtils:
 				node.actionProb = new_actions
 				checkNode(node, controller, minval)
 				if !add_one
-					if :example in debug
+					if :flow in debug
 						println("Changed controller after eval")
 						for (n_id, node) in controller.nodes
 							println(node)
@@ -1364,3 +1365,31 @@ IBPIPolicyUtils:
 		end
 		return best_node, best_value
 	end
+
+
+function bpi!(policy::BPIPolicy)
+	controller = policy.controller
+	evaluate!(controller)
+
+	full_backup_stochastic!(controller; minval = config.minval)
+
+	iteration = 0
+	while iteration <= config.maxrep
+		println("Iteration $iteration")
+		evaluate!(controller)
+
+		improved, tangent_b = partial_backup!(controller; add_one = true)
+
+
+		if !improved
+			escaped = escape_optima_standard!(controller, tangent_b; add_one = false)
+			if !escaped
+				println("Convergence!")
+				return
+			end
+		end
+		iteration += 1
+	end
+	println("Maxrep exceeded")
+	return
+end

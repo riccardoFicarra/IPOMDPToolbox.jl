@@ -110,7 +110,7 @@ function IBPIsimulate(controller_i::InteractiveController{S, A, W}, controller_j
         aj = best_action(agent_j)
         @deb("state: $state -> ai: $ai, aj: $aj", :sim)
 
-        value +=  IPOMDPs.reward(frame_i, state, ai, aj)
+        value =  IPOMDPs.discount(frame_i) * value + IPOMDPs.reward(frame_i, state, ai, aj)
         @deb("value this step: $(IPOMDPs.reward(frame_i, state, ai, aj))", :sim)
 
         s_prime = compute_s_prime(state, ai, aj, frame_i)
@@ -126,5 +126,5 @@ function IBPIsimulate(controller_i::InteractiveController{S, A, W}, controller_j
         state = s_prime
     end
     println()
-    return value/maxsteps, agent_i, agent_j
+    return value, agent_i, agent_j
 end

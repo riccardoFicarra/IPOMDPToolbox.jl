@@ -67,8 +67,8 @@ ibpisolver.jl:
 	end
 
     function Base.println(controller::AbstractController)
-		for (id,node) in controller.nodes
-            println(node)
+		for id in sort(collect(keys(controller.nodes)))
+            println(controller.nodes[id])
         end
 		println("$(length(controller.nodes)) nodes")
     end
