@@ -338,8 +338,9 @@ function partial_backup!(controller::InteractiveController{A, W}, controllers_j:
 		@deb("$(dual_status(lpmodel))", :lpdual)
 
 		@deb("Obj = $(objective_value(lpmodel))", :lpdual)
-		if JuMP.objective_value(lpmodel) > config.min_improvement
-			@deb("Node improved by $(JuMP.objective_value(lpmodel))", :flow)
+		delta = JuMP.objective_value(lpmodel)
+		if delta > config.min_improvement
+			@deb("Improvement $delta", :flow)
 			changed = true
 			# @deb("Node $n_id can be improved", :flow)
 			new_edges = Dict{A, Dict{W,Dict{Node, Float64}}}()
@@ -764,6 +765,8 @@ function add_escape_node!(new_b::Array{Float64}, controller::InteractiveControll
 		#reworked_node = rework_node(controller, best_new_node)
 		#controller.nodes[reworked_node.id] = reworked_node
 		@deb("Added node $(best_new_node.id) to improve belief $new_b", :flow)
+		@deb("Improvement $(best_new_value-best_old_value)", :flow)
+
 		checkNode(best_new_node, controller, minval; normalize = true)
 		push!(controller.nodes, best_new_node)
 

@@ -52,7 +52,7 @@ ibpisolver.jl:
 	"""
 	Default config values
 	"""
-	config = IBPISolver(0, 10, 1e-10, 300, 1e-7)
+	config = IBPISolver(0, 10, 1e-10, 300, 1e-10)
 
 
 	"""
@@ -234,6 +234,17 @@ ibpisolver.jl:
 				break
 			end
         end
+		#only needed when evaluation is cut short
+		#but it doesnt take that much time
+		for level in 1:policy.maxlevel
+			for controller in policy.controllers[level]
+				if level == 1
+					evaluate!(controller)
+				else
+					evaluate!(controller, policy.controllers[level-1])
+				end
+			end
+		end
     end
 
 	function save_policy(policy::IBPIPolicy, name::String)
