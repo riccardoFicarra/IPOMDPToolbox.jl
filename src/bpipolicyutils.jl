@@ -222,6 +222,19 @@ IBPIPolicyUtils:
 		error("Out of dict bounds while choosing items")
 	end
 
+	function chooseWithProbability(items::Vector{Pair{Int64, Float64}})
+		randn = rand() #number in [0, 1)
+		for i in items
+			@deb(i, :update)
+			if randn <= i[2]
+				return i[1]
+			else
+				randn-= i[2]
+			end
+		end
+		error("Out of dict bounds while choosing items")
+	end
+
 	"""
 	Data structure for non-interactive controllers. MaxID is the highest ID currently in the controller.
 	"""
@@ -246,7 +259,7 @@ IBPIPolicyUtils:
 
 	function checkController(controller::AbstractController, minval::Float64; checkDistinct = false)
 		for node in controller.nodes
-			checkNode(node, controller, minval; checkDistinct = true)
+			checkNode(node, controller, minval; checkDistinct = false)
 		end
 	end
 	"""
