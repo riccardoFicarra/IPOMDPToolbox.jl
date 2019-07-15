@@ -18,14 +18,13 @@ IBPIPolicyUtils:
 		id::Int64
 		actionProb::Dict{A, Float64}
 		#action -> observation -> node_id -> prob
-		edges::Dict{A, Dict{W, Dict{Int64, Float64}}}
+		edges::Dict{A, Dict{W, Vector{Pair{Int64, Float64}}}}
 		value::Array{Float64}
 		#needed to efficiently redirect edges during pruning
 		#srcNode -> vectors of dictionaries that contains edge to this node
-		#incomingEdgeDicts::Dict{Int64, Vector{Dict{Int64, Float64}}}
+		#incomingEdgeDicts::Dict{Int64, Vector{Vector{Pair{Int64, Float64}}}}
 	end
 
-	#overload hash and isequal to use only id as keys in dicts
 	Base.isequal(n1::Node, n2::Node) = Base.isequal(hash(n1), hash(n2))
 	#overload display function to avoid walls of text when printing nodes
 	Base.display(n::Node) = println(n)
@@ -38,7 +37,7 @@ IBPIPolicyUtils:
 		for i in 1:length(actions)
 			actionProb[actions[i]] = 1/length(actions)
 		end
-		return Node(id::Int64, actionProb::Dict{A, Float64}, Dict{A, Dict{W, Dict{Int64, Float64}}}(), Vector{Float64}())
+		return Node(id::Int64, actionProb::Dict{A, Float64}, Dict{A, Dict{W, Vector{Pair{Int64, Float64}}}}(), Vector{Float64}())
 	end
 
 	function Base.println(node::Node)
@@ -81,9 +80,9 @@ IBPIPolicyUtils:
 	            actionindex = force
 	        end
 	        n = Node(1, [actions[actionindex]], observations)
-	        obsdict = Dict{W, Dict{Int64, Float64}}()
+	        obsdict = Dict{W, Vector{Pair{Int64, Float64}}}()
 	        for obs in observations
-	            edges = Dict{Int64, Float64}(1 => 1.0)
+	            edges = [(1 => 1.0)]
 	            obsdict[obs] = edges
 	        end
 	        n.edges[actions[actionindex]] = obsdict
@@ -105,7 +104,7 @@ IBPIPolicyUtils:
 		end
 	end
 
-	function checkNode(node::Node{A, W}, controller::AbstractController, minval::Float64; normalize = false, checkDistinct = true) where {A, W}
+	function checkNode(node::Node{A, W}, controller::AbstractController, minval::Float64; normalize = false, checkDistinct = false) where {A, W}
 		obs_list = observations(controller.frame)
 		#check actionProb
 		tot = 0.0
@@ -140,8 +139,8 @@ IBPIPolicyUtils:
 				end
 				if normalize && tot != 1
 					@deb("Normalizing edges $tot", :checkNodes)
-					for (next, prob_next) in next_dict
-						next_dict[next] = prob_next/tot
+					for i in 1:length(next_dict)
+						next_dict[i] = (next_dict[i][1] => next_dict[i][2]/tot)
 					end
 				end
 				if !normalize && (tot <= 1-minval || tot >= 1+minval)
@@ -178,17 +177,18 @@ IBPIPolicyUtils:
 				return false
 			end
 		end
+		#disabled after tuple change
 		#actions are the same
-		for (action, action_dict) in a.edges
-			for (obs, obs_dict) in action_dict
-				for (next_id, prob) in obs_dict
-					b_obs_dict = b.edges[action][obs]
-					if !haskey(b_obs_dict, next_id) || abs(b_obs_dict[next_id] - prob) > minval
-						return false
-					end
-				end
-			end
-		end
+		# for (action, action_dict) in a.edges
+		# 	for (obs, obs_dict) in action_dict
+		# 		for (next_id, prob) in obs_dict
+		# 			b_obs_dict = b.edges[action][obs]
+		# 			if !haskey(b_obs_dict, next_id) || abs(b_obs_dict[next_id] - prob) > minval
+		# 				return false
+		# 			end
+		# 		end
+		# 	end
+		# end
 		return true
 	end
 
@@ -384,7 +384,7 @@ IBPIPolicyUtils:
 	# 	if length(actions) != length(observations) || length(actions) != length(actionProb) || length(actions) != length(observation_prob) || length(actions) != length(next_nodes)
 	# 		error("Length of action-level arrays are different")
 	# 	end
-	# 	edges = Dict{A, Dict{W, Dict{Int64, Float64}}}()
+	# 	edges = Dict{A, Dict{W, Vector{Pair{Int64, Float64}}}}()
 	# 	d_actionprob = Dict{A, Float64}()
 	# 	for a_i in 1:length(actions)
 	# 		action = actions[a_i]
@@ -397,21 +397,21 @@ IBPIPolicyUtils:
 	# 		if length(a_obs) != length(a_obs_prob) || length(a_obs) != length(a_next_nodes)
 	# 			error("Length of observation-level arrays are different")
 	# 		end
-	# 		new_obs = Dict{W, Dict{Int64, Float64}}()
+	# 		new_obs = Dict{W, Vector{Pair{Int64, Float64}}}()
 	# 		for obs_index in 1:length(a_obs)
 	# 			obs = a_obs[obs_index]
-	# 			new_obs[obs] = Dict{Int64, Float64}(a_next_nodes[obs_index] => a_obs_prob[obs_index])
+	# 			new_obs[obs] = Vector{Pair{Int64, Float64}}(a_next_nodes[obs_index] => a_obs_prob[obs_index])
 	# 		end
 	# 		edges[action] = new_obs
 	# 	end
-	# 	return Node(node_id, d_actionprob, edges, value, Dict{Int64, Vector{Dict{Int64, Float64}}}())
+	# 	return Node(node_id, d_actionprob, edges, value, Dict{Int64, Vector{Vector{Pair{Int64, Float64}}}}())
 	# end
 	"""
 	Builds a node with action specified, a single edge for the specified observation going to next_node, and value vector value.
 	"""
 	function build_node(node_id::Int64, action::A, observation::W, next_node::Node{A, W}, value::Array{Float64}) where {A, W}
 		actionprob = Dict{A, Float64}(action => 1.0)
-		edges = Dict{A, Dict{W, Dict{Int64, Float64}}}(action => Dict{W, Dict{Int64, Float64}}(observation => Dict{Int64, Float64}(next_node.id=> 1.0)))
+		edges = Dict{A, Dict{W, Vector{Pair{Int64, Float64}}}}(action => Dict{W, Vector{Pair{Int64, Float64}}}(observation => [(next_node.id => 1.0)]))
 		return Node(node_id, actionprob, edges, value)
 	end
 	"""
@@ -525,9 +525,9 @@ IBPIPolicyUtils:
 			if a != already_present_action
 				@deb("adding node with action $a", :shortfull)
 				actionProb = Dict{A, Float64}(a => 1)
-				edges = Dict{A, Dict{W, Dict{Int64, Float64}}}( a => Dict{W, Dict{Int64, Float64}}() )
+				edges = Dict{A, Dict{W, Vector{Pair{Int64, Float64}}}}( a => Dict{W, Vector{Pair{Int64, Float64}}}() )
 				for z in observations(controller.frame)
-					edges[a][z] = Dict{Int64, Float64}(initial_node.id => 1)
+					edges[a][z] = [(initial_node.id => 1)]
 				end
 				new_node = Node(length(controller.nodes)+1, actionProb, edges, Array{Float64, 2}(undef, 0, 0) )
 				push!(controller.nodes, new_node)
@@ -624,20 +624,20 @@ IBPIPolicyUtils:
 		#There is no way we have repeated observation because set[obs]
 		#only contains nodes with obs
 		actionProb = Dict{A, Float64}(action => 1.0)
-		edges = Dict{A, Dict{W, Dict{Int64, Float64}}}(action => Dict{W, Dict{Int64, Float64}}())
+		edges = Dict{A, Dict{W, Vector{Pair{Int64, Float64}}}}(action => Dict{W, Vector{Pair{Int64, Float64}}}())
 		for (obs, node_map) in a_observation_map
-			edges[action][obs] = Dict{Int64, Float64}()
+			edges[action][obs] = Vector{Pair{Int64, Float64}}(undef, 0)
 			for (node_id, prob) in node_map
-				edges[action][obs][node_id] = prob
+				push!(edges[action][obs], (node_id => prob))
 			end
 		end
 		for (obs, node_map) in b_observation_map
 			if haskey(edges[action], obs)
 				error("Observation already present")
 			end
-			edges[action][obs] = Dict{Int64, Float64}()
+			edges[action][obs] = Vector{Pair{Int64, Float64}}(undef, 0)
 			for (node_id, prob) in node_map
-				edges[action][obs][node_id] = prob
+				push!(edges[action][obs], (node_id => prob))
 			end
 		end
 		return Node(id, actionProb, edges, a.value+b.value)
@@ -1080,7 +1080,7 @@ IBPIPolicyUtils:
 				@deb("Node improved by $delta", :flow)
 				#means that node can be improved!
 				changed = true
-				new_edges = Dict{A, Dict{W,Dict{Int64, Float64}}}()
+				new_edges = Dict{A, Dict{W,Vector{Pair{Int64, Float64}}}}()
 				new_actions = Dict{A, Float64}()
 				#building the new node using the ca and canz obtained with LP
 				for action_index in 1:n_actions
@@ -1091,11 +1091,11 @@ IBPIPolicyUtils:
 						ca_v = 1.0
 					end
 					if ca_v > minval
-						new_obs = Dict{W, Dict{Int64, Float64}}()
+						new_obs = Dict{W, Vector{Pair{Int64, Float64}}}()
 						for obs_index in 1:n_observations
 							obs_total = 0.0
 							#fill a temporary edge dict with unnormalized probs
-							temp_edge_dict = Dict{Int64, Float64}()
+							temp_edge_dict = Vector{Pair{Int64, Float64}}()
 							for nz in nodes
 								prob = JuMP.value(canz[action_index, obs_index, nz.id])/ca_v
 								#@deb("canz $(observations[obs_index]) -> $nz_id = $prob")
@@ -1113,19 +1113,19 @@ IBPIPolicyUtils:
 								if prob > 0.0
 									obs_total+= prob
 									#@deb("New edge: $(action_index), $(obs_index) -> $nz_id, $(prob)")
-									temp_edge_dict[nz.id] = prob
+									push!(temp_edge_dict, (nz.id => prob))
 								end
 							end
 							if obs_total == 0.0
 								error("sum of prob for obs $(observations[obs_index]) == 0")
 							end
-							new_edge_dict = Dict{Int64, Float64}()
-							for (next, prob) in temp_edge_dict
+							new_edge_dict = Vector{Pair{Int64, Float64}}()
+							for (next_id, prob) in temp_edge_dict
 								#@deb("normalized prob: $normalized_prob")
 								if prob >= 1.0-minval
-									new_edge_dict[next] = 1.0
+									push!(new_edge_dict, (next_id => 1.0))
 								elseif prob > minval
-									new_edge_dict[next] = prob
+									push!(new_edge_dict, (next_id => prob/obs_total))
 								end
 								#do not add anything if prob < minval
 							end
@@ -1314,9 +1314,9 @@ IBPIPolicyUtils:
 	# 		id = controller.maxId+1
 	# 		actionProb = copy(new_node.actionProb)
 	# 		value = copy(new_node.value)
-	# 		edges = Dict{A, Dict{W, Dict{Int64, Float64}}}()
+	# 		edges = Dict{A, Dict{W, Vector{Pair{Int64, Float64}}}}()
 	# 		for (a, obs_dict) in new_node.edges
-	# 			edges[a] = Dict{W, Dict{Int64, Float64}}()
+	# 			edges[a] = Dict{W, Vector{Pair{Int64, Float64}}}()
 	# 			for (z, node_dict) in obs_dict
 	# 				edges[a][z] = Dict{Int64,Float64}()
 	# 				for (node, prob) in node_dict
@@ -1325,7 +1325,7 @@ IBPIPolicyUtils:
 	# 				end
 	# 			end
 	# 		end
-	# 		return Node(id, actionProb,edges, value, Dict{Int64, Vector{Dict{Int64, Float64}}}())
+	# 		return Node(id, actionProb,edges, value, Dict{Int64, Vector{Vector{Pair{Int64, Float64}}}}())
 	# end
 	function generate_node_directly(controller::Controller{A, W}, start_b::Array{Float64}) where {A, W}
 		actions = POMDPs.actions(controller.frame)

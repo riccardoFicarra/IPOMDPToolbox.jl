@@ -349,7 +349,7 @@ function partial_backup!(controller::InteractiveController{A, W}, controllers_j:
 			@deb("Improvement $delta", :flow)
 			changed = true
 			# @deb("Node $n_id can be improved", :flow)
-			new_edges = Dict{A, Dict{W,Dict{Int64, Float64}}}()
+			new_edges = Dict{A, Dict{W,Vector{Pair{Int64, Float64}}}}()
 			new_actions = Dict{A, Float64}()
 			#@deb("New structures created")
 			for action_index in 1:n_actions
@@ -360,11 +360,11 @@ function partial_backup!(controller::InteractiveController{A, W}, controllers_j:
 					ca_v = 1.0
 				end
 				if ca_v > minval
-					new_obs = Dict{W, Dict{Int64, Float64}}()
+					new_obs = Dict{W, Vector{Pair{Int64, Float64}}}()
 					for obs_index in 1:n_observations
 						obs_total = 0.0
 						#fill a temporary edge dict with unnormalized probs
-						temp_edge_dict = Dict{Int64, Float64}()
+						temp_edge_dict = Vector{Pair{Int64, Float64}}(undef, 0)
 						for nz in nodes
 							prob = JuMP.value(canz[action_index, obs_index,nz.id])
 							#@deb("canz $(observations[obs_index]) -> $nz_id = $prob")
@@ -382,7 +382,7 @@ function partial_backup!(controller::InteractiveController{A, W}, controllers_j:
 							if prob > 0.0
 								obs_total+= prob
 								#@deb("New edge: $(action_index), $(obs_index) -> $nz_id, $(prob)")
-								temp_edge_dict[nz.id] = prob
+								push!(temp_edge_dict, (nz.id => prob))
 							end
 						end
 						if obs_total == 0.0
@@ -391,13 +391,14 @@ function partial_backup!(controller::InteractiveController{A, W}, controllers_j:
 							end
 							error("sum of prob for obs $(observations_i[obs_index]) == 0")
 						end
-						new_edge_dict = Dict{Int64, Float64}()
+						new_edge_dict = Vector{Pair{Int64, Float64}}()
 						for (next_id, prob) in temp_edge_dict
 							#@deb("normalized prob: $normalized_prob")
 							if prob >= 1.0-minval
-								new_edge_dict[next_id] = 1.0
+								push!(new_edge_dict, (next_id => 1.0))
 							elseif prob > minval
-								new_edge_dict[next_id] = prob
+								push!(new_edge_dict, (next_id => prob/obs_total))
+
 							end
 							#do not add anything if prob < minval
 						end
@@ -524,9 +525,9 @@ function full_backup_stochastic!(controller::InteractiveController{A, W}, contro
 	for a in actions(controller.frame)
 		if a != already_present_action
 			actionProb = Dict{A, Float64}(a => 1)
-			edges = Dict{A, Dict{W, Dict{Int64, Float64}}}( a => Dict{W, Dict{Int64, Float64}}() )
+			edges = Dict{A, Dict{W, Vector{Pair{Int64, Float64}}}}( a => Dict{W, Vector{Pair{Int64, Float64}}}() )
 			for z in observations(controller.frame)
-				edges[a][z] = Dict{Int64, Float64}(initial_node.id => 1)
+				edges[a][z] = [(initial_node.id => 1)]
 			end
 			new_node = Node(length(controller.nodes)+1, actionProb, edges, Array{Float64, 2}(undef, 0, 0))
 			@deb("Adding node", :full)
@@ -861,9 +862,9 @@ end
 # 		id = controller.maxId+1
 # 		actionProb = copy(new_node.actionProb)
 # 		value = copy(new_node.value)
-# 		edges = Dict{A, Dict{W, Dict{Int64, Float64}}}()
+# 		edges = Dict{A, Dict{W, Vector{Pair{Int64, Float64}}}}()
 # 		for (a, obs_dict) in new_node.edges
-# 			edges[a] = Dict{W, Dict{Int64, Float64}}()
+# 			edges[a] = Dict{W, Vector{Pair{Int64, Float64}}}()
 # 			for (z, node_dict) in obs_dict
 # 				edges[a][z] = Dict{Int64,Float64}()
 # 				for (node, prob) in node_dict
@@ -872,7 +873,7 @@ end
 # 				end
 # 			end
 # 		end
-# 		return Node(id, actionProb,edges, value, Dict{Int64, Vector{Dict{Int64, Float64}}}())
+# 		return Node(id, actionProb,edges, value, Dict{Int64, Vector{Vector{Pair{Int64, Float64}}}}())
 # end
 
 
