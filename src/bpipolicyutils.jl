@@ -17,16 +17,15 @@ IBPIPolicyUtils:
 	struct Node{A, W}
 		id::Int64
 		actionProb::Dict{A, Float64}
-		#action -> observation -> node -> prob
-		edges::Dict{A, Dict{W, Dict{Node, Float64}}}
+		#action -> observation -> node_id -> prob
+		edges::Dict{A, Dict{W, Dict{Int64, Float64}}}
 		value::Array{Float64}
 		#needed to efficiently redirect edges during pruning
 		#srcNode -> vectors of dictionaries that contains edge to this node
-		#incomingEdgeDicts::Dict{Node, Vector{Dict{Node, Float64}}}
+		#incomingEdgeDicts::Dict{Int64, Vector{Dict{Int64, Float64}}}
 	end
 
 	#overload hash and isequal to use only id as keys in dicts
-	Base.hash(n::Node) = hash(n.id)
 	Base.isequal(n1::Node, n2::Node) = Base.isequal(hash(n1), hash(n2))
 	#overload display function to avoid walls of text when printing nodes
 	Base.display(n::Node) = println(n)
@@ -39,15 +38,15 @@ IBPIPolicyUtils:
 		for i in 1:length(actions)
 			actionProb[actions[i]] = 1/length(actions)
 		end
-		return Node(id::Int64, actionProb::Dict{A, Float64}, Dict{A, Dict{W, Dict{Node, Float64}}}(), Vector{Float64}())
+		return Node(id::Int64, actionProb::Dict{A, Float64}, Dict{A, Dict{W, Dict{Int64, Float64}}}(), Vector{Float64}())
 	end
 
 	function Base.println(node::Node)
 		for (a, a_prob) in node.actionProb
 			obs = node.edges[a]
 			for (obs, edges) in obs
-				for (next, prob) in edges
-					println("node_id=$(node.id), a=$a, $a_prob, $obs -> $(next.id), $prob")
+				for (next_id, prob) in edges
+					println("node_id=$(node.id), a=$a, $a_prob, $obs -> $(next_id), $prob")
 				end
 			end
 		end
@@ -82,9 +81,9 @@ IBPIPolicyUtils:
 	            actionindex = force
 	        end
 	        n = Node(1, [actions[actionindex]], observations)
-	        obsdict = Dict{W, Dict{Node, Float64}}()
+	        obsdict = Dict{W, Dict{Int64, Float64}}()
 	        for obs in observations
-	            edges = Dict{Node, Float64}(n => 1.0)
+	            edges = Dict{Int64, Float64}(1 => 1.0)
 	            obsdict[obs] = edges
 	        end
 	        n.edges[actions[actionindex]] = obsdict
@@ -133,9 +132,9 @@ IBPIPolicyUtils:
 			end
 			for (obs, next_dict) in obs_dict
 				tot = 0.0
-				for (next, prob_next) in next_dict
-					if next.id > length(controller.nodes)
-						error("Node $(next.id) not present in controller")
+				for (next_id, prob_next) in next_dict
+					if next_id > length(controller.nodes)
+						error("Node $(next_id) not present in controller")
 					end
 					tot+= prob_next
 				end
@@ -182,9 +181,9 @@ IBPIPolicyUtils:
 		#actions are the same
 		for (action, action_dict) in a.edges
 			for (obs, obs_dict) in action_dict
-				for (next, prob) in obs_dict
+				for (next_id, prob) in obs_dict
 					b_obs_dict = b.edges[action][obs]
-					if !haskey(b_obs_dict, next) || abs(b_obs_dict[next] - prob) > minval
+					if !haskey(b_obs_dict, next_id) || abs(b_obs_dict[next_id] - prob) > minval
 						return false
 					end
 				end
@@ -203,18 +202,7 @@ IBPIPolicyUtils:
 		return action
 	end
 
-	"""
-	Returns the next node given current node, action and observations
-	"""
-	function getNextNode(node::Node{A, W}, action::A, observation::W) where {A, W}
-		if !haskey(node.edges, action)
-			error("Action has probability 0!")
-		end
-		edges = node.edges[action][observation]
-		next = chooseWithProbability(edges).next
-		@deb("Chosen $(next.id) as next node", :flow )
-		return next
-	end
+
 	"""
 	Given a dictionary in the form item => probability
 	Pick a random item based on the probability.
@@ -223,8 +211,8 @@ IBPIPolicyUtils:
 	"""
 	function chooseWithProbability(items::Dict)
 		randn = rand() #number in [0, 1)
-		@deb(randn, :data)
 		for i in keys(items)
+			@deb(i, :update)
 			if randn <= items[i]
 				return i
 			else
@@ -363,6 +351,19 @@ IBPIPolicyUtils:
 	end
 
 	"""
+	Returns the next node given current node, action and observations
+	"""
+	function get_next_node(node::Node{A, W}, action::A, observation::W, controller::AbstractController) where {A, W}
+		if !haskey(node.edges, action)
+			error("Action has probability 0!")
+		end
+		edges = node.edges[action][observation]
+		next_id = chooseWithProbability(edges)
+		@deb("Chosen $(next_id) as next node", :flow )
+		return controller.nodes[next_id]
+	end
+
+	"""
 	Wrapper data structure for a non-interactive policy.
 	"""
 	struct BPIPolicy{A, W}
@@ -383,7 +384,7 @@ IBPIPolicyUtils:
 	# 	if length(actions) != length(observations) || length(actions) != length(actionProb) || length(actions) != length(observation_prob) || length(actions) != length(next_nodes)
 	# 		error("Length of action-level arrays are different")
 	# 	end
-	# 	edges = Dict{A, Dict{W, Dict{Node, Float64}}}()
+	# 	edges = Dict{A, Dict{W, Dict{Int64, Float64}}}()
 	# 	d_actionprob = Dict{A, Float64}()
 	# 	for a_i in 1:length(actions)
 	# 		action = actions[a_i]
@@ -396,21 +397,21 @@ IBPIPolicyUtils:
 	# 		if length(a_obs) != length(a_obs_prob) || length(a_obs) != length(a_next_nodes)
 	# 			error("Length of observation-level arrays are different")
 	# 		end
-	# 		new_obs = Dict{W, Dict{Node, Float64}}()
+	# 		new_obs = Dict{W, Dict{Int64, Float64}}()
 	# 		for obs_index in 1:length(a_obs)
 	# 			obs = a_obs[obs_index]
-	# 			new_obs[obs] = Dict{Node, Float64}(a_next_nodes[obs_index] => a_obs_prob[obs_index])
+	# 			new_obs[obs] = Dict{Int64, Float64}(a_next_nodes[obs_index] => a_obs_prob[obs_index])
 	# 		end
 	# 		edges[action] = new_obs
 	# 	end
-	# 	return Node(node_id, d_actionprob, edges, value, Dict{Node, Vector{Dict{Node, Float64}}}())
+	# 	return Node(node_id, d_actionprob, edges, value, Dict{Int64, Vector{Dict{Int64, Float64}}}())
 	# end
 	"""
 	Builds a node with action specified, a single edge for the specified observation going to next_node, and value vector value.
 	"""
 	function build_node(node_id::Int64, action::A, observation::W, next_node::Node{A, W}, value::Array{Float64}) where {A, W}
 		actionprob = Dict{A, Float64}(action => 1.0)
-		edges = Dict{A, Dict{W, Dict{Node, Float64}}}(action => Dict{W, Dict{Node, Float64}}(observation => Dict{Node, Float64}(next_node=> 1.0)))
+		edges = Dict{A, Dict{W, Dict{Int64, Float64}}}(action => Dict{W, Dict{Int64, Float64}}(observation => Dict{Int64, Float64}(next_node.id=> 1.0)))
 		return Node(node_id, actionprob, edges, value)
 	end
 	"""
@@ -524,9 +525,9 @@ IBPIPolicyUtils:
 			if a != already_present_action
 				@deb("adding node with action $a", :shortfull)
 				actionProb = Dict{A, Float64}(a => 1)
-				edges = Dict{A, Dict{W, Dict{Node, Float64}}}( a => Dict{W, Dict{Node, Float64}}() )
+				edges = Dict{A, Dict{W, Dict{Int64, Float64}}}( a => Dict{W, Dict{Int64, Float64}}() )
 				for z in observations(controller.frame)
-					edges[a][z] = Dict{Node, Float64}(initial_node => 1)
+					edges[a][z] = Dict{Int64, Float64}(initial_node.id => 1)
 				end
 				new_node = Node(length(controller.nodes)+1, actionProb, edges, Array{Float64, 2}(undef, 0, 0) )
 				push!(controller.nodes, new_node)
@@ -623,20 +624,20 @@ IBPIPolicyUtils:
 		#There is no way we have repeated observation because set[obs]
 		#only contains nodes with obs
 		actionProb = Dict{A, Float64}(action => 1.0)
-		edges = Dict{A, Dict{W, Dict{Node, Float64}}}(action => Dict{W, Dict{Node, Float64}}())
+		edges = Dict{A, Dict{W, Dict{Int64, Float64}}}(action => Dict{W, Dict{Int64, Float64}}())
 		for (obs, node_map) in a_observation_map
-			edges[action][obs] = Dict{Node, Float64}()
-			for (node, prob) in node_map
-				edges[action][obs][node] = prob
+			edges[action][obs] = Dict{Int64, Float64}()
+			for (node_id, prob) in node_map
+				edges[action][obs][node_id] = prob
 			end
 		end
 		for (obs, node_map) in b_observation_map
 			if haskey(edges[action], obs)
 				error("Observation already present")
 			end
-			edges[action][obs] = Dict{Node, Float64}()
-			for (node, prob) in node_map
-				edges[action][obs][node] = prob
+			edges[action][obs] = Dict{Int64, Float64}()
+			for (node_id, prob) in node_map
+				edges[action][obs][node_id] = prob
 			end
 		end
 		return Node(id, actionProb, edges, a.value+b.value)
@@ -945,11 +946,11 @@ IBPIPolicyUtils:
 							p_z = POMDPModelTools.pdf(POMDPs.observation(pomdp,s_prime, a), obs)
 							@deb("p_z = $p_z")
 							partial_mult = p_a_n * POMDPs.discount(pomdp) * p_s_prime * p_z
-							for (next, prob) in node.edges[a][obs]
-								if next.id > length(controller.nodes)
-									error("Node $(next.id) not present in nodes")
+							for (next_id, prob) in node.edges[a][obs]
+								if next_id > length(controller.nodes)
+									error("Node $(next_id) not present in nodes")
 								end
-								M[n_id, s_index, next.id, s_prime_index]-= partial_mult * prob
+								M[n_id, s_index, next_id, s_prime_index]-= partial_mult * prob
 							end
 						end
 					end
@@ -1079,7 +1080,7 @@ IBPIPolicyUtils:
 				@deb("Node improved by $delta", :flow)
 				#means that node can be improved!
 				changed = true
-				new_edges = Dict{A, Dict{W,Dict{Node, Float64}}}()
+				new_edges = Dict{A, Dict{W,Dict{Int64, Float64}}}()
 				new_actions = Dict{A, Float64}()
 				#building the new node using the ca and canz obtained with LP
 				for action_index in 1:n_actions
@@ -1090,14 +1091,13 @@ IBPIPolicyUtils:
 						ca_v = 1.0
 					end
 					if ca_v > minval
-						new_obs = Dict{W, Dict{Node, Float64}}()
+						new_obs = Dict{W, Dict{Int64, Float64}}()
 						for obs_index in 1:n_observations
 							obs_total = 0.0
 							#fill a temporary edge dict with unnormalized probs
-							temp_edge_dict = Dict{Node, Float64}()
+							temp_edge_dict = Dict{Int64, Float64}()
 							for nz in nodes
-								nz_id = nz.id
-								prob = JuMP.value(canz[action_index, obs_index, nz_id])/ca_v
+								prob = JuMP.value(canz[action_index, obs_index, nz.id])/ca_v
 								#@deb("canz $(observations[obs_index]) -> $nz_id = $prob")
 								if prob < 0.0
 									@deb("Set prob to 0 even though it was negative")
@@ -1113,13 +1113,13 @@ IBPIPolicyUtils:
 								if prob > 0.0
 									obs_total+= prob
 									#@deb("New edge: $(action_index), $(obs_index) -> $nz_id, $(prob)")
-									temp_edge_dict[nz] = prob
+									temp_edge_dict[nz.id] = prob
 								end
 							end
 							if obs_total == 0.0
 								error("sum of prob for obs $(observations[obs_index]) == 0")
 							end
-							new_edge_dict = Dict{Node, Float64}()
+							new_edge_dict = Dict{Int64, Float64}()
 							for (next, prob) in temp_edge_dict
 								#@deb("normalized prob: $normalized_prob")
 								if prob >= 1.0-minval
@@ -1291,41 +1291,41 @@ IBPIPolicyUtils:
 		return best_node, best_value
 	end
 
-	function get_best_node(belief::Array{Float64}, nodes::Vector{Node})
-		@deb("started get_best_node", :bestnode)
-
-		best_node = nothing
-		best_value = 0.0
-		@assert length(belief) == length(nodes[1].value)
-		for node in nodes
-			@deb(" belief: $belief, value = $value")
-			value =  sum(belief[i] * node.value[i]  for i in 1:length(belief))
-			@deb(" new = $value, best =  $best_value", :bestnode)
-			if best_node == nothing || best_value < value
-				@deb("new best node $(node.id)", :bestnode)
-				best_node = node
-				best_value = value
-			end
-		end
-		return best_node, best_value
-	end
+	# function get_best_node(belief::Array{Float64}, nodes::Vector{Node})
+	# 	@deb("started get_best_node", :bestnode)
+	#
+	# 	best_node = nothing
+	# 	best_value = 0.0
+	# 	@assert length(belief) == length(nodes[1].value)
+	# 	for node in nodes
+	# 		@deb(" belief: $belief, value = $value")
+	# 		value =  sum(belief[i] * node.value[i]  for i in 1:length(belief))
+	# 		@deb(" new = $value, best =  $best_value", :bestnode)
+	# 		if best_node == nothing || best_value < value
+	# 			@deb("new best node $(node.id)", :bestnode)
+	# 			best_node = node
+	# 			best_value = value
+	# 		end
+	# 	end
+	# 	return best_node, best_value
+	# end
 	#
 	# function rework_node(controller::AbstractController, new_node::Node{A, W}) where {A, W}
 	# 		id = controller.maxId+1
 	# 		actionProb = copy(new_node.actionProb)
 	# 		value = copy(new_node.value)
-	# 		edges = Dict{A, Dict{W, Dict{Node, Float64}}}()
+	# 		edges = Dict{A, Dict{W, Dict{Int64, Float64}}}()
 	# 		for (a, obs_dict) in new_node.edges
-	# 			edges[a] = Dict{W, Dict{Node, Float64}}()
+	# 			edges[a] = Dict{W, Dict{Int64, Float64}}()
 	# 			for (z, node_dict) in obs_dict
-	# 				edges[a][z] = Dict{Node,Float64}()
+	# 				edges[a][z] = Dict{Int64,Float64}()
 	# 				for (node, prob) in node_dict
 	# 					current_controller_node = controller.nodes[node.id]
 	# 					edges[a][z][current_controller_node] = prob
 	# 				end
 	# 			end
 	# 		end
-	# 		return Node(id, actionProb,edges, value, Dict{Node, Vector{Dict{Node, Float64}}}())
+	# 		return Node(id, actionProb,edges, value, Dict{Int64, Vector{Dict{Int64, Float64}}}())
 	# end
 	function generate_node_directly(controller::Controller{A, W}, start_b::Array{Float64}) where {A, W}
 		actions = POMDPs.actions(controller.frame)

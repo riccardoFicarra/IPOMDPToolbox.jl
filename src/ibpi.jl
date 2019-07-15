@@ -130,10 +130,12 @@ function evaluate!(controller::InteractiveController{A,W}, controllers_j::Array{
 	                                    @deb("zj = $zj")
 	                                    observation_j = POMDPModelTools.pdf(observation(frame_j, s_prime, aj, ai), zj)
 										partial_mult_zj = partial_mult_start * observation_j
-	                                    for (n_prime_j, prob_j) in nj.edges[aj][zj]
+	                                    for (n_prime_j_id, prob_j) in nj.edges[aj][zj]
+											n_prime = controller_j.nodes[n_prime_j_id]
 											partial_mult_pj = partial_mult_zj * prob_j
-	                                        for (n_prime_i, prob_i) in ni.edges[ai][zi]
-	                                            M[s_index, temp_id_j[controller_index][nj_id], ni_id, s_prime_index, temp_id_j[controller_index][n_prime_j.id], n_prime_i.id] -= partial_mult_pj * prob_i
+	                                        for (n_prime_i_id, prob_i) in ni.edges[ai][zi]
+												n_prime_i = controller.nodes[n_prime_i_id]
+	                                            M[s_index, temp_id_j[controller_index][nj_id], ni_id, s_prime_index, temp_id_j[controller_index][n_prime_j_id], n_prime_i.id] -= partial_mult_pj * prob_i
 												#M[s_index, temp_id_j[controller_index][nj_id], ni_id, s_prime_index, temp_id_j[controller_index][n_prime_j.id], temp_id[n_prime_i.id]] -= p_ai * p_aj * IPOMDPs.discount(ipomdp_i) * transition_i * observation_i * observation_j * prob_j * prob_i
 	                                        end
 	                                    end
@@ -184,11 +186,12 @@ function actions(frame::Any)
 	end
 end
 
-function partial_backup!(controller::InteractiveController{A, W}, controllers_j::Array{AbstractController, 1}; minval = 1e-10,add_one = true) where {S, A, W}
+function partial_backup!(controller::InteractiveController{A, W}, controllers_j::Array{AbstractController, 1};add_one = true) where {S, A, W}
 	#debug = Set([:flow])
 	#this time the matrix form is a1x1+...+anxn = b1
 	#sum(a,s)[sum(nz)[canz*[R(s,a)+gamma*sum(s')p(s'|s, a)p(z|s', a)v(nz,s')]] -eps = V(n,s)
 	#number of variables is |A||Z||N|+1 (canz and eps)
+	minval = config.minval
 	start_time(controller.stats, "partial")
 	frame = controller.frame
 	nodes = controller.nodes
@@ -283,7 +286,8 @@ function partial_backup!(controller::InteractiveController{A, W}, controllers_j:
 											observation_j = POMDPModelTools.pdf(observation(frame_j, s_prime, aj, ai), zj)
 											partial_mult_zj = partial_mult_s_prime * observation_j
 											if observation_j != 0.0
-												for (n_prime_j, prob_j) in obs_dict_j
+												for (n_prime_j_id, prob_j) in obs_dict_j
+													n_prime_j = controller_j.nodes[n_prime_j_id]
 													partial_mult_pj = partial_mult_zj * prob_j
 													for n_prime_i in nodes
 														#n_prime_j is always n1 when you have two nodes!
@@ -343,7 +347,7 @@ function partial_backup!(controller::InteractiveController{A, W}, controllers_j:
 			@deb("Improvement $delta", :flow)
 			changed = true
 			# @deb("Node $n_id can be improved", :flow)
-			new_edges = Dict{A, Dict{W,Dict{Node, Float64}}}()
+			new_edges = Dict{A, Dict{W,Dict{Int64, Float64}}}()
 			new_actions = Dict{A, Float64}()
 			#@deb("New structures created")
 			for action_index in 1:n_actions
@@ -354,14 +358,13 @@ function partial_backup!(controller::InteractiveController{A, W}, controllers_j:
 					ca_v = 1.0
 				end
 				if ca_v > minval
-					new_obs = Dict{W, Dict{Node, Float64}}()
+					new_obs = Dict{W, Dict{Int64, Float64}}()
 					for obs_index in 1:n_observations
 						obs_total = 0.0
 						#fill a temporary edge dict with unnormalized probs
-						temp_edge_dict = Dict{Node, Float64}()
+						temp_edge_dict = Dict{Int64, Float64}()
 						for nz in nodes
-							nz_id = nz.id
-							prob = JuMP.value(canz[action_index, obs_index,nz_id])
+							prob = JuMP.value(canz[action_index, obs_index,nz.id])
 							#@deb("canz $(observations[obs_index]) -> $nz_id = $prob")
 							if prob < 0.0
 								@deb("Set prob to 0 even though it was negative", :data)
@@ -377,7 +380,7 @@ function partial_backup!(controller::InteractiveController{A, W}, controllers_j:
 							if prob > 0.0
 								obs_total+= prob
 								#@deb("New edge: $(action_index), $(obs_index) -> $nz_id, $(prob)")
-								temp_edge_dict[nz] = prob
+								temp_edge_dict[nz.id] = prob
 							end
 						end
 						if obs_total == 0.0
@@ -386,13 +389,13 @@ function partial_backup!(controller::InteractiveController{A, W}, controllers_j:
 							end
 							error("sum of prob for obs $(observations_i[obs_index]) == 0")
 						end
-						new_edge_dict = Dict{Node, Float64}()
-						for (next, prob) in temp_edge_dict
+						new_edge_dict = Dict{Int64, Float64}()
+						for (next_id, prob) in temp_edge_dict
 							#@deb("normalized prob: $normalized_prob")
 							if prob >= 1.0-minval
-								new_edge_dict[next] = 1.0
+								new_edge_dict[next_id] = 1.0
 							elseif prob > minval
-								new_edge_dict[next] = prob
+								new_edge_dict[next_id] = prob
 							end
 							#do not add anything if prob < minval
 						end
@@ -519,9 +522,9 @@ function full_backup_stochastic!(controller::InteractiveController{A, W}, contro
 	for a in actions(controller.frame)
 		if a != already_present_action
 			actionProb = Dict{A, Float64}(a => 1)
-			edges = Dict{A, Dict{W, Dict{Node, Float64}}}( a => Dict{W, Dict{Node, Float64}}() )
+			edges = Dict{A, Dict{W, Dict{Int64, Float64}}}( a => Dict{W, Dict{Int64, Float64}}() )
 			for z in observations(controller.frame)
-				edges[a][z] = Dict{Node, Float64}(initial_node => 1)
+				edges[a][z] = Dict{Int64, Float64}(initial_node.id => 1)
 			end
 			new_node = Node(length(controller.nodes)+1, actionProb, edges, Array{Float64, 2}(undef, 0, 0))
 			@deb("Adding node", :full)
@@ -649,10 +652,10 @@ function node_value(ni::Node{A, W}, ai::A, zi::W, controllers_j::Array{AbstractC
 								observation_j = POMDPModelTools.pdf(observation(frame_j, s_prime, aj, ai), zj)
 								if observation_j != 0.0
 									part_mult_zj = part_mult_s_prime * observation_j
-									for (nj_prime, prob_nj_prime) in obs_dict_j
+									for (nj_prime_id, prob_nj_prime) in obs_dict_j
 										#@deb("$action, $state, $observation, $s_prime")
 										#@deb("$(node.value[s_prime_index]) * $(p_obs) * $(p_s_prime)")
-										future_reward += ni.value[s_prime_index, temp_id_j[controller_index][nj_prime.id]] * part_mult_zj * prob_nj_prime
+										future_reward += ni.value[s_prime_index, temp_id_j[controller_index][nj_prime_id]] * part_mult_zj * prob_nj_prime
 									end
 								end
 							end
@@ -831,12 +834,11 @@ function belief_update(start_b::Array{Float64}, ai::A, zi::W, controller::Intera
 								continue
 							end
 							@deb("\t\t $observation_j")
-							for (n_prime_j, prob_j) in obs_dict
-								#FIXME is this the right prob to use? last element of 1.8
+							for (n_prime_j_id, prob_j) in obs_dict
 								@deb("start_b = $(start_b[s_index, temp_id_j[nj_id]])")
 								@deb("adding $(start_b[s_index, temp_id_j[nj_id]]) * $aj_prob * $transition_i* $observation_i * $observation_j * $prob_j")
 								@deb("adding $(start_b[s_index, temp_id_j[nj_id]] * aj_prob * transition_i* observation_i * observation_j * prob_j)")
-								new_b[s_prime_index, temp_id_j[controller_index][n_prime_j.id]] += start_b[s_index, temp_id_j[controller_index][nj_id]] * aj_prob * transition_i* observation_i * observation_j * prob_j
+								new_b[s_prime_index, temp_id_j[controller_index][n_prime_j_id]] += start_b[s_index, temp_id_j[controller_index][nj_id]] * aj_prob * transition_i* observation_i * observation_j * prob_j
 								normalize += start_b[s_index, temp_id_j[controller_index][nj_id]] * aj_prob * transition_i* observation_i * observation_j * prob_j
 							end
 						end
@@ -857,18 +859,18 @@ end
 # 		id = controller.maxId+1
 # 		actionProb = copy(new_node.actionProb)
 # 		value = copy(new_node.value)
-# 		edges = Dict{A, Dict{W, Dict{Node, Float64}}}()
+# 		edges = Dict{A, Dict{W, Dict{Int64, Float64}}}()
 # 		for (a, obs_dict) in new_node.edges
-# 			edges[a] = Dict{W, Dict{Node, Float64}}()
+# 			edges[a] = Dict{W, Dict{Int64, Float64}}()
 # 			for (z, node_dict) in obs_dict
-# 				edges[a][z] = Dict{Node,Float64}()
+# 				edges[a][z] = Dict{Int64,Float64}()
 # 				for (node, prob) in node_dict
 # 					current_controller_node = controller.nodes[node.id]
 # 					edges[a][z][current_controller_node] = prob
 # 				end
 # 			end
 # 		end
-# 		return Node(id, actionProb,edges, value, Dict{Node, Vector{Dict{Node, Float64}}}())
+# 		return Node(id, actionProb,edges, value, Dict{Int64, Vector{Dict{Int64, Float64}}}())
 # end
 
 

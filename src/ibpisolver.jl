@@ -141,7 +141,7 @@ ibpisolver.jl:
 					@deb(controller, :data)
 					start_time = datetime2unix(now())
 
-		    		improved, tangent_b  = partial_backup!(controller ; minval = config.minval, add_one = true)
+		    		improved, tangent_b  = partial_backup!(controller ; add_one = true)
 					@deb("Elapsed time for level $level: $(datetime2unix(now()) - start_time)",:stats)
 		            if improved
 		                @deb("Improved level 1", :flow)
@@ -166,7 +166,7 @@ ibpisolver.jl:
 		            @deb(controller, :data)
 					start_time = datetime2unix(now())
 
-		    		improved, tangent_b = partial_backup!(controller, policy.controllers[level-1]; minval = config.minval, add_one = true)
+		    		improved, tangent_b = partial_backup!(controller, policy.controllers[level-1]; add_one = true)
 
 					@deb("Elapsed time for level $level: $(datetime2unix(now()) - start_time)", :stats)
 

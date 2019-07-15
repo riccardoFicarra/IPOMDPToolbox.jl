@@ -17,7 +17,10 @@ function best_action(agent::IBPIAgent)
     return chooseWithProbability(agent.current_node.actionProb)
 end
 function update_agent!(agent::IBPIAgent, action::A, observation::W) where {A, W}
-    agent.current_node = chooseWithProbability(agent.current_node.edges[action][observation])
+    @deb("current node", :update)
+    @deb(agent.current_node, :update)
+    new_node_id = chooseWithProbability(agent.current_node.edges[action][observation])
+    agent.current_node = agent.controller.nodes[new_node_id]
     agent.visited[agent.current_node.id]+=1
 end
 function compute_s_prime(state::S, ai::A, aj::A, frame::IPOMDP) where {S, A}
@@ -82,12 +85,15 @@ function IBPIsimulate(controller_i::InteractiveController{S, A, W}, controller_j
     initial = ones(length(anynode.value))
     initial = initial ./ length(initial)
     agent_i = IBPIAgent(controller_i, initial)
-
+    @deb("Starting node for I:", :sim)
+    @deb(agent_i.current_node, :sim)
     frame_j = controller_j.frame
     anynode_j = controller_j.nodes[1]
     initial_j = ones(length(anynode_j.value))
     initial_j = initial_j ./ length(initial_j)
     agent_j = IBPIAgent(controller_j, initial_j)
+    @deb("Starting node for J:", :sim)
+    @deb(agent_j.current_node, :sim)
     state = randn() > 0.5 ? :TL : :TR
     value = 0.0
     if !trace
