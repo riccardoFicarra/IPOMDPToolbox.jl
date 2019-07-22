@@ -225,7 +225,7 @@ ibpisolver.jl:
 
 			if !improved
 				println("Algorithm stopped because it could not improve controllers anymore")
-				break
+				return true
 			elseif config.maxrep >= 0 && iteration >= config.maxrep
 				println("maxrep exceeded $iteration")
 				break
@@ -245,6 +245,7 @@ ibpisolver.jl:
 				end
 			end
 		end
+		return false
 	end
 
 	function save_policy(policy::IBPIPolicy, name::String)
@@ -261,12 +262,16 @@ ibpisolver.jl:
 	function solve_fresh!(policy::IBPIPolicy{S, A, W}, n_steps::Int64, step_length::Int64, maxsimsteps::Int64, min_improvement::Float64 ; save = "", force = 3, max_iterations = -1) where {S, A, W}
 
 		for step in 1:n_steps
-			filename_dst = "$(save)_$(step*step_length)"
 			set_solver_params(force,max_iterations,1e-10,step_length*60, min_improvement)
 
-			ibpi!(policy)
+			converged = ibpi!(policy)
 
 			if save != ""
+				if converged
+					filename_dst = "$(save)_conv"
+				else
+					filename_dst = "$(save)_$(step*step_length)"
+				end
 				save_policy(policy, filename_dst)
 			end
 		end
@@ -287,10 +292,15 @@ ibpisolver.jl:
 		name = split(src_filename, "_")[1]
 		src_duration = parse(Int64, split(src_filename, "_")[2])
 		for step in 1:n_steps
-			filename_dst = "$(name)_$(src_duration+step*step_length)"
 			set_solver_params(force,max_iterations,1e-10,step_length*60, min_improvement)
 
-			ibpi!(policy)
+			converged = ibpi!(policy)
+
+			if converged
+				filename_dst = "$(save)_conv"
+			else
+				filename_dst = "$(name)_$(src_duration+step*step_length)"
+			end
 			save_policy(policy, filename_dst)
 		end
 		return policy

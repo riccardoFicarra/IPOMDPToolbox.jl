@@ -28,17 +28,7 @@ IBPIPolicyUtils:
 	Base.isequal(n1::Node, n2::Node) = Base.isequal(hash(n1), hash(n2))
 	#overload display function to avoid walls of text when printing nodes
 	Base.display(n::Node) = println(n)
-	"""
-	Creates a node with actions and observations passed as parameter.
-	The probability of executing an action is 1/n_actions.
-	"""
-	function Node(id::Int64, actions::Vector{A}, observations::Vector{W}) where {A, W}
-		actionProb = Dict{A, Float64}()
-		for i in 1:length(actions)
-			actionProb[actions[i]] = 1/length(actions)
-		end
-		return Node(id::Int64, actionProb::Dict{A, Float64}, Dict{A, Dict{W, Vector{Pair{Int64, Float64}}}}(), Vector{Float64}())
-	end
+
 
 	function Base.println(node::Node)
 		for (a, a_prob) in node.actionProb
@@ -64,43 +54,79 @@ IBPIPolicyUtils:
 	end
 
 
-	"""
-	Builds a node with only 1 randomly chosen action and with all observation edges
-	pointing back to itself
-	If force is defined the action is decided by the user (by index in 1:length(actions))
-	"""
-	#no need to init value vectors here, they will be set by evaluate.
-	function InitialNode(actions::Vector{A}, observations::Vector{W};  force = 0) where {S, A, W}
-			if force == 0
-				actionindex = rand(1:length(actions))
-			else
-				if force > length(actions)
-					error("forced action outside of action vector length")
-				end
-				actionindex = force
-			end
-			n = Node(1, [actions[actionindex]], observations)
-			obsdict = Dict{W, Vector{Pair{Int64, Float64}}}()
-			for obs in observations
-				edges = [(1 => 1.0)]
-				obsdict[obs] = edges
-			end
-			n.edges[actions[actionindex]] = obsdict
-			return n
-	end
+
 	"""
 	Receives the pomdp frame
 	Builds a node with a random action chosen and with all observation edges
 	pointing back to itself
 	If force is defined the action is decided by the user (by index in 1:length(actions))
 	"""
+	# function InitialNode(pomdp::POMDP{A, W}; force = 0) where {A, W}
+	# 	actions = POMDPs.actions(pomdp)
+	# 	observations = POMDPs.observations(pomdp)
+	#
+	# 	actions_vector = []
+	# 	if !(pomdp <: randomTiger)
+	# 		if force == 0
+	# 			actionindex = rand(1:length(actions))
+	# 		else
+	# 			if force > length(actions)
+	# 				error("forced action outside of action vector length")
+	# 			end
+	# 			actionindex = force
+	# 		end
+	# 		actions_vector = [actions[actionindex]]
+	# 	else
+	# 		actions_vector = actions.vals
+	# 	end
+	# 	n = Node(1, [actions[actionindex]], observations)
+	# 	obsdict = Dict{W, Vector{Pair{Int64, Float64}}}()
+	# 	for a in keys(n.actionProb)
+	# 		for obs in observations
+	# 			edges = [(1 => 1.0)]
+	# 			obsdict[obs] = edges
+	# 		end
+	# 		n.edges[a] = obsdict
+	# 	return n
+	# end
+	function InitialNode(actions::Vector{A}, observations::Vector{W}) where {S, A, W}
+		#build actionProb
+		actionProb = Dict{A, Float64}()
+		for i in 1:length(actions)
+			actionProb[actions[i]] = 1/length(actions)
+		end
+
+		#build edges
+		edges = Dict{A,Dict{W,Vector{Pair{Int64,Float64}}}}();
+
+		for a in keys(actionProb)
+			#for each action and observation add a loop edge
+			obsdict = Dict{W, Vector{Pair{Int64, Float64}}}()
+			for obs in observations
+				obsdict[obs] = [(1 => 1.0)]
+			end
+			edges[a] = obsdict
+		end
+		return Node(1, actionProb, edges, Array{Float64}(undef, 0))
+	end
+
+	#interface function for pomdps
 	function InitialNode(pomdp::POMDP{A, W}; force = 0) where {A, W}
 		actions = POMDPs.actions(pomdp)
 		observations = POMDPs.observations(pomdp)
-		if force == 0
+
+		if typeof(pomdp) <: randomTiger
 			return InitialNode(actions, observations)
 		else
-			return InitialNode(actions, observations; force = force)
+			if force == 0
+				return InitialNode([random(actions)], observations)
+			else
+				if force > length(actions)
+					error("Forced action outside of action vector bounds")
+				else
+					return InitialNode([actions[force]], observations)
+				end
+			end
 		end
 	end
 
@@ -249,12 +275,14 @@ IBPIPolicyUtils:
 	Initialize a controller with only one standard initial node
 	"""
 	function Controller(pomdp::POMDP{A,W}; force=0) where {A, W}
-		if force == 0
-			newNode = InitialNode(pomdp)
+
+		newNode = InitialNode(pomdp; force = force)
+		if typeof(pomdp) <: randomTiger
+			#this way it's going to be skipped
+			Controller{A, W}(pomdp, [newNode], solver_statistics(), true)
 		else
-			newNode = InitialNode(pomdp; force = force)
+			Controller{A, W}(pomdp, [newNode], solver_statistics(), false)
 		end
-		Controller{A, W}(pomdp, [newNode], solver_statistics(), false)
 	end
 
 	function checkController(controller::AbstractController, minval::Float64; checkDistinct = false)
@@ -531,6 +559,9 @@ IBPIPolicyUtils:
 	# end
 
 	function full_backup_stochastic!(controller::Controller{A, W}; minval = 1e-10) where {A, W}
+		if typeof(controller.frame) <: randomTiger
+			return
+		end
 		initial_node = controller.nodes[1]
 		already_present_action = first(controller.nodes[1].actionProb)[1]
 		@deb("already_present = $already_present_action", :shortfull)
@@ -997,6 +1028,9 @@ IBPIPolicyUtils:
 	# Return Bool, Vector{Float64}
 	"""
 	function partial_backup!(controller::Controller{A, W}; add_one = true, debug_node = 0) where {A, W}
+		if typeof(controller.frame) <: randomTiger
+			return false, []
+		end
 		start_time(controller.stats, "partial")
 		minval = config.minval
 		pomdp = controller.frame
@@ -1187,6 +1221,9 @@ IBPIPolicyUtils:
 	"""
 	function escape_optima_standard!(controller::Controller{A, W}, tangent_b::Dict{Int64, Array{Float64}}; add_one=true, minval = 0.0) where {A, W}
 		#@deb("$tangent_b")
+		if typeof(controller.frame) <: randomTiger
+			return false, []
+		end
 		start_time(controller.stats, "escape")
 
 		pomdp = controller.frame

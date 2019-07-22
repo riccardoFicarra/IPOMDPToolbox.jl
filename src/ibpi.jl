@@ -28,11 +28,16 @@ function init_controllers(ipomdp::IPOMDP{S,A,W}, pomdp::POMDP{A, W},maxlevel::In
 	return controllers
 end
 
-function InteractiveController(level::Int64, ipomdp::IPOMDP{S, A, W}; force=0) where {S, A, W}
+function InteractiveController(level::Int64, ipomdp::IPOMDP{S, A, W}; force = 0) where {S, A, W}
 	if force == 0
-		newNode = InitialNode(actions_agent(ipomdp), observations_agent(ipomdp))
+		#random action
+		newNode = InitialNode([rand(actions_agent(ipomdp))], observations_agent(ipomdp))
 	else
-		newNode = InitialNode(actions_agent(ipomdp), observations_agent(ipomdp); force=force)
+		if force > length(actions_agent(ipomdp))
+			error("Forced action outisde of bounds")
+		else
+			newNode = InitialNode([actions_agent(ipomdp)[force]], observations_agent(ipomdp))
+		end
 	end
 	return InteractiveController{S, A, W}(level, ipomdp, [newNode], solver_statistics(), false)
 end
