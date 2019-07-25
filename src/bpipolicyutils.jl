@@ -295,101 +295,59 @@ IBPIPolicyUtils:
 	Currently not working for some reason
 	"""
 	function optimal_tiger_controller(pomdp::POMDP{A, W}) where {A, W}
-		controller = Controller(pomdp; force = 3)
-		controller.nodes[1].id = 1
-		#create the open left(2)- open right(3) nodes
-		controller.nodes[3] = InitialNode(pomdp; force = 1)
-		controller.nodes[3].id = 3
-		controller.nodes[2] = InitialNode(pomdp; force = 2)
-		controller.nodes[2].id = 2
-		for i in 5:10
-			controller.nodes[i] = InitialNode(pomdp; force = 3)
-			controller.nodes[i].id = i
-		end
-		controller.nodes[1].edges[:L][:GL] = Dict(controller.nodes[5] => 1.0)
-		controller.nodes[1].edges[:L][:GR] = Dict(controller.nodes[6] => 1.0)
-		controller.nodes[2].edges[:OR][:GL] = Dict(controller.nodes[1] => 1.0)
-		controller.nodes[2].edges[:OR][:GR] = Dict(controller.nodes[1] => 1.0)
-		controller.nodes[3].edges[:OL][:GL] = Dict(controller.nodes[1] => 1.0)
-		controller.nodes[3].edges[:OL][:GR] = Dict(controller.nodes[1] => 1.0)
-		controller.nodes[5].edges[:L][:GL] = Dict(controller.nodes[2] => 1.0)
-		controller.nodes[5].edges[:L][:GR] = Dict(controller.nodes[1] => 1.0)
-		controller.nodes[6].edges[:L][:GL] = Dict(controller.nodes[1] => 1.0)
-		controller.nodes[6].edges[:L][:GR] = Dict(controller.nodes[3] => 1.0)
-		controller.nodes[7].edges[:L][:GL] = Dict(controller.nodes[10] => 1.0)
-		controller.nodes[7].edges[:L][:GR] = Dict(controller.nodes[8] => 1.0)
-		controller.nodes[8].edges[:L][:GL] = Dict(controller.nodes[7] => 1.0)
-		controller.nodes[8].edges[:L][:GR] = Dict(controller.nodes[9] => 1.0)
-		controller.nodes[9].edges[:L][:GL] = Dict(controller.nodes[8] => 1.0)
-		controller.nodes[9].edges[:L][:GR] = Dict(controller.nodes[3] => 1.0)
-		controller.nodes[10].edges[:L][:GL] = Dict(controller.nodes[2] => 1.0)
-		controller.nodes[10].edges[:L][:GR] = Dict(controller.nodes[7] => 1.0)
-		controller.maxId = 10
+		# controller = Controller(pomdp; force = 3)
+		# controller.nodes[1].id = 1
+		# #create the open left(2)- open right(3) nodes
+		# controller.nodes[3] = InitialNode(pomdp; force = 1)
+		# controller.nodes[3].id = 3
+		# controller.nodes[2] = InitialNode(pomdp; force = 2)
+		# controller.nodes[2].id = 2
+		# for i in 5:10
+		# 	controller.nodes[i] = InitialNode(pomdp; force = 3)
+		# 	controller.nodes[i].id = i
+		# end
+		# controller.nodes[1].edges[:L][:GL] = Dict(controller.nodes[5] => 1.0)
+		# controller.nodes[1].edges[:L][:GR] = Dict(controller.nodes[6] => 1.0)
+		# controller.nodes[2].edges[:OR][:GL] = Dict(controller.nodes[1] => 1.0)
+		# controller.nodes[2].edges[:OR][:GR] = Dict(controller.nodes[1] => 1.0)
+		# controller.nodes[3].edges[:OL][:GL] = Dict(controller.nodes[1] => 1.0)
+		# controller.nodes[3].edges[:OL][:GR] = Dict(controller.nodes[1] => 1.0)
+		# controller.nodes[5].edges[:L][:GL] = Dict(controller.nodes[2] => 1.0)
+		# controller.nodes[5].edges[:L][:GR] = Dict(controller.nodes[1] => 1.0)
+		# controller.nodes[6].edges[:L][:GL] = Dict(controller.nodes[1] => 1.0)
+		# controller.nodes[6].edges[:L][:GR] = Dict(controller.nodes[3] => 1.0)
+		# controller.nodes[7].edges[:L][:GL] = Dict(controller.nodes[10] => 1.0)
+		# controller.nodes[7].edges[:L][:GR] = Dict(controller.nodes[8] => 1.0)
+		# controller.nodes[8].edges[:L][:GL] = Dict(controller.nodes[7] => 1.0)
+		# controller.nodes[8].edges[:L][:GR] = Dict(controller.nodes[9] => 1.0)
+		# controller.nodes[9].edges[:L][:GL] = Dict(controller.nodes[8] => 1.0)
+		# controller.nodes[9].edges[:L][:GR] = Dict(controller.nodes[3] => 1.0)
+		# controller.nodes[10].edges[:L][:GL] = Dict(controller.nodes[2] => 1.0)
+		# controller.nodes[10].edges[:L][:GR] = Dict(controller.nodes[7] => 1.0)
+		# controller.maxId = 10
+		# evaluate!(controller)
+		# if :data in debug
+		# 	println("Optimal controller for tiger game:")
+		# 	for (node_id, node) in controller.nodes
+		# 		println(node)
+		# 	end
+		# end
+		nodes = Array{Node{A, W}, 1}(undef, 9)
+		nodes[1] = Node(1, Dict(:L => 1.0), Dict(:L => Dict{W, Array{Pair{Int64, Float64}, 1}}(:GL =>[(4 => 1.0)], :GR => [(5 => 1.0)])), Array{Float64}(undef, 0, 0))
+		nodes[2] = Node(2, Dict(:OR => 1.0), Dict(:OR => Dict{W, Array{Pair{Int64, Float64}, 1}}(:GL =>[(1 => 1.0)], :GR => [(1 => 1.0)])), Array{Float64}(undef, 0, 0))
+		nodes[3] = Node(3, Dict(:OL => 1.0), Dict(:OL => Dict{W, Array{Pair{Int64, Float64}, 1}}(:GL =>[(1 => 1.0)], :GR => [(1 => 1.0)])), Array{Float64}(undef, 0, 0))
+		nodes[4] = Node(4, Dict(:L => 1.0), Dict(:L => Dict{W, Array{Pair{Int64, Float64}, 1}}(:GL =>[(2 => 1.0)], :GR => [(1 => 1.0)])), Array{Float64}(undef, 0, 0))
+		nodes[5] = Node(5, Dict(:L => 1.0), Dict(:L => Dict{W, Array{Pair{Int64, Float64}, 1}}(:GL =>[(1 => 1.0)], :GR => [(3 => 1.0)])), Array{Float64}(undef, 0, 0))
+		nodes[6] = Node(6, Dict(:L => 1.0), Dict(:L => Dict{W, Array{Pair{Int64, Float64}, 1}}(:GL =>[(2 => 1.0)], :GR => [(7 => 1.0)])), Array{Float64}(undef, 0, 0))
+		nodes[7] = Node(7, Dict(:L => 1.0), Dict(:L => Dict{W, Array{Pair{Int64, Float64}, 1}}(:GL =>[(6 => 1.0)], :GR => [(8 => 1.0)])), Array{Float64}(undef, 0, 0))
+		nodes[8] = Node(8, Dict(:L => 1.0), Dict(:L => Dict{W, Array{Pair{Int64, Float64}, 1}}(:GL =>[(7 => 1.0)], :GR => [(9 => 1.0)])), Array{Float64}(undef, 0, 0))
+		nodes[9] = Node(9, Dict(:L => 1.0), Dict(:L => Dict{W, Array{Pair{Int64, Float64}, 1}}(:GL =>[(8 => 1.0)], :GR => [(3 => 1.0)])), Array{Float64}(undef, 0, 0))
+
+		controller = Controller(pomdp,nodes, solver_statistics(), true)
 		evaluate!(controller)
-		if :data in debug
-			println("Optimal controller for tiger game:")
-			for (node_id, node) in controller.nodes
-				println(node)
-			end
-		end
 		return controller
 	end
 
-	function optimal_tiger_controller_stochastic(pomdp::POMDP{A, W}) where {A, W}
-		controller = Controller(pomdp; force = 3)
-		controller.nodes[1].id = 1
-		#create the open left(2)- open right(3) nodes
-		controller.nodes[3] = InitialNode(pomdp; force = 1)
-		controller.nodes[3].id = 3
-		controller.nodes[2] = InitialNode(pomdp; force = 2)
-		controller.nodes[2].id = 2
-		for i in 5:6
-			controller.nodes[i] = InitialNode(pomdp; force = 3)
-			controller.nodes[i].id = i
-		end
-		controller.nodes[1].edges[:L][:GL] = Dict(controller.nodes[5] => 0.73,controller.nodes[1] => 0.27)
-		controller.nodes[1].edges[:L][:GR] = Dict(controller.nodes[6] => 1.0)
-		controller.nodes[2].edges[:OR][:GL] = Dict(controller.nodes[1] => 1.0)
-		controller.nodes[2].edges[:OR][:GR] = Dict(controller.nodes[1] => 1.0)
-		controller.nodes[3].edges[:OL][:GL] = Dict(controller.nodes[1] => 1.0)
-		controller.nodes[3].edges[:OL][:GR] = Dict(controller.nodes[1] => 1.0)
-		controller.nodes[5].edges[:L][:GL] = Dict(controller.nodes[2] => 1.0)
-		controller.nodes[5].edges[:L][:GR] = Dict(controller.nodes[1] => 1.0)
-		controller.nodes[6].edges[:L][:GL] = Dict(controller.nodes[1] => 1.0)
-		controller.nodes[6].edges[:L][:GR] = Dict(controller.nodes[3] => 0.69, controller.nodes[6] => 0.31)
-		controller.maxId = 6
-		old_deb = debug
-		debug = false
-		evaluate!(controller, pomdp)
-		debug = old_deb
-		if :data in debug
-			println("Optimal controller for tiger game:")
-			for (node_id, node) in controller.nodes
-				println(node)
-			end
-		end
-		return controller
-	end
-
-	function example_controller(pomdp::POMDP{A, W}) where {A, W}
-		controller = Controller(pomdp; force = 1)
-		controller.nodes[1].id = 1
-		#create the open left(2)- open right(3) nodes
-		controller.nodes[2] = InitialNode(pomdp; force = 2)
-		controller.nodes[2].id = 2
-		controller.maxId = 2
-		old_deb = debug
-		debug = false
-		evaluate!(controller, pomdp)
-		debug = old_deb
-		if :data in debug
-			println("Optimal controller for tiger game:")
-			for (node_id, node) in controller.nodes
-				println(node)
-			end
-		end
-		return controller
-	end
 
 	"""
 	Returns the next node given current node, action and observations
@@ -971,24 +929,27 @@ IBPIPolicyUtils:
 			for s_index in 1:n_states
 				s = POMDPs.states(pomdp)[s_index]
 				for a in actions
-					@deb("action = $a")
+					@deb("action = $a", :eval)
 					p_a_n = node.actionProb[a]
 					b[n_id, s_index] += POMDPs.reward(pomdp, s, a) * p_a_n
-					@deb("b($n_id, $s) = $(POMDPs.reward(pomdp, s, a)*p_a_n)")
+					@deb("b($n_id, $s) = $(POMDPs.reward(pomdp, s, a)*p_a_n)", :eval)
 					M[n_id, s_index, n_id, s_index] += 1
-					@deb("M[$n_id, $s][$n_id, $s] = 1")
-					s_primes = POMDPs.transition(pomdp,s,a).vals
+					@deb("M[$n_id, $s][$n_id, $s] = 1", :eval)
 					possible_obs = keys(node.edges[a])  #only consider observations possible from current node/action combo
 					for obs in possible_obs
-						@deb("obs = $obs")
-						for s_prime_index in 1:length(s_primes)
-							s_prime = s_primes[s_prime_index]
+						@deb("obs = $obs", :eval)
+						for s_prime_index in 1:n_states
+							s_prime = states[s_prime_index]
+							@deb("s_prime = $s_prime", :eval)
+
 							p_s_prime =POMDPModelTools.pdf(POMDPs.transition(pomdp,s,a), s_prime)
+							@deb("p_s_prime = $p_s_prime", :eval)
 							if p_s_prime == 0.0
 								continue
 							end
 							p_z = POMDPModelTools.pdf(POMDPs.observation(pomdp,s_prime, a), obs)
-							@deb("p_z = $p_z")
+							@deb("p_z = $p_z", :eval)
+
 							partial_mult = p_a_n * POMDPs.discount(pomdp) * p_s_prime * p_z
 							for (next_id, prob) in node.edges[a][obs]
 								if next_id > length(controller.nodes)
