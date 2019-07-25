@@ -306,4 +306,35 @@ ibpisolver.jl:
 		return policy
 	end
 
+	# """
+	# function to create a custom initial belief, used to find which nodes of controller at level L-1
+	# correspond to nodes at level L.
+	# node = "node_id" -> find the node of level L corresponding to node of level L-1 with node.id = node_id
+	# node = "any" -> find the node of level L that is visited when there's a possibility to be in any node of L-1
+	# node = "all" -> find all nodes corresponding to level L
+	# """
+	# function create_initial_belief(policy::IBPIPolicy, controller_i_level::Int64, controller_i_index::Int64, controller_j_index::Int64; node = "any") where {S, A, W}
+	# 	controller = policy.controllers[controller_i_level][controller_i_index]
+	# 	controllers_j = policy.controllers[controller_i_level-1]
+	# 	#compute at which index the nodes of controller j start in value vectors
+	# 	controller_j_start_index = 0
+	# 	for lower_controller_index in 1:controller_j_index-1
+	# 		controller_j_start_index += length(controllers_j[lower_controller_index].nodes)
+	# 	end
+	# 	controller_j = policy.controllers[controller_i_level-1][controller_j_index]
+	# 	#this will be used to iterate on all nodes without having to compute the end index
+	# 	n_nodes_j = length(controller_j.nodes)
+	# 	n_states = IPOMDPS.n_states(controller.frame)
+	# 	anynode = controller.nodes[1]
+	# 	initial = zeros(length(anynode_j.value))
+	# 	initial_reshaped = reshape(initial, n_states, length(initial)/n_states)
+	# 	if node == "any"
+	# 		normalize = n_nodes_j * n_states
+	# 		for state in 1:n_states
+	# 			for node_j in 1:n_nodes:j
+	# 				initial_reshaped = 1/normalize
+	# 			end
+	# 		end
+	# 	end
+	# end
 	include("./simulator.jl")
