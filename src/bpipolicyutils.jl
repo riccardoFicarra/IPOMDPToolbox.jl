@@ -900,8 +900,8 @@ IBPIPolicyUtils:
 	Computes all value vectors of the nodes in a non-interactive controller.
 	"""
 	function evaluate!(controller::Controller{A,W}) where {A, W}
-		log_n_nodes(controller.stats, length(controller.nodes))
-		start_time(controller.stats, "eval")
+		#log_n_nodes(controller.stats, length(controller.nodes))
+		#start_time(controller.stats, "eval")
 		#solve V(n,s) = R(s, a(n)) + gamma*sumz(P(s'|s,a(n))Pr(z|s',a(n))V(beta(n,z), s'))
 		#R(s,a(n)) is the reward function
 		pomdp = controller.frame
@@ -919,7 +919,7 @@ IBPIPolicyUtils:
 		# end
 
 		#compute coefficients for sum(a)[R(s|a)*P(a|n)+gamma*sum(z, n', s')[P(s'|s,a)*P(z|s',a)*P(a|n)*P(n'|z)*V(nz, s')]]
-		start_time(controller.stats, "eval_coeff")
+		#start_time(controller.stats, "eval_coeff")
 		for node in nodes
 			n_id = node.id
 			#M is the coefficient matrix (form x1 = a2x2+...+anxn+b)
@@ -962,15 +962,15 @@ IBPIPolicyUtils:
 				end
 			end
 		end
-		stop_time(controller.stats, "eval_coeff")
+		#stop_time(controller.stats, "eval_coeff")
 
 		@deb("M = $M")
 		@deb("b = $b")
-		start_time(controller.stats, "eval_solve")
+		#start_time(controller.stats, "eval_solve")
 
 		res = reshape(M, n_nodes * n_states, n_nodes * n_states) \ reshape(b, n_nodes * n_states)
 		#copy respective value functions in nodes
-		stop_time(controller.stats, "eval_solve")
+		#stop_time(controller.stats, "eval_solve")
 
 		res_2d = reshape(res, n_nodes, n_states)
 		for node in nodes
@@ -980,7 +980,7 @@ IBPIPolicyUtils:
 			#set old node to nothing to make sure it's garbage collected
 			node = nothing
 		end
-		stop_time(controller.stats, "eval")
+		#stop_time(controller.stats, "eval")
 	end
 	"""
 	Tries to improve the controller by checking if each node can be replaced by a convex combination of the other nodes.
@@ -992,7 +992,7 @@ IBPIPolicyUtils:
 		if typeof(controller.frame) <: randomTiger
 			return false, []
 		end
-		start_time(controller.stats, "partial")
+		#start_time(controller.stats, "partial")
 		minval = config.minval
 		pomdp = controller.frame
 		nodes = controller.nodes
@@ -1038,7 +1038,7 @@ IBPIPolicyUtils:
 			@variable(lpmodel, e)
 			@objective(lpmodel, Max, e)
 			#define coefficients for constraints
-			start_time(controller.stats, "partial_coeff")
+			#start_time(controller.stats, "partial_coeff")
 			for s_index in 1:n_states
 				s = states[s_index]
 				#matrix of canz coefficients
@@ -1068,16 +1068,16 @@ IBPIPolicyUtils:
 				#set constraint for a state
 				constraints[s_index] = @constraint(lpmodel,  e + node.value[s_index] <= sum( M_a[a]*ca[a]+POMDPs.discount(pomdp)*sum(sum( M[a, z, n] * canz[a, z, n] for n in 1:n_nodes) for z in 1:n_observations) for a in 1:n_actions))
 			end
-			stop_time(controller.stats, "partial_coeff")
+			#stop_time(controller.stats, "partial_coeff")
 
 			@constraint(lpmodel, con_sum[a=1:n_actions, z=1:n_observations], sum(canz[a, z, n] for n in 1:n_nodes) == ca[a])
 			@constraint(lpmodel, ca_sum, sum(ca[a] for a in 1:n_actions) == 1.0)
 
 			@deb(lpmodel, :data)
-			start_time(controller.stats, "partial_optimize")
+			#start_time(controller.stats, "partial_optimize")
 
 			optimize!(lpmodel)
-			stop_time(controller.stats, "partial_optimize")
+			#stop_time(controller.stats, "partial_optimize")
 
 			@deb("$(termination_status(lpmodel))")
 			@deb("$(primal_status(lpmodel))")
@@ -1173,7 +1173,7 @@ IBPIPolicyUtils:
 			tangent_b[n_id] = [-1*dual(constraints[s_index]) for s_index in 1:n_states]
 		end
 		println()
-		stop_time(controller.stats, "partial")
+		#stop_time(controller.stats, "partial")
 		return changed, tangent_b
 	end
 	"""
@@ -1185,7 +1185,7 @@ IBPIPolicyUtils:
 		if typeof(controller.frame) <: randomTiger
 			return false, []
 		end
-		start_time(controller.stats, "escape")
+		#start_time(controller.stats, "escape")
 
 		pomdp = controller.frame
 		nodes = controller.nodes
@@ -1239,7 +1239,7 @@ IBPIPolicyUtils:
 			end
 		end
 		#@deb("$reachable_b")
-		stop_time(controller.stats, "escape")
+		#stop_time(controller.stats, "escape")
 
 		return escaped
 	end

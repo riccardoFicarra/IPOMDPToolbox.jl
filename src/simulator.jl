@@ -1,7 +1,7 @@
 
 
 #include("bpigraph.jl")
-
+using Random
 mutable struct IBPIAgent
 	controller::AbstractController
 	current_node::Node
@@ -24,66 +24,64 @@ function update_agent!(agent::IBPIAgent, action::A, observation::W) where {A, W}
 	agent.visited[agent.current_node.id]+=1
 	return agent.current_node.id
 end
-function compute_s_prime(state::S, ai::A, aj::A, frame::IPOMDP) where {S, A}
+function compute_s_prime(state::S, ai::A, aj::A, frame::IPOMDP; script = nothing) where {S, A}
+	if script != nothing && script != :rand
+		return script
+	end
 	dist = IPOMDPs.transition(frame, state, ai, aj)
-	items = dist.probs
-	randn = rand() #number in [0, 1)
-	for i in 1:length(dist.vals)
-		if randn <= items[i]
-			return dist.vals[i]
-		else
-			randn-= items[i]
-		end
-	end
-	error("Out of dict bounds while choosing items")
+	@deb("state = $state ai=$ai aj = $aj: $(dist.vals) $(dist.probs) ", :simprob)
+	rn = RandomDevice()
+	return POMDPModelTools.rand(rn, dist)
 end
 
-function compute_s_prime(state::S, ai::A, aj::A, frame::POMDP) where {S, A}
+function compute_s_prime(state::S, ai::A, aj::A, frame::POMDP; script = nothing) where {S, A}
+	if script != nothing && script != :rand
+		return script
+	end
 	dist = POMDPs.transition(frame, state, ai)
-	items = dist.probs
-	randn = rand() #number in [0, 1)
-	for i in 1:length(dist.vals)
-		if randn <= items[i]
-			return dist.vals[i]
-		else
-			randn-= items[i]
-		end
-	end
-	error("Out of dict bounds while choosing items")
+	@deb("state = $state ai=$ai aj = $aj: $(dist.vals) $(dist.probs) ", :simprob)
+
+	rn = RandomDevice()
+	return POMDPModelTools.rand(rn, dist)
 end
 
-function compute_observation(s_prime::S, ai::A, aj::A, frame::IPOMDP) where {S, A}
+function compute_observation(s_prime::S, ai::A, aj::A, frame::IPOMDP; script = nothing) where {S, A}
+	if script != nothing && script != :rand
+		return script
+	end
 	dist = IPOMDPs.observation(frame, s_prime, ai, aj)
-	items = dist.probs
-	randn = rand() #number in [0, 1)
-	for i in 1:length(dist.vals)
-		if randn <= items[i]
-			return dist.vals[i]
-		else
-			randn-= items[i]
-		end
-	end
-	error("Out of dict bounds while choosing items")
+	@deb("state = $s_prime ai=$ai aj = $aj: $(dist.vals) $(dist.probs) ", :simprob)
+
+	rn = RandomDevice()
+	return POMDPModelTools.rand(rn, dist)
 end
 
-function compute_observation(s_prime::S, ai::A, aj::A, frame::POMDP) where {S, A}
+function compute_observation(s_prime::S, ai::A, aj::A, frame::POMDP; script = nothing) where {S, A}
+	if script != nothing && script != :rand
+		return script
+	end
 	dist = POMDPs.observation(frame, s_prime, ai)
-	items = dist.probs
-	randn = rand() #number in [0, 1)
-	for i in 1:length(dist.vals)
-		if randn <= items[i]
-			return dist.vals[i]
-		else
-			randn-= items[i]
-		end
-	end
-	error("Out of dict bounds while choosing items")
+	@deb("state = $s_prime ai=$ai aj = $aj: $(dist.vals) $(dist.probs)t ", :simprob)
+	rn = RandomDevice()
+	return POMDPModelTools.rand(rn, dist)
+	# items = dist.probs
+	# randn = rand() #number in [0, 1)
+	# for i in 1:length(dist.vals)
+	# 	if randn <= items[i]
+	# 		return dist.vals[i]
+	# 	else
+	# 		randn-= items[i]
+	# 	end
+	# end
+	# error("Out of dict bounds while choosing items")
 end
 
-function IBPIsimulate(controller_i::InteractiveController{S, A, W}, controller_j::AbstractController, maxsteps::Int64; trace=false) where {S, A, W}
+
+
+function IBPIsimulate(controller_i::InteractiveController{S, A, W}, controller_j::AbstractController, maxsteps::Int64; trace=false, scenario = nothing) where {S, A, W}
 	correlation = zeros(Int64, length(controller_i.nodes), length(controller_j.nodes))
-	#1 -> state 2-> action 3 -> obs
-	i_history = Array{Symbol}(undef, maxsteps, 3)
+
+
 	frame_i = controller_i.frame
 	anynode = controller_i.nodes[1]
 	initial = ones(length(anynode.value))
@@ -110,6 +108,12 @@ function IBPIsimulate(controller_i::InteractiveController{S, A, W}, controller_j
 		end
 		println("end v")
 	end
+	if scenario != nothing
+		maxsteps = size(scenario.script, 1)
+	end
+	#1 -> state 2-> action_i 3 -> obs_i 4 -> node
+	i_history = Array{Any}(undef, maxsteps, 4)
+	j_history = Array{Any}(undef, maxsteps, 4)
 	for i in 1:maxsteps
 		if i % (maxsteps/100) == 0 && !trace
 			print("|")
@@ -117,27 +121,34 @@ function IBPIsimulate(controller_i::InteractiveController{S, A, W}, controller_j
 		ai = best_action(agent_i)
 		aj = best_action(agent_j)
 		if trace
-			println("state: $state -> ai: $ai, aj: $aj")
+			println("$i -> state: $state -> ai: $ai, aj: $aj")
 		end
 		value =  IPOMDPs.discount(frame_i) * value + IPOMDPs.reward(frame_i, state, ai, aj)
 		if trace
-			println("value this step: $(IPOMDPs.reward(frame_i, state, ai, aj))")
+			println("\tvalue this step: $(IPOMDPs.reward(frame_i, state, ai, aj))")
 		end
-		s_prime = compute_s_prime(state, ai, aj, frame_i)
+		if scenario != nothing
+			s_prime = compute_s_prime(state, ai, aj, frame_i; script = scenario.script[i,1])
 
-		zi = compute_observation(s_prime, ai, aj, frame_i)
-		zj = compute_observation(s_prime, aj, ai, frame_j)
+			zi = compute_observation(s_prime, ai, aj, frame_i; script = scenario.script[i,2])
+			zj = compute_observation(s_prime, aj, ai, frame_j; script = scenario.script[i,3])
+		else
+			s_prime = compute_s_prime(state, ai, aj, frame_i)
+
+			zi = compute_observation(s_prime, ai, aj, frame_i)
+			zj = compute_observation(s_prime, aj, ai, frame_j)
+		end
 		if trace
-			println("zi -> $zi, zj -> $zj")
+			println("\tzi -> $zi, zj -> $zj")
 		end
 		np_i = update_agent!(agent_i, ai, zi)
 		np_j = update_agent!(agent_j, aj, zj)
 
 		if trace
-			println("new current node for I: $np_i")
-			@deb(agent_i.current_node, :sim)
-			println("new current node for j: $np_j")
-			@deb(agent_j.current_node, :sim)
+			println("\tnew current node for I: $np_i")
+			@deb(agent_i.current_node, :simverb)
+			println("\tnew current node for j: $np_j")
+			@deb(agent_j.current_node, :simverb)
 		end
 		correlation[np_i, np_j] += 1
 		computestats!(agent_i.stats, ai, aj, state, s_prime, zi, zj)
@@ -145,12 +156,19 @@ function IBPIsimulate(controller_i::InteractiveController{S, A, W}, controller_j
 		i_history[i,1] = state
 		i_history[i,2] = ai
 		i_history[i,3] = zi
+		i_history[i,4] = np_i
+
+		j_history[i,1] = state
+		j_history[i,2] = aj
+		j_history[i,3] = zj
+		j_history[i,4] = np_j
+
 		state = s_prime
 	end
 	println()
-	analyze_history(i_history)
-	#analyze_correlation(correlation, controller_i, controller_j)
-	return value, agent_i, agent_j, i_history
+	analyze_history(i_history, j_history)
+	analyze_correlation(correlation, controller_i, controller_j)
+	return value, agent_i, agent_j, correlation
 end
 
 
@@ -166,7 +184,7 @@ function analyze_correlation(correlation::Array{Int64, 2}, controller::Interacti
 
 end
 
-function analyze_history(history::Array{Symbol, 2})
+function analyze_history(i_history::Array{Any, 2}, j_history::Array{Any, 2})
 
 	open_count = zeros(Int64, 2)
 	open_diff = zeros(Int64, 2)
@@ -175,11 +193,11 @@ function analyze_history(history::Array{Symbol, 2})
 	correct_obs = 0
 	wrong_obs = 0
 
-	for i in 1:size(history, 1)
-		action = history[i, 2]
-		state = history[i, 1]
-		obs = history[i, 3]
-		@deb("$action $state $obs", :history)
+	for i in 1:size(i_history, 1)
+		action = i_history[i, 2]
+		state = i_history[i, 1]
+		obs = i_history[i, 3]
+		@deb("$action $state $obs", :i_history)
 
 
 		if action == :L
@@ -201,7 +219,7 @@ function analyze_history(history::Array{Symbol, 2})
 			end
 		else
 			#if it opened
-			@deb("correct = $correct_obs, wrong = $wrong_obs, last = $last_opened", :history)
+			@deb("correct = $correct_obs, wrong = $wrong_obs, last = $last_opened", :i_history)
 
 			open_count[last_opened] += 1
 			open_diff[last_opened] += correct_obs - wrong_obs
@@ -224,4 +242,86 @@ function correct_result(state::Symbol, other::Symbol)
 	else
 		return other == :GRS || other == :GRCL || other == :GRCR || other == :OL || other == :GR
 	end
+end
+
+
+
+
+#scenarios
+struct Scenario
+	name::String
+	#State, zi, zj
+	script::Array{Symbol, 2}
+end
+
+function standard_scenario()
+	script = [
+				:TR :GRS :GR;
+				:TR :GRS :GR;
+				:TR :rand :rand;
+				:TL :GLS :GL;
+				:TL :GLS :GL;
+				:TL :rand :rand
+			 ]
+	return Scenario("standard", script)
+end
+
+function false_creak_scenario_1()
+	script = [
+				:TR :GRCL :GR;
+				:TR :GRS :GL;
+				:TR :GRS :GR;
+				:TR :rand :rand;
+				:TL :GLS :GL;
+				:TL :GLS :GL;
+				:TL :rand :rand
+			 ]
+	return Scenario("false_creak", script)
+end
+
+function false_creak_scenario_2()
+	script = [
+				:TR :GRS :GR;
+				:TR :GRCL :GL;
+				:TR :GRS :GR;
+				:TR :rand :rand;
+				:TL :GLS :GL;
+				:TL :GLS :GL;
+				:TL :rand :rand;
+				:rand :rand :rand;
+				:rand :rand :rand;
+			 ]
+	return Scenario("false_creak", script)
+end
+
+function true_creak_scenario_1()
+	script = [
+				:TR :GRS :GR;
+				:TR :GRS :GL;
+				:TR :rand :GR;
+				:TR :GRS :GR;
+				:TR :GRCL :rand;
+				:TR :GRS :GR;
+				:TR :rand :rand;
+				:rand :rand :rand;
+				:rand :rand :rand;
+				:rand :rand :rand
+			 ]
+	return Scenario("false_creak", script)
+end
+
+function true_creak_scenario_2()
+	script = [
+				:TR :GRS :GR;
+				:TR :GRS :GL;
+				:TR :rand :GR;
+				:TR :GRS :GR;
+				:TR :GRCL :rand;
+				:TL :GLS :GL;
+				:TL :rand :rand;
+				:rand :rand :rand;
+				:rand :rand :rand;
+				:rand :rand :rand
+			 ]
+	return Scenario("false_creak", script)
 end

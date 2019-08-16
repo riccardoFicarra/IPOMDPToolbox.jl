@@ -141,7 +141,7 @@ ibpisolver.jl:
 					@deb(controller, :data)
 					start_time = datetime2unix(now())
 
-					improved, tangent_b  = partial_backup!(controller ; add_one = true)
+					((improved, tangent_b), time, mem, gc)  = @timed partial_backup!(controller ; add_one = true)
 					@deb("Elapsed time for level $level: $(datetime2unix(now()) - start_time)",:stats)
 					if improved
 						@deb("Improved level 1", :flow)
@@ -153,10 +153,18 @@ ibpisolver.jl:
 						#if the controller failed both improvement and escape mark it as converged.
 						controller.converged = !escaped
 					end
+					log_time_nodes(controller.stats, datetime2unix(now()), length(controller.nodes), mem)
+
 				else
+					log_time_nodes(controller.stats, datetime2unix(now()), length(controller.nodes), 0)
 					println("Level 1, frame $(frametype(controller)): $(length(controller.nodes)) nodes has converged")
 				end
 			end
+			# current_time = datetime2unix(now())
+			# for controller in policy.controllers[1]
+			# 	log_time_nodes(controller.stats,current_time,length(controller.nodes), mem)
+			# end
+
 		else
 			for controller in policy.controllers[level]
 				if !controller.converged
@@ -166,7 +174,7 @@ ibpisolver.jl:
 					@deb(controller, :data)
 					start_time = datetime2unix(now())
 
-					improved, tangent_b = partial_backup!(controller, policy.controllers[level-1]; add_one = true)
+					((improved, tangent_b), time, mem, gc)  = @timed partial_backup!(controller, policy.controllers[level-1]; add_one = true)
 
 					@deb("Elapsed time for level $level: $(datetime2unix(now()) - start_time)", :stats)
 
@@ -178,15 +186,22 @@ ibpisolver.jl:
 						escaped = escape_optima_standard!(controller, policy.controllers[level-1], tangent_b ;add_one = false, minval = config.minval)
 						improved = improved || escaped
 					end
+					log_time_nodes(controller.stats, datetime2unix(now()), length(controller.nodes), mem)
+
 					#a controller has converged only if also all lower level controllers have converged
 					controller.converged = !improved && !improved_lower
 					if controller.converged
 						println("Level $level, frame $(frametype(controller)) : $(length(controller.nodes)) nodes")
 					end
 				else
+					log_time_nodes(controller.stats, datetime2unix(now()), length(controller.nodes), 0)
 					println("Level $level, frame $(frametype(controller)): $(length(controller.nodes)) nodes has converged")
 				end
 			end
+			# current_time = datetime2unix(now())
+			# for controller in policy.controllers[level]
+			# 	log_time_nodes(controller.stats, current_time, length(controller.nodes), mem)
+			# end
 		end
 		return improved
 	end
@@ -215,6 +230,11 @@ ibpisolver.jl:
 		end
 		start_time = datetime2unix(now())
 
+		for level in 1:policy.maxlevel
+			for controller in policy.controllers[level]
+				set_start_time(controller.stats, start_time)
+			end
+		end
 		#start of the actual algorithm
 
 		iteration = 1
@@ -298,6 +318,7 @@ ibpisolver.jl:
 
 			if converged
 				filename_dst = "$(save)_conv"
+				break
 			else
 				filename_dst = "$(name)_$(src_duration+step*step_length)"
 			end
@@ -338,3 +359,28 @@ ibpisolver.jl:
 	# 	end
 	# end
 	include("./simulator.jl")
+
+
+	function compute_nodes_time(policy::IBPIPolicy)
+		#sum together the length of all controllers in the same level
+		#output running time average of one eval -> improv -> escape iteration
+		for level in 1:policy.maxlevel
+			time_nodes = Array{Tuple{Float64, Int64, Int64}}(undef, 0)
+			for i in 1:length(policy.controllers[level][1].stats.data)
+				sumnodes = 0
+				time = 0.0
+				maxmem = 0
+				for controller in policy.controllers[level]
+					maxmem = max(maxmem, controller.stats.data[i][3])
+					sumnodes += controller.stats.data[i][2]
+					time = max(time, controller.stats.data[i][1])
+				end
+				if length(time_nodes) == 0 || sumnodes != last(time_nodes)[2]
+					push!(time_nodes, (time, sumnodes, maxmem))
+				end
+			end
+			for t_n_m in time_nodes
+				println("level $level $(t_n_m[1]): $(t_n_m[2]) $(t_n_m[3]/8000) kB")
+			end
+		end
+	end
