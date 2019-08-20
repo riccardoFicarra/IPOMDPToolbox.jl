@@ -190,12 +190,11 @@ function actions(frame::Any)
 	end
 end
 
-function partial_backup!(controller::InteractiveController{A, W}, controllers_j::Array{AbstractController, 1};add_one = true) where {S, A, W}
+function partial_backup!(controller::InteractiveController{A, W}, controllers_j::Array{AbstractController, 1}; add_one = true) where {S, A, W}
 	#debug = Set([:flow])
 	#this time the matrix form is a1x1+...+anxn = b1
 	#sum(a,s)[sum(nz)[canz*[R(s,a)+gamma*sum(s')p(s'|s, a)p(z|s', a)v(nz,s')]] -eps = V(n,s)
 	#number of variables is |A||Z||N|+1 (canz and eps)
-	minval = config.minval
 	#start_time(controller.stats, "partial")
 	frame = controller.frame
 	nodes = controller.nodes
@@ -248,7 +247,8 @@ function partial_backup!(controller::InteractiveController{A, W}, controllers_j:
 			nodecounter = 0
 		end
 
-		lpmodel = JuMP.Model(with_optimizer(GLPK.Optimizer))
+		lpmodel = JuMP.Model(with_optimizer(CPLEX.Optimizer; CPX_PARAM_SCRIND=0))
+
 		#define variables for LP. c(a, n, z)
 		@variable(lpmodel, canz[a=1:n_actions, z=1:n_observations, n=1:n_nodes] >= 0.0)
 		@variable(lpmodel, ca[a=1:n_actions] >= 0.0)
@@ -360,50 +360,52 @@ function partial_backup!(controller::InteractiveController{A, W}, controllers_j:
 				ca_v = JuMP.value(ca[action_index])
 				#@deb("Action $(actions[action_index])")
 				#@deb("ca $(actions[action_index])= $ca_v")
-				if ca_v > 1.0-minval
-					ca_v = 1.0
-				end
-				if ca_v > minval
+				# if ca_v > 1.0-config.minval
+				# 	ca_v = 1.0
+				# end
+				if ca_v > config.minval
 					new_obs = Dict{W, Vector{Pair{Int64, Float64}}}()
 					for obs_index in 1:n_observations
-						obs_total = 0.0
+						# obs_total = 0.0
 						#fill a temporary edge dict with unnormalized probs
 						temp_edge_dict = Vector{Pair{Int64, Float64}}(undef, 0)
 						for nz in nodes
 							prob = JuMP.value(canz[action_index, obs_index,nz.id])
 							#@deb("canz $(observations[obs_index]) -> $nz_id = $prob")
-							if prob < 0.0
-								@deb("Set prob to 0 even though it was negative", :data)
-								prob = 0.0
-							end
-							if prob > 1.0 && prob < 1.0+minval
-								@deb("Set prob slightly greater than 1 to 1", :data)
-								prob = 1.0
-							end
-							if prob < 0.0 || prob > 1.0
-								#error("Probability outside of bounds: $prob")
-							end
-							if prob > 0.0
-								obs_total+= prob
+							# if prob < 0.0
+							# 	@deb("Set prob to 0 even though it was negative", :data)
+							# 	prob = 0.0
+							# end
+							# if prob > 1.0 && prob < 1.0+config.minval
+							# 	@deb("Set prob slightly greater than 1 to 1", :data)
+							# 	prob = 1.0
+							# end
+							# if prob < 0.0 || prob > 1.0
+							# 	#error("Probability outside of bounds: $prob")
+							# end
+							if prob > config.minval
+								# obs_total+= prob
 								#@deb("New edge: $(action_index), $(obs_index) -> $nz_id, $(prob)")
 								push!(temp_edge_dict, (nz.id => prob))
 							end
 						end
-						if obs_total == 0.0
-							for nz_id in 1:length(nodes)
-								println("$(JuMP.value(canz[action_index, obs_index, nz_id]))")
-							end
-							error("sum of prob for obs $(observations_i[obs_index]) == 0")
-						end
+						# if obs_total == 0.0
+						# 	for nz_id in 1:length(nodes)
+						# 		println("$(JuMP.value(canz[action_index, obs_index, nz_id]))")
+						# 	end
+						# 	error("sum of prob for obs $(observations_i[obs_index]) == 0")
+						# end
 						new_edge_dict = Vector{Pair{Int64, Float64}}()
 						for (next_id, prob) in temp_edge_dict
 							#@deb("normalized prob: $normalized_prob")
-							if prob >= 1.0-minval
-								push!(new_edge_dict, (next_id => 1.0))
-							elseif prob > minval
-								push!(new_edge_dict, (next_id => prob/obs_total))
+							# if prob >= 1.0-config.minval
+							# 	push!(new_edge_dict, (next_id => 1.0))
+							# elseif prob > config.minval
+								# push!(new_edge_dict, (next_id => prob/obs_total))
+								push!(new_edge_dict, (next_id => prob))
 
-							end
+
+							# end
 							#do not add anything if prob < minval
 						end
 						#@deb("length of dict for obs $(observations[obs_index]) = $(length(new_edge_dict))")
@@ -418,7 +420,7 @@ function partial_backup!(controller::InteractiveController{A, W}, controllers_j:
 				end
 			end
 			new_node = Node(node.id, new_actions, new_edges, Array{Float64}(undef, 0,0))
-			checkNode(new_node, controller, minval; normalize = true)
+			checkNode(new_node, controller; normalize = config.normalize)
 			controller.nodes[new_node.id] = new_node
 			node = nothing
 			if add_one
@@ -522,7 +524,7 @@ end
 # 	controller.maxId = new_max_id
 # end
 
-function full_backup_stochastic!(controller::InteractiveController{A, W}, controllers_j::Array{AbstractController, 1}; minval = 1e-10) where {A, W}
+function full_backup_stochastic!(controller::InteractiveController{A, W}, controllers_j::Array{AbstractController, 1}) where {A, W}
 	initial_node = controller.nodes[1]
 	already_present_action = first(controller.nodes[1].actionProb)[1]
 	@deb("Already present action: $already_present_action", :full)
@@ -677,7 +679,7 @@ function node_value(ni::Node{A, W}, ai::A, zi::W, controllers_j::Array{AbstractC
 end
 
 
-function escape_optima_standard!(controller::InteractiveController{A, W}, controllers_j::Array{AbstractController,1}, tangent_b::Dict{Int64, Array{Float64}}; add_one = false, minval = 0.0) where {A, W}
+function escape_optima_standard!(controller::InteractiveController{A, W}, controllers_j::Array{AbstractController,1}, tangent_b::Dict{Int64, Array{Float64}}; add_one = false) where {A, W}
 	@deb("Entered escape_optima", :flow)
 	#start_time(controller.stats, "escape")
 	frame_i = controller.frame
@@ -777,7 +779,7 @@ function add_escape_node!(new_b::Array{Float64}, controller::InteractiveControll
 		@deb("Added node $(best_new_node.id) to improve belief $new_b", :flow)
 		@deb("Improvement $(best_new_value-best_old_value)", :flow)
 
-		checkNode(best_new_node, controller, minval; normalize = true)
+		checkNode(best_new_node, controller; normalize = config.normalize)
 		push!(controller.nodes, best_new_node)
 
 		@deb(controller.nodes[best_new_node.id], :flow)

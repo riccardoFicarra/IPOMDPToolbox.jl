@@ -7,13 +7,14 @@ IBPIPolicyUtils:
 	using LinearAlgebra
 	using DataStructures
 	using JuMP
-	using GLPK
+	using CPLEX
 	using SparseArrays
 
 	"""
 	Basic data structure for controllers.
 
 	"""
+
 	struct Node{A, W}
 		id::Int64
 		actionProb::Dict{A, Float64}
@@ -130,7 +131,8 @@ IBPIPolicyUtils:
 		end
 	end
 
-	function checkNode(node::Node{A, W}, controller::AbstractController, minval::Float64; normalize = false, checkDistinct = false) where {A, W}
+	function checkNode(node::Node{A, W}, controller::AbstractController; normalize = false, checkDistinct = false) where {A, W}
+		return
 		obs_list = observations(controller.frame)
 		#check actionProb
 		tot = 0.0
@@ -143,7 +145,7 @@ IBPIPolicyUtils:
 				node.actionProb[action] = prob/tot
 			end
 		end
-		if !normalize && tot <= 1-minval || tot >= 1+minval
+		if !normalize && tot <= 1-config.minval || tot >= 1+config.minval
 			error("Sum of actionProb == $tot")
 		end
 
@@ -169,7 +171,7 @@ IBPIPolicyUtils:
 						next_dict[i] = (next_dict[i][1] => next_dict[i][2]/tot)
 					end
 				end
-				if !normalize && (tot <= 1-minval || tot >= 1+minval)
+				if !normalize && (tot <= 1-config.minval || tot >= 1+config.minval)
 					error("Sum of edges  == $tot")
 				end
 
@@ -189,7 +191,6 @@ IBPIPolicyUtils:
 	end
 
 	function nodeequal(a::Node{A, W}, b::Node{A, W}) where {A, W}
-		minval = config.minval
 
 		# for i in 1:length(a.value)
 		# 	if abs(a.value[i] - b.value[i]) > config.minval
@@ -199,7 +200,7 @@ IBPIPolicyUtils:
 		# @warn("Value vector of $(a.id) and $(b.id) are equal")
 
 		for (action, prob) in a.actionProb
-			if !haskey(b.actionProb, action) || (b.actionProb[action] - prob) > minval
+			if !haskey(b.actionProb, action) || (b.actionProb[action] - prob) > config.minval
 				return false
 			end
 		end
@@ -285,9 +286,9 @@ IBPIPolicyUtils:
 		end
 	end
 
-	function checkController(controller::AbstractController, minval::Float64; checkDistinct = false)
+	function checkController(controller::AbstractController; checkDistinct = false)
 		for node in controller.nodes
-			checkNode(node, controller, minval; checkDistinct = false)
+			checkNode(node, controller; checkDistinct = false)
 		end
 	end
 	"""
@@ -366,16 +367,17 @@ IBPIPolicyUtils:
 	Wrapper data structure for a non-interactive policy.
 	"""
 	struct BPIPolicy{A, W}
+		name::String
 		controller::Controller{A, W}
 	end
 	"""
 	Create a BPIPolicy with a standard initial controller.
 	"""
-	function BPIPolicy(pomdp::POMDP{A, W}; force=0) where {A, W}
+	function BPIPolicy(name::String, pomdp::POMDP{A, W}; force=0) where {A, W}
 		if force == 0
-			BPIPolicy(Controller(pomdp))
+			BPIPolicy(name, Controller(pomdp))
 		else
-			BPIPolicy(Controller(pomdp; force = force))
+			BPIPolicy(name, Controller(pomdp; force = force))
 		end
 	end
 
@@ -416,7 +418,7 @@ IBPIPolicyUtils:
 	"""
 	Computes all the possible new nodes that can be added to the controller using Incremental pruning with stochastic filtering.
 	"""
-	function full_backup_generate_nodes(controller::Controller{A, W}, minval::Float64) where {A, W}
+	function full_backup_generate_nodes(controller::Controller{A, W}) where {A, W}
 		pomdp = controller.frame
 		nodes = controller.nodes
 		observations = POMDPs.observations(pomdp)
@@ -450,14 +452,14 @@ IBPIPolicyUtils:
 						println(node)
 					end
 				end
-				new_nodes_z[obs_index] = filterNodes(new_nodes_a_z, minval)
+				new_nodes_z[obs_index] = filterNodes(new_nodes_a_z, config.minval)
 			end
 			#set that contains all nodes generated from action a after incremental pruning
-			new_nodes_counter, new_nodes_a = incprune(new_nodes_z, new_nodes_counter, minval)
+			new_nodes_counter, new_nodes_a = incprune(new_nodes_z, new_nodes_counter, config.minval)
 			union!(new_nodes, new_nodes_a)
 		end
 		#all new nodes, final filtering
-		return filterNodes(new_nodes, minval)
+		return filterNodes(new_nodes, config.minval)
 	end
 	# """
 	# Perform a full backup operation according to Pourpart and Boutilier's paper on Bounded finite state controllers
@@ -516,7 +518,7 @@ IBPIPolicyUtils:
 	# 	controller.maxId = new_max_id
 	# end
 
-	function full_backup_stochastic!(controller::Controller{A, W}; minval = 1e-10) where {A, W}
+	function full_backup_stochastic!(controller::Controller{A, W}) where {A, W}
 		if typeof(controller.frame) <: randomTiger
 			return
 		end
@@ -679,7 +681,9 @@ IBPIPolicyUtils:
 			end
 			pop!(new_nodes, temp_id)
 			#@deb("$(length(new_nodes))")
-			lpmodel = JuMP.Model(with_optimizer(GLPK.Optimizer))
+			lpmodel = JuMP.Model(with_optimizer(CPLEX.Optimizer))
+			CplexSolver(CPX_PARAM_SCRIND=0)
+
 			#define variables for LP. c(i)
 			@variable(lpmodel, c[i=keys(new_nodes)] >= 0)
 			#e to maximize
@@ -802,7 +806,9 @@ IBPIPolicyUtils:
 			end
 			pop!(new_nodes, temp_id)
 			#@deb("$(length(new_nodes))")
-			lpmodel = JuMP.Model(with_optimizer(GLPK.Optimizer))
+			lpmodel = JuMP.Model(with_optimizer(CPLEX.Optimizer))
+			CplexSolver(CPX_PARAM_SCRIND=0)
+
 			#define variables for LP. c(i)
 			@variable(lpmodel, 0.0 <= c[i=keys(new_nodes)] <= 1.0)
 			#e to maximize
@@ -993,7 +999,6 @@ IBPIPolicyUtils:
 			return false, []
 		end
 		#start_time(controller.stats, "partial")
-		minval = config.minval
 		pomdp = controller.frame
 		nodes = controller.nodes
 		n_nodes = length(controller.nodes)
@@ -1030,7 +1035,8 @@ IBPIPolicyUtils:
 				end
 				nodecounter = 0
 			end
-			lpmodel = JuMP.Model(with_optimizer(GLPK.Optimizer))
+			lpmodel = JuMP.Model(with_optimizer(CPLEX.Optimizer; CPX_PARAM_SCRIND=0))
+
 			#define variables for LP. c(a, n, z)
 			@variable(lpmodel, canz[a=1:n_actions, z=1:n_observations, n=1:n_nodes] >= 0.0)
 			@variable(lpmodel, ca[a=1:n_actions] >= 0.0)
@@ -1095,47 +1101,49 @@ IBPIPolicyUtils:
 					ca_v = JuMP.value(ca[action_index])
 					@deb("Action $(actions[action_index])")
 					@deb("ca $(actions[action_index])= $ca_v")
-					if ca_v > 1.0-minval
-						ca_v = 1.0
-					end
-					if ca_v > minval
+					# if ca_v > 1.0-config.minval
+					# 	ca_v = 1.0
+					# end
+					if ca_v > config.minval
 						new_obs = Dict{W, Vector{Pair{Int64, Float64}}}()
 						for obs_index in 1:n_observations
-							obs_total = 0.0
+							#obs_total = 0.0
 							#fill a temporary edge dict with unnormalized probs
 							temp_edge_dict = Vector{Pair{Int64, Float64}}()
 							for nz in nodes
 								prob = JuMP.value(canz[action_index, obs_index, nz.id])/ca_v
 								#@deb("canz $(observations[obs_index]) -> $nz_id = $prob")
-								if prob < 0.0
-									@deb("Set prob to 0 even though it was negative")
-									prob = 0.0
-								end
-								if prob > 1.0 && prob < 1.0+minval
-									@deb("Set prob slightly greater than 1 to 1")
-									prob = 1.0
-								end
-								if prob < 0.0 || prob > 1.0
-									#error("Probability outside of bounds: $prob")
-								end
-								if prob > 0.0
-									obs_total+= prob
+								# if prob < 0.0
+								# 	@deb("Set prob to 0 even though it was negative")
+								# 	prob = 0.0
+								# end
+								# if prob > 1.0 && prob < 1.0+config.minval
+								# 	@deb("Set prob slightly greater than 1 to 1")
+								# 	prob = 1.0
+								# end
+								# if prob < 0.0 || prob > 1.0
+								# 	#error("Probability outside of bounds: $prob")
+								# end
+								if prob > config.minval
+									# obs_total+= prob
 									#@deb("New edge: $(action_index), $(obs_index) -> $nz_id, $(prob)")
 									push!(temp_edge_dict, (nz.id => prob))
 								end
 							end
-							if obs_total == 0.0
-								error("sum of prob for obs $(observations[obs_index]) == 0")
-							end
+							# if obs_total == 0.0
+							# 	error("sum of prob for obs $(observations[obs_index]) == 0")
+							# end
 							new_edge_dict = Vector{Pair{Int64, Float64}}()
 							for (next_id, prob) in temp_edge_dict
 								#@deb("normalized prob: $normalized_prob")
-								if prob >= 1.0-minval
-									push!(new_edge_dict, (next_id => 1.0))
-								elseif prob > minval
-									push!(new_edge_dict, (next_id => prob/obs_total))
-								end
-								#do not add anything if prob < minval
+								# if prob >= 1.0-config.minval
+								# 	push!(new_edge_dict, (next_id => 1.0))
+								# elseif prob > config.minval
+									# push!(new_edge_dict, (next_id => prob/obs_total))
+									push!(new_edge_dict, (next_id => prob))
+
+								# end
+								#do not add anything if prob < config.minval
 							end
 							#@deb("length of dict for obs $(observations[obs_index]) = $(length(new_edge_dict))")
 							if length(new_edge_dict) != 0
@@ -1149,7 +1157,7 @@ IBPIPolicyUtils:
 					end
 				end
 				new_node = Node(node.id, new_actions, new_edges, Array{Float64, 2}(undef, 0, 0))
-				checkNode(new_node, controller, minval)
+				checkNode(new_node, controller; normalize = config.normalize)
 				controller.nodes[new_node.id] = new_node
 				#make sure it's garbage collected!
 				node = nothing
@@ -1180,7 +1188,7 @@ IBPIPolicyUtils:
 	Tries to escape local optima by adding new nodes to the controller.
 	Default behavior is to add all nodes that improve reachable beliefs of a single node.
 	"""
-	function escape_optima_standard!(controller::Controller{A, W}, tangent_b::Dict{Int64, Array{Float64}}; add_one=true, minval = 0.0) where {A, W}
+	function escape_optima_standard!(controller::Controller{A, W}, tangent_b::Dict{Int64, Array{Float64}}; add_one=true) where {A, W}
 		#@deb("$tangent_b")
 		if typeof(controller.frame) <: randomTiger
 			return false, []
@@ -1252,7 +1260,7 @@ IBPIPolicyUtils:
 			@deb("in $reachable_b node $(best_new_node.id) has $best_new_value > $best_old_value", :escape)
 			@deb("best old node:", :generatenode)
 			@deb(best_old_node, :generatenode)
-			checkNode(best_new_node, controller, config.minval)
+			checkNode(best_new_node, controller; normalize = config.normalize)
 			push!(controller.nodes, best_new_node)
 			@deb("Added node $(best_new_node.id) to improve $reachable_b", :flow)
 			@deb(best_new_node, :flow)
@@ -1379,7 +1387,7 @@ function bpi!(policy::BPIPolicy)
 	controller = policy.controller
 	evaluate!(controller)
 
-	full_backup_stochastic!(controller; minval = config.minval)
+	full_backup_stochastic!(controller)
 
 	iteration = 0
 	while iteration <= config.maxrep

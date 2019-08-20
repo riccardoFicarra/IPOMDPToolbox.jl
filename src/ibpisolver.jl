@@ -48,11 +48,12 @@ ibpisolver.jl:
 		minval::Float64
 		timeout::Int64
 		min_improvement::Float64
+		normalize::Bool
 	end
 	"""
 	Default config values
 	"""
-	config = IBPISolver(0, 10, 1e-10, 300, 1e-10)
+	config = IBPISolver(0, 10, 1e-10, 300, 1e-10, true)
 
 
 	"""
@@ -63,8 +64,8 @@ ibpisolver.jl:
 	- `minval::Float64`: if a number is below minval it is considered as zero.
 	- `timeout::Int64`: number of seconds after which the algorithm stops.
 	"""
-	function set_solver_params(force::Int64, maxrep::Int64, minval::Float64, timeout::Int64, min_improvement::Float64)
-		global config = IBPISolver(force, maxrep, minval, timeout, min_improvement)
+	function set_solver_params(force::Int64, maxrep::Int64, minval::Float64, timeout::Int64, min_improvement::Float64, normalize::Bool)
+		global config = IBPISolver(force, maxrep, minval, timeout, min_improvement, normalize)
 	end
 
 	function Base.println(controller::AbstractController)
@@ -78,6 +79,7 @@ ibpisolver.jl:
 	struct IBPIPolicy{S, A, W}
 		#Controller level -> controller frames
 		#level 1 is the pompdp
+		name::String
 		controllers::Array{Array{AbstractController,1}}
 		maxlevel::Int64
 	end
@@ -86,7 +88,7 @@ ibpisolver.jl:
 	maxlevelframe is the frame of the agent we want to build
 	add as many frame arrays as levels, in descending order.
 	"""
-	function IBPIPolicy(maxlevelframe::IPOMDP{S, A, W}, emulated_frames...; force = 0) where {S, A, W}
+	function IBPIPolicy(name::String, maxlevelframe::IPOMDP{S, A, W}, emulated_frames...; force = 0) where {S, A, W}
 		#i dont consider maxlevelframe because we're starting from lv0
 		maxlevel = length(emulated_frames)+1
 		@deb("maxlevel = $maxlevel", :multiple)
@@ -99,10 +101,11 @@ ibpisolver.jl:
 		end
 		#pomdp part, level 1
 		controllers[1] = [Controller( emulated_frames[maxlevel-1][frame]; force = force) for frame in 1:length(emulated_frames[maxlevel-1])]
-		return IBPIPolicy{S, A, W}(controllers, maxlevel)
+		return IBPIPolicy{S, A, W}(name, controllers, maxlevel)
 	end
 
 	function Base.println(policy::IBPIPolicy)
+		println("Policy $(policy.name)")
 		for l in 1:policy.maxlevel
 			println("Level $l")
 			for frame_index in 1:length(policy.controllers[l])
@@ -148,7 +151,7 @@ ibpisolver.jl:
 						@deb(policy.controllers[1], :data)
 					else
 						@deb("Did not improve level 1", :flow)
-						escaped = escape_optima_standard!(controller, tangent_b; add_one = false, minval = 1e-10)
+						escaped = escape_optima_standard!(controller, tangent_b; add_one = false)
 						improved == improved || escaped
 						#if the controller failed both improvement and escape mark it as converged.
 						controller.converged = !escaped
@@ -183,7 +186,7 @@ ibpisolver.jl:
 						@deb(controller, :data)
 					else
 						@deb("Did not improve level $level", :flow)
-						escaped = escape_optima_standard!(controller, policy.controllers[level-1], tangent_b ;add_one = false, minval = config.minval)
+						escaped = escape_optima_standard!(controller, policy.controllers[level-1], tangent_b ;add_one = false)
 						improved = improved || escaped
 					end
 					log_time_nodes(controller.stats, datetime2unix(now()), length(controller.nodes), mem)
@@ -206,7 +209,7 @@ ibpisolver.jl:
 		return improved
 	end
 
-	function ibpi!(policy::IBPIPolicy)
+	function ibpi!(policy::IBPIPolicy, repetition::Int64; start_step = 1,  n_backups = 0)
 		#full backup part to speed up
 		for controller in policy.controllers[1]
 			evaluate!(controller)
@@ -220,9 +223,9 @@ ibpisolver.jl:
 		for level in 2:policy.maxlevel
 			for controller in policy.controllers[level]
 				evaluate!(controller, policy.controllers[level-1])
-				checkController(controller, config.minval)
+				checkController(controller)
 				if length(controller.nodes) <= 1
-					full_backup_stochastic!(controller, policy.controllers[level-1]; minval = config.minval)
+					full_backup_stochastic!(controller, policy.controllers[level-1])
 					@deb("Level $level after full backup", :flow)
 					@deb(controller, :flow)
 				end
@@ -238,11 +241,18 @@ ibpisolver.jl:
 		#start of the actual algorithm
 
 		iteration = 1
+		step = start_step
+		if n_backups > 0
+			timestep_duration = trunc(Int64, config.timeout / n_backups)
+		end
 		while true
 			@deb("Iteration $iteration", :flow)
 			improved = eval_and_improve!(policy, policy.maxlevel)
 			iteration += 1
-
+			if n_backups > 0 && datetime2unix(now()) - start_time >= timestep_duration * step
+				step += 1
+				save_policy(policy, repetition, n_steps * step_duration)
+			end
 			if !improved
 				println("Algorithm stopped because it could not improve controllers anymore")
 				return true
@@ -268,34 +278,31 @@ ibpisolver.jl:
 		return false
 	end
 
-	function save_policy(policy::IBPIPolicy, name::String)
+	function save_policy(policy::IBPIPolicy, repetition::Int64, duration::Int64; converged = false)
 		#@save "savedcontrollers/$name.jld2" policy
-		serialize("savedcontrollers/$name.policy", policy)
+		if !isdir("savedcontrollers/$(policy.name)")
+			mkdir("savedcontrollers/$(policy.name)")
+		end
+		if !isdir("savedcontrollers/$(policy.name)/rep$rep")
+			mkdir("savedcontrollers/$(policy.name)/rep$rep")
+		end
+		if converged
+			serialize("savedcontrollers/$(policy.name)/rep$rep/$(policy.name)$(repetition)_conv.policy", policy)
+		else
+			serialize("savedcontrollers/$(policy.name)/rep$rep/$(policy.name)$(repetition)_$duration.policy", policy)
+		end
 	end
 
-	function load_policy(name::String)
+	function load_policy(name::String, repetition::Int64, duration::Int64; converged = false)
 		#@load "savedcontrollers/$name.jld2" policy
-		policy = deserialize("savedcontrollers/$name.policy")
+		if converged
+			policy = deserialize("savedcontrollers/$(policy.name)/rep$repetition/$(policy.name)$(repetition)_conv.policy")
+		else
+			policy = deserialize("savedcontrollers/$(policy.name)/rep$repetition/$(policy.name)$(repetition)_$duration.policy")
+		end
 		return policy
 	end
 
-	function solve_fresh!(policy::IBPIPolicy{S, A, W}, n_steps::Int64, step_length::Int64, maxsimsteps::Int64, min_improvement::Float64 ; save = "", force = 3, max_iterations = -1) where {S, A, W}
-
-		for step in 1:n_steps
-			set_solver_params(force,max_iterations,1e-10,step_length*60, min_improvement)
-
-			converged = ibpi!(policy)
-
-			if save != ""
-				if converged
-					filename_dst = "$(save)_conv"
-				else
-					filename_dst = "$(save)_$(step*step_length)"
-				end
-				save_policy(policy, filename_dst)
-			end
-		end
-	end
 
 	function print_solver_stats(policy::IBPIPolicy)
 		for level in 1:policy.maxlevel
@@ -305,26 +312,6 @@ ibpisolver.jl:
 				print_solver_stats(controller.stats)
 			end
 		end
-	end
-
-	function continue_solving(src_filename::String, n_steps::Int64, step_length::Int64, maxsimsteps::Int64, min_improvement::Float64; force = 3, max_iterations = -1)
-		policy = load_policy(src_filename)
-		name = split(src_filename, "_")[1]
-		src_duration = parse(Int64, split(src_filename, "_")[2])
-		for step in 1:n_steps
-			set_solver_params(force,max_iterations,1e-10,step_length*60, min_improvement)
-
-			converged = ibpi!(policy)
-
-			if converged
-				filename_dst = "$(save)_conv"
-				break
-			else
-				filename_dst = "$(name)_$(src_duration+step*step_length)"
-			end
-			save_policy(policy, filename_dst)
-		end
-		return policy
 	end
 
 	# """
@@ -384,3 +371,89 @@ ibpisolver.jl:
 			end
 		end
 	end
+
+# """
+# Print solver_stats to file in a latex readable .dat file
+# """
+# function print_stats_to_file(policy::IBPIPolicy, file_path::String)
+#  	stats= policy.controllers[policy.maxlevel][1].stats
+# 	len = length(stats.data[1])
+# 	time = stats.data[1]
+# 	nodes = stats.data[2]
+# 	mem = stats.data[3]
+# 	open("$file_path.dat", "w") do f
+# 		write(f, "t\tn\tm\n")
+# 		for i in
+# 			t = time[i]
+# 			n = nodes[i]
+# 			m = mem[i]
+# 			write(f, "$t\t$n\t$m\n")
+# 		end
+# 	end
+# end
+
+"""
+Prints stats to screen so its easy to copy and paste them in case input from files is bugged
+"""
+
+function print_stats_coordinates(policy::IBPIPolicy)
+ 	stats= policy.controllers[policy.maxlevel][1].stats
+	len = length(stats.data)
+	time = stats.data
+	nodes = stats.data
+	mem = stats.data
+	for i in 1:len
+		t = time[i][1]
+		n = nodes[i][2]
+		m = mem[i][3]
+		print("($t,$n)")
+	end
+	println()
+end
+
+
+function print_time_node_coordinates(policy::IBPIPolicy; fix = false)
+	#sum together the length of all controllers in the same level
+	#output running time average of one eval -> improv -> escape iteration
+		time_nodes = Array{Tuple{Float64, Int64, Int64}}(undef, 0)
+		controller = policy.controllers[policy.maxlevel][1]
+		oldtime = 0
+		starttime = 0
+		for i in 1:length(controller.stats.data)
+			maxmem = controller.stats.data[i][3]
+			sumnodes = controller.stats.data[i][2]
+			time = controller.stats.data[i][1]
+			if fix
+				time += starttime
+			end
+			if time < oldtime
+				starttime = oldtime
+			end
+			oldtime = time
+			if length(time_nodes) == 0 || sumnodes != last(time_nodes)[2]
+				push!(time_nodes, (time, sumnodes, maxmem))
+			end
+		end
+		for t_n_m in time_nodes
+			print("($(t_n_m[1]), $(t_n_m[2]))")
+		end
+end
+
+function print_time_value_coordinates(policy_name::String, agent_j_index::Int64, simreps::Int64, maxsimsteps::Int64, timestep::Int64, ntimesteps:: Int64)
+	coords = Array{Tuple{Float64, Float64}}(undef, 0)
+	for ts in 1:ntimesteps
+		policy = load_policy("$(policy_name)1_$(ts*timestep)")
+		avg_value = 0.0
+		for rep in 1:simreps
+			value, agent_i, agent_j, i = IBPIsimulate(policy.controllers[policy.maxlevel][1],  policy.controllers[policy.maxlevel-1][agent_j_index], maxsimsteps)
+			avg_value += value
+		end
+		avg_value /= simreps
+		time = last( policy.controllers[policy.maxlevel][1].stats.data)[1]
+		push!(coords, (time, avg_value))
+	end
+	for coord in coords
+		print("($(coord[1]), $(coord[2]))")
+	end
+
+end
