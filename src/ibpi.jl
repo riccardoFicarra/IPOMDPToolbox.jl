@@ -363,7 +363,7 @@ function partial_backup!(controller::InteractiveController{A, W}, controllers_j:
 				# if ca_v > 1.0-config.minval
 				# 	ca_v = 1.0
 				# end
-				if ca_v > config.minval
+				if ca_v > config.min_improvement
 					new_obs = Dict{W, Vector{Pair{Int64, Float64}}}()
 					for obs_index in 1:n_observations
 						# obs_total = 0.0

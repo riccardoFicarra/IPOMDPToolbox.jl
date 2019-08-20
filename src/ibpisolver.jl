@@ -209,7 +209,7 @@ ibpisolver.jl:
 		return improved
 	end
 
-	function ibpi!(policy::IBPIPolicy, repetition::Int64; start_step = 1,  n_backups = 0)
+	function ibpi!(policy::IBPIPolicy, repetition::Int64; start_duration = 0,  n_backups = 0)
 		#full backup part to speed up
 		for controller in policy.controllers[1]
 			evaluate!(controller)
@@ -235,23 +235,29 @@ ibpisolver.jl:
 
 		for level in 1:policy.maxlevel
 			for controller in policy.controllers[level]
-				set_start_time(controller.stats, start_time)
+				if controller.stats.start_time == 0
+					set_start_time(controller.stats, start_time)
+				else
+					set_start_time(controller.stats, last(controller.stats.data)[1])
+				end
 			end
 		end
 		#start of the actual algorithm
 
 		iteration = 1
-		step = start_step
+		step = 1
 		if n_backups > 0
-			timestep_duration = trunc(Int64, config.timeout / n_backups)
+			#this is in minutes!!!
+			timestep_duration = trunc(Int64, config.timeout / (n_backups * 60))
 		end
 		while true
 			@deb("Iteration $iteration", :flow)
 			improved = eval_and_improve!(policy, policy.maxlevel)
 			iteration += 1
-			if n_backups > 0 && datetime2unix(now()) - start_time >= timestep_duration * step
+			if n_backups > 0 && datetime2unix(now()) - start_time >= timestep_duration * 60 * step
+				@deb("Saving...", :flow)
+				save_policy(policy, repetition, start_duration + step * timestep_duration)
 				step += 1
-				save_policy(policy, repetition, n_steps * step_duration)
 			end
 			if !improved
 				println("Algorithm stopped because it could not improve controllers anymore")
@@ -296,9 +302,9 @@ ibpisolver.jl:
 	function load_policy(name::String, repetition::Int64, duration::Int64; converged = false)
 		#@load "savedcontrollers/$name.jld2" policy
 		if converged
-			policy = deserialize("savedcontrollers/$(policy.name)/rep$repetition/$(policy.name)$(repetition)_conv.policy")
+			policy = deserialize("savedcontrollers/$(name)/rep$repetition/$(name)$(repetition)_conv.policy")
 		else
-			policy = deserialize("savedcontrollers/$(policy.name)/rep$repetition/$(policy.name)$(repetition)_$duration.policy")
+			policy = deserialize("savedcontrollers/$(name)/rep$repetition/$(name)$(repetition)_$duration.policy")
 		end
 		return policy
 	end
@@ -442,7 +448,7 @@ end
 function print_time_value_coordinates(policy_name::String, agent_j_index::Int64, simreps::Int64, maxsimsteps::Int64, timestep::Int64, ntimesteps:: Int64)
 	coords = Array{Tuple{Float64, Float64}}(undef, 0)
 	for ts in 1:ntimesteps
-		policy = load_policy("$(policy_name)1_$(ts*timestep)")
+		policy = load_policy(policy_name, 1, ts*timestep)
 		avg_value = 0.0
 		for rep in 1:simreps
 			value, agent_i, agent_j, i = IBPIsimulate(policy.controllers[policy.maxlevel][1],  policy.controllers[policy.maxlevel-1][agent_j_index], maxsimsteps)
