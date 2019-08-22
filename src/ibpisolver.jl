@@ -185,11 +185,15 @@ ibpisolver.jl:
 						@deb("Improved level $level", :flow)
 						@deb(controller, :data)
 					else
+						if level == policy.maxlevel
+							log_time_nodes(controller.stats, datetime2unix(now()), length(controller.nodes), mem)
+
+							save_policy(policy, 1, length(controller.nodes))
+						end
 						@deb("Did not improve level $level", :flow)
 						escaped = escape_optima_standard!(controller, policy.controllers[level-1], tangent_b ;add_one = false)
 						improved = improved || escaped
 					end
-					log_time_nodes(controller.stats, datetime2unix(now()), length(controller.nodes), mem)
 
 					#a controller has converged only if also all lower level controllers have converged
 					controller.converged = !improved && !improved_lower
@@ -247,18 +251,18 @@ ibpisolver.jl:
 		iteration = 1
 		step = 1
 		if n_backups > 0
-			#this is in minutes!!!
-			timestep_duration = trunc(Int64, config.timeout / (n_backups * 60))
+			#this is in seconds!!!
+			timestep_duration = trunc(Int64, config.timeout / (n_backups))
 		end
 		while true
 			@deb("Iteration $iteration", :flow)
 			improved = eval_and_improve!(policy, policy.maxlevel)
 			iteration += 1
-			if n_backups > 0 && datetime2unix(now()) - start_time >= timestep_duration * 60 * step
-				@deb("Saving...", :flow)
-				save_policy(policy, repetition, start_duration + step * timestep_duration)
-				step += 1
-			end
+			# if n_backups > 0 && datetime2unix(now()) - start_time >= timestep_duration * step
+			# 	@deb("Saving...", :flow)
+			# 	save_policy(policy, repetition, start_duration + step * timestep_duration)
+			# 	step += 1
+			# end
 			if !improved
 				println("Algorithm stopped because it could not improve controllers anymore")
 				return true
@@ -286,6 +290,15 @@ ibpisolver.jl:
 
 	function save_policy(policy::IBPIPolicy, repetition::Int64, duration::Int64; converged = false)
 		#@save "savedcontrollers/$name.jld2" policy
+		for level in 1:policy.maxlevel
+			for controller in policy.controllers[level]
+				if level == 1
+					evaluate!(controller)
+				else
+					evaluate!(controller, policy.controllers[level-1])
+				end
+			end
+		end
 		if !isdir("savedcontrollers/$(policy.name)")
 			mkdir("savedcontrollers/$(policy.name)")
 		end
@@ -302,8 +315,14 @@ ibpisolver.jl:
 	function load_policy(name::String, repetition::Int64, duration::Int64; converged = false)
 		#@load "savedcontrollers/$name.jld2" policy
 		if converged
+			if !isfile("savedcontrollers/$(name)/rep$repetition/$(name)$(repetition)_conv.policy")
+				return nothing
+			end
 			policy = deserialize("savedcontrollers/$(name)/rep$repetition/$(name)$(repetition)_conv.policy")
 		else
+			if !isfile("savedcontrollers/$(name)/rep$repetition/$(name)$(repetition)_$duration.policy")
+				return nothing
+			end
 			policy = deserialize("savedcontrollers/$(name)/rep$repetition/$(name)$(repetition)_$duration.policy")
 		end
 		return policy
@@ -402,20 +421,39 @@ ibpisolver.jl:
 Prints stats to screen so its easy to copy and paste them in case input from files is bugged
 """
 
-function print_stats_coordinates(policy::IBPIPolicy)
- 	stats= policy.controllers[policy.maxlevel][1].stats
-	len = length(stats.data)
-	time = stats.data
-	nodes = stats.data
-	mem = stats.data
-	for i in 1:len
-		t = time[i][1]
-		n = nodes[i][2]
-		m = mem[i][3]
-		print("($t,$n)")
-	end
-	println()
-end
+# function print_stats_coordinates(policy::IBPIPolicy, window::Int64)
+#  	stats= policy.controllers[policy.maxlevel][1].stats
+# 	len = length(stats.data)
+# 	time = stats.data
+# 	nodes = stats.data
+# 	mem = stats.data
+# 	println("time, nodes")
+# 	for i in 1:len
+# 		t = round(time[i][1]; digits = 3)
+# 		n = nodes[i][2]
+# 		m = round(mem[i][3]/8000; digits = 3)
+# 		print("($t, $n)")
+# 	end
+# 	println()
+# 	println("time, memory")
+# 	m_total = 0.0
+# 	for i in 1:len
+# 		t = round(time[i][1]; digits = 3)
+# 		n = nodes[i][2]
+# 		m = mem[i][3]/8000
+# 		m_total = m_total + m
+# 		if i > window + 1
+# 			m_total -= (mem[i-window][3] / 8000)
+# 		end
+# 		if i > window + 1
+# 			m_avg = round(m_total/window; digits = 3)
+# 		else
+# 			m_avg = round(m_total / i; digits = 3)
+# 		end
+# 		print("($t, $m_avg)")
+# 	end
+# 	println()
+# end
 
 
 function print_time_node_coordinates(policy::IBPIPolicy; fix = false)
@@ -449,6 +487,9 @@ function print_time_value_coordinates(policy_name::String, agent_j_index::Int64,
 	coords = Array{Tuple{Float64, Float64}}(undef, 0)
 	for ts in 1:ntimesteps
 		policy = load_policy(policy_name, 1, ts*timestep)
+		if policy == nothing
+			continue
+		end
 		avg_value = 0.0
 		for rep in 1:simreps
 			value, agent_i, agent_j, i = IBPIsimulate(policy.controllers[policy.maxlevel][1],  policy.controllers[policy.maxlevel-1][agent_j_index], maxsimsteps)
@@ -461,5 +502,55 @@ function print_time_value_coordinates(policy_name::String, agent_j_index::Int64,
 	for coord in coords
 		print("($(coord[1]), $(coord[2]))")
 	end
+
+end
+
+function print_stats_coordinates(policy_name::String, agent_j_index::Int64, solverreps::Int64, simreps::Int64, maxsimsteps::Int64, timestep::Int64, ntimesteps:: Int64)
+	#time, node, mem, value
+	coords = Array{Tuple{Float64, Int64, Float64, Float64}}(undef, 0)
+	old_stats_end_index = 1
+	for ts in 1:ntimesteps
+		policy = load_policy(policy_name, solverreps, ts*timestep)
+		if policy == nothing
+			continue
+		end
+		controller_i = policy.controllers[policy.maxlevel][1]
+		avg_value = 0.0
+		for rep in 1:simreps
+			value, agent_i, agent_j, i = IBPIsimulate(policy.controllers[policy.maxlevel][1],  policy.controllers[policy.maxlevel-1][agent_j_index], maxsimsteps)
+			avg_value += value
+		end
+		avg_value /= simreps
+		nodes = length(controller_i.nodes)
+		time = trunc(last( controller_i.stats.data)[1]; digits = 3)
+		mem =  maximum(trunc(controller_i.stats.data[t][3]/8000; digits = 3) for t in old_stats_end_index:length(controller_i.stats.data))
+		old_stats_end_index = length(controller_i.stats.data)
+		push!(coords, (time, nodes, mem, avg_value))
+	end
+	#touch("/savedcontrollers/$(policy.name)/rep$solverreps/$(policy.name)_stats.policystats")
+	open("savedcontrollers/$(policy.name)/rep$solverreps/$(policy.name)_stats.policystats", "w") do f
+
+		write(f,"time, nodes\n")
+		for coord in coords
+			write(f, "($(coord[1]), $(coord[2]))")
+		end
+		write(f,"\ntime, mem\n")
+		for coord in coords
+			write(f, "($(coord[1]), $(coord[3]))")
+		end
+		write(f,"\nnodes, mem\n")
+		for coord in coords
+			write(f, "($(coord[2]), $(coord[3]))")
+		end
+		write(f,"\ntime, avg_val\n")
+		for coord in coords
+			write(f, "($(coord[1]), $(coord[4]))")
+		end
+		write(f, "\nnodes, avg_val\n")
+		for coord in coords
+			write(f, "($(coord[2]), $(coord[4]))")
+		end
+	end
+
 
 end

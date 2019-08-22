@@ -145,7 +145,7 @@ IBPIPolicyUtils:
 				node.actionProb[action] = prob/tot
 			end
 		end
-		if !normalize && tot <= 1-config.minval || tot >= 1+config.minval
+		if !normalize && tot <= 1.0-config.minval || tot >= 1.0+config.minval
 			error("Sum of actionProb == $tot")
 		end
 
@@ -165,13 +165,13 @@ IBPIPolicyUtils:
 					end
 					tot+= prob_next
 				end
-				if normalize && tot != 1
+				if normalize && tot != 1.0
 					@deb("Normalizing edges $tot", :checkNodes)
 					for i in 1:length(next_dict)
 						next_dict[i] = (next_dict[i][1] => next_dict[i][2]/tot)
 					end
 				end
-				if !normalize && (tot <= 1-config.minval || tot >= 1+config.minval)
+				if !normalize && (tot <= 1.0-config.minval || tot >= 1.0+config.minval)
 					error("Sum of edges  == $tot")
 				end
 
@@ -246,7 +246,7 @@ IBPIPolicyUtils:
 				randn-= items[i]
 			end
 		end
-		error("Out of dict bounds while choosing items")
+		return last(collect(keys(items)))
 	end
 
 	function chooseWithProbability(items::Vector{Pair{Int64, Float64}})
@@ -259,7 +259,8 @@ IBPIPolicyUtils:
 				randn-= i[2]
 			end
 		end
-		error("Out of dict bounds while choosing items")
+		#if out of bounds
+		return last(items)[1]
 	end
 
 	"""

@@ -166,8 +166,8 @@ function IBPIsimulate(controller_i::InteractiveController{S, A, W}, controller_j
 		state = s_prime
 	end
 	println()
-	analyze_history(i_history, j_history)
-	analyze_correlation(correlation, controller_i, controller_j)
+	#analyze_history(i_history, j_history)
+	#analyze_correlation(correlation, controller_i, controller_j)
 	return value, agent_i, agent_j, correlation
 end
 
