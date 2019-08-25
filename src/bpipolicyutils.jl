@@ -1242,32 +1242,39 @@ IBPIPolicyUtils:
 				end
 			end
 		end
+		new_nodes = Array{Node{A, W}}(undef, 0)
 		if !add_one
 			for reachable_b in reachable_beliefs
-				escaped = escaped || add_escape_node!(reachable_b, controller)
+				new_node =  add_escape_node!(reachable_b, controller, new_nodes)
+				if new_node != nothing
+					push!(new_nodes, new_node)
+				end
 			end
+		end
+		for new_node in new_nodes
+			push!( controller.nodes, new_node)
 		end
 		#@deb("$reachable_b")
 		#stop_time(controller.stats, "escape")
 
-		return escaped
+		return length(new_nodes) > 0
 	end
 
-	function add_escape_node!(reachable_b::Array{Float64}, controller::Controller{A, W}) where {A, W}
-		best_old_node, best_old_value = get_best_node(reachable_b, controller.nodes)
+	function add_escape_node!(reachable_b::Array{Float64}, controller::Controller{A, W}, new_nodes::Array{Node{A, W}}) where {A, W}
+		best_old_node, best_old_value = get_best_node(reachable_b, vcat(controller.nodes, new_nodes))
 		#generate node directly
-		best_new_node, best_new_value = generate_node_directly(controller, reachable_b)
+		best_new_node, best_new_value = generate_node_directly(controller, reachable_b, length(new_nodes))
 		if best_new_value - best_old_value > config.min_improvement
 			@deb("in $reachable_b node $(best_new_node.id) has $best_new_value > $best_old_value", :escape)
 			@deb("best old node:", :generatenode)
 			@deb(best_old_node, :generatenode)
 			checkNode(best_new_node, controller; normalize = config.normalize)
-			push!(controller.nodes, best_new_node)
+			#push!(controller.nodes, best_new_node)
 			@deb("Added node $(best_new_node.id) to improve $reachable_b", :flow)
 			@deb(best_new_node, :flow)
-			return true
+			return best_new_node
 		end
-		return false
+		return nothing
 	end
 
 	function belief_update(start_b::Array{Float64}, a::A, z::W, pomdp::POMDP) where{A, W}
@@ -1347,7 +1354,7 @@ IBPIPolicyUtils:
 	# 		end
 	# 		return Node(id, actionProb,edges, value, Dict{Int64, Vector{Vector{Pair{Int64, Float64}}}}())
 	# end
-	function generate_node_directly(controller::Controller{A, W}, start_b::Array{Float64}) where {A, W}
+	function generate_node_directly(controller::Controller{A, W}, start_b::Array{Float64}, n_new_nodes::Int64) where {A, W}
 		actions = POMDPs.actions(controller.frame)
 		observations = POMDPs.observations(controller.frame)
 		n_observations = length(observations)
@@ -1365,12 +1372,12 @@ IBPIPolicyUtils:
 				#get the best node in the controller for the updated beief
 				best_next_node, best_value_obs = get_best_node(result_b, controller.nodes)
 				new_v = node_value(best_next_node, a, z, controller.frame)
-				new_node_partial = build_node(length(controller.nodes)+1, a, z, best_next_node, new_v)
+				new_node_partial = build_node(length(controller.nodes)+1+n_new_nodes, a, z, best_next_node, new_v)
 				#add that edge to the node and update the value vector
 				if z_index ==1
 					new_node = new_node_partial
 				else
-					new_node = mergeNode(new_node, new_node_partial, a,  length(controller.nodes)+1)
+					new_node = mergeNode(new_node, new_node_partial, a,  length(controller.nodes)+1+n_new_nodes)
 				end
 			end
 			#compute the best node (choose between actions)
@@ -1391,7 +1398,7 @@ function bpi!(policy::BPIPolicy)
 	full_backup_stochastic!(controller)
 
 	iteration = 0
-	while iteration <= config.maxrep
+	while iteration <= config.maxrep || config.maxrep < 0
 		println("Iteration $iteration")
 		evaluate!(controller)
 

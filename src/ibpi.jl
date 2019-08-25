@@ -753,25 +753,32 @@ function escape_optima_standard!(controller::InteractiveController{A, W}, contro
 		#break here if you want to improve only the first tangent belief point
 	end
 	#by accumulating reachable beliefs into a set duplicates are eliminated = less computation
+	new_nodes = Array{Node{A, W},1 }(undef, 0)
 	if !add_one
 		for reachable_b in reachable_beliefs
-			escaped = escaped || add_escape_node!(reachable_b, controller, controllers_j, temp_id_j)
+			new_node = add_escape_node!(reachable_b, controller, controllers_j, temp_id_j, new_nodes)
+			if new_node != nothing
+				push!(new_nodes, new_node)
+			end
 		end
+	end
+	for new_node in new_nodes
+		push!( controller.nodes, new_node)
 	end
 	#@deb("$reachable_b")
 	#stop_time(controller.stats, "escape")
-	return escaped
+	return length(new_nodes) > 0
 end
 
-function add_escape_node!(new_b::Array{Float64}, controller::InteractiveController{S, A, W}, controllers_j::Array{AbstractController, 1}, temp_id_j::Array{Array{Int64, 1}, 1}) where {S, A, W}
-	best_old_node, best_old_value = get_best_node(new_b, controller.nodes)
+function add_escape_node!(new_b::Array{Float64}, controller::InteractiveController{S, A, W}, controllers_j::Array{AbstractController, 1}, temp_id_j::Array{Array{Int64, 1}, 1}, new_nodes::Array{Node{A, W}, 1}) where {S, A, W}
+	best_old_node, best_old_value = get_best_node(new_b, vcat(controller.nodes, new_nodes))
 	#@assert best_old_node_alt == best_old_node
 	if :escape in debug
 		println("Best old node:")
 		println(best_old_node)
 	end
 
-	best_new_node, best_new_value = generate_node_directly(controller, controllers_j, new_b, temp_id_j)
+	best_new_node, best_new_value = generate_node_directly(controller, controllers_j, new_b, temp_id_j, length(new_nodes))
 	if best_new_value - best_old_value > config.min_improvement
 		@deb("in $new_b node $(best_new_node.id) has $best_new_value > $best_old_value", :escape)
 		#reworked_node = rework_node(controller, best_new_node)
@@ -780,12 +787,11 @@ function add_escape_node!(new_b::Array{Float64}, controller::InteractiveControll
 		@deb("Improvement $(best_new_value-best_old_value)", :flow)
 
 		checkNode(best_new_node, controller; normalize = config.normalize)
-		push!(controller.nodes, best_new_node)
 
-		@deb(controller.nodes[best_new_node.id], :flow)
-		return true
+		@deb(best_new_node, :flow)
+		return best_new_node
 	end
-	return false
+	return nothing
 end
 
 function belief_update(start_b::Array{Float64}, ai::A, zi::W, controller::InteractiveController, controllers_j::Array{AbstractController, 1}) where {A, W}
@@ -884,7 +890,7 @@ end
 
 
 
-function generate_node_directly(controller::InteractiveController{A, W}, controllers_j::Array{AbstractController, 1}, start_b::Array{Float64}, temp_id_j::Array{Array{Int64,1},1}) where {A, W, S}
+function generate_node_directly(controller::InteractiveController{A, W}, controllers_j::Array{AbstractController, 1}, start_b::Array{Float64}, temp_id_j::Array{Array{Int64,1},1}, n_new_nodes::Int64) where {A, W, S}
 	#start_time(controller.stats, "escape_generate_node")
 	frame_i = controller.frame
 	actions_i = actions(frame_i)
@@ -906,14 +912,14 @@ function generate_node_directly(controller::InteractiveController{A, W}, control
 			best_next_node, best_value_obs = get_best_node(result_b, controller.nodes)
 			new_v = node_value(best_next_node, a, z, controllers_j, frame_i, temp_id_j)
 			@deb("new_v = $new_v", :generatenode)
-			new_node_partial = build_node(length(controller.nodes)+1, a, z, best_next_node, new_v)
+			new_node_partial = build_node(length(controller.nodes)+1+n_new_nodes, a, z, best_next_node, new_v)
 			@deb("new partial node:", :generatenode)
 			@deb(new_node_partial, :generatenode)
 			#add that edge to the node and update the value vector
 			if z_index ==1
 				new_node = new_node_partial
 			else
-				new_node = mergeNode(new_node, new_node_partial, a, length(controller.nodes)+1)
+				new_node = mergeNode(new_node, new_node_partial, a, length(controller.nodes)+1+n_new_nodes)
 				@deb("after merge:", :generatenode)
 				@deb(new_node, :generatenode)
 			end
