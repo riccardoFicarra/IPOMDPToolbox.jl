@@ -509,26 +509,31 @@ function print_stats_coordinates(policy_name::String, agent_j_index::Int64, solv
 	#time, node, mem, value
 	coords = Array{Tuple{Float64, Int64, Float64, Float64}}(undef, 0)
 	old_stats_end_index = 1
+
 	for ts in 1:ntimesteps
 		policy = load_policy(policy_name, solverreps, ts*timestep)
 		if policy == nothing
 			continue
 		end
 		controller_i = policy.controllers[policy.maxlevel][1]
+		if length(controller_i.stats.data) == 0
+			continue
+		end
 		avg_value = 0.0
 		for rep in 1:simreps
-			value, agent_i, agent_j, i = IBPIsimulate(policy.controllers[policy.maxlevel][1],  policy.controllers[policy.maxlevel-1][agent_j_index], maxsimsteps)
+			value, agent_i, agent_j, i = IBPIsimulate(policy.controllers[policy.maxlevel][1], policy.controllers[policy.maxlevel][1], maxsimsteps)
 			avg_value += value
+			@deb("Rep $rep of $simreps for $(policy.name)_$(ts*timestep)", :progress)
 		end
 		avg_value /= simreps
 		nodes = length(controller_i.nodes)
 		time = trunc(last( controller_i.stats.data)[1]; digits = 3)
 		mem =  maximum(trunc(controller_i.stats.data[t][3]/8000; digits = 3) for t in old_stats_end_index:length(controller_i.stats.data))
 		old_stats_end_index = length(controller_i.stats.data)
-		push!(coords, (time, nodes, mem, avg_value))
+		push!(coords, (time, nodes, mem, trunc(avg_value; digits=3)))
 	end
 	#touch("/savedcontrollers/$(policy.name)/rep$solverreps/$(policy.name)_stats.policystats")
-	open("savedcontrollers/$(policy.name)/rep$solverreps/$(policy.name)_stats.policystats", "w") do f
+	open("savedcontrollers/$(policy_name)/rep$solverreps/$(policy_name)_agent$(agent_j_index)_stats.policystats", "w") do f
 
 		write(f,"time, nodes\n")
 		for coord in coords

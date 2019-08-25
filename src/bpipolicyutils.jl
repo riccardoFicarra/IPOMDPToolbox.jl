@@ -1091,7 +1091,7 @@ IBPIPolicyUtils:
 			@deb("$(dual_status(lpmodel))")
 			@deb("Obj = $(objective_value(lpmodel))", :data)
 			delta = JuMP.objective_value(lpmodel)
-			if delta > config.min_improvement
+			if delta > config.minval
 				@deb("Node improved by $delta", :flow)
 				#means that node can be improved!
 				changed = true
@@ -1235,16 +1235,25 @@ IBPIPolicyUtils:
 					@deb("from belief $start_b action $a and obs $z -> $new_b")
 
 					if add_one
-						return add_escape_node!(new_b, controller)
+						escaped = escaped || add_escape_node!(new_b, controller)
+						@deb("Added node $(controller.nodes[end]) to improve node $id")
 					else
 						push!(reachable_beliefs, new_b)
 					end
 				end
 			end
+			if add_one && escaped
+				break
+			end
 		end
 		if !add_one
 			for reachable_b in reachable_beliefs
-				escaped = escaped || add_escape_node!(reachable_b, controller)
+				@deb("Trying to improve reachable belief $reachable_b", :escape)
+				escaped_single = add_escape_node!(reachable_b, controller)
+				if escaped_single
+					@deb("Added node $(controller.nodes[end].id)", :escape)
+				end
+				escaped = escaped || escaped_single
 			end
 		end
 		#@deb("$reachable_b")
@@ -1389,9 +1398,9 @@ function bpi!(policy::BPIPolicy)
 	evaluate!(controller)
 
 	full_backup_stochastic!(controller)
-
+	improved = false
 	iteration = 0
-	while iteration <= config.maxrep
+	while iteration <= config.maxrep || config.maxrep < 0
 		println("Iteration $iteration")
 		evaluate!(controller)
 
@@ -1402,11 +1411,11 @@ function bpi!(policy::BPIPolicy)
 			escaped = escape_optima_standard!(controller, tangent_b; add_one = false)
 			if !escaped
 				println("Convergence!")
-				return
+				return true
 			end
 		end
 		iteration += 1
 	end
 	println("Maxrep exceeded")
-	return
+	return !improved
 end
