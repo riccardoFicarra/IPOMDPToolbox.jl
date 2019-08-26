@@ -347,7 +347,7 @@ function partial_backup!(controller::InteractiveController{A, W}, controllers_j:
 
 		@deb("Obj = $(objective_value(lpmodel))", :lpdual)
 		delta = JuMP.objective_value(lpmodel)
-		if delta > config.min_improvement
+		if delta > config.minval
 			#just to go on a newline after the progress bar
 			@deb("", :flow)
 			@deb("Improvement $delta", :flow)
@@ -742,7 +742,7 @@ function escape_optima_standard!(controller::InteractiveController{A, W}, contro
 				#node = generate_node_directly(controller, controller_j, new_b)
 				@deb("from belief $start_b action $ai and obs $zi -> $new_b", :belief)
 				if add_one
-					escaped = add_escape_node!(new_b, controller, controllers_j, temp_id_j)
+					escaped = escaped || add_escape_node!(new_b, controller, controllers_j, temp_id_j)
 					##stop_time(controller.stats, "escape")
 
 				else
@@ -751,6 +751,9 @@ function escape_optima_standard!(controller::InteractiveController{A, W}, contro
 			end
 		end
 		#break here if you want to improve only the first tangent belief point
+		if add_one && escaped
+			break
+		end
 	end
 	#by accumulating reachable beliefs into a set duplicates are eliminated = less computation
 	new_nodes = Array{Node{A, W},1 }(undef, 0)
