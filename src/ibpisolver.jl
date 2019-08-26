@@ -49,11 +49,12 @@ ibpisolver.jl:
 		timeout::Int64
 		min_improvement::Float64
 		normalize::Bool
+		max_nodes::Array{Int64, 1}
 	end
 	"""
 	Default config values
 	"""
-	config = IBPISolver(0, 10, 1e-10, 300, 1e-10, true)
+	config = IBPISolver(0, 10, 1e-10, 300, 1e-10, true, [15, 20, 30])
 
 
 	"""
@@ -64,8 +65,8 @@ ibpisolver.jl:
 	- `minval::Float64`: if a number is below minval it is considered as zero.
 	- `timeout::Int64`: number of seconds after which the algorithm stops.
 	"""
-	function set_solver_params(force::Int64, maxrep::Int64, minval::Float64, timeout::Int64, min_improvement::Float64, normalize::Bool)
-		global config = IBPISolver(force, maxrep, minval, timeout, min_improvement, normalize)
+	function set_solver_params(force::Int64, maxrep::Int64, minval::Float64, timeout::Int64, min_improvement::Float64, normalize::Bool, max_nodes::Array{Int64, 1})
+		global config = IBPISolver(force, maxrep, minval, timeout, min_improvement, normalize, max_nodes)
 	end
 
 	function Base.println(controller::AbstractController)
@@ -127,11 +128,11 @@ ibpisolver.jl:
 		return IBPIPolicy(ipomdp)
 	end
 
-	function eval_and_improve!(policy::IBPIPolicy, level::Int64)
+	function eval_and_improve!(policy::IBPIPolicy, level::Int64, repetition::Int64, n_backups::Int64)
 		@deb("called @level $level", :flow)
 		improved = false
 		if level >= 2
-			improved_lower = eval_and_improve!(policy, level-1)
+			improved_lower, n_backups = eval_and_improve!(policy, level-1, repetition, n_backups)
 		end
 		if level == 1
 			tangent_b  = Dict{Int64, Array{Float64}}()
@@ -151,10 +152,15 @@ ibpisolver.jl:
 						@deb(policy.controllers[1], :data)
 					else
 						@deb("Did not improve level 1", :flow)
-						escaped = escape_optima_standard!(controller, tangent_b; add_one = false)
-						improved == improved || escaped
-						#if the controller failed both improvement and escape mark it as converged.
-						controller.converged = !escaped
+						if length(controller.nodes) < config.max_nodes[level]
+							escaped = escape_optima_standard!(controller, tangent_b; add_one = false)
+							improved == improved || escaped
+							#if the controller failed both improvement and escape mark it as converged.
+							controller.converged = !escaped
+						else
+							#if the max number of nodes has been reached it is marked as converged
+							controller.converged = true
+						end
 					end
 					log_time_nodes(controller.stats, datetime2unix(now()), length(controller.nodes), mem)
 
@@ -187,12 +193,19 @@ ibpisolver.jl:
 					else
 						if level == policy.maxlevel
 							log_time_nodes(controller.stats, datetime2unix(now()), length(controller.nodes), mem)
-
-							save_policy(policy, 1, length(controller.nodes))
+							n_backups += 1
+							save_policy(policy, repetition, n_backups)
 						end
 						@deb("Did not improve level $level", :flow)
-						escaped = escape_optima_standard!(controller, policy.controllers[level-1], tangent_b ;add_one = false)
-						improved = improved || escaped
+						if length(controller.nodes) < config.max_nodes[level]
+							escaped = escape_optima_standard!(controller, policy.controllers[level-1], tangent_b ;add_one = false)
+							improved = improved || escaped
+						else
+							#by not setting converged directly to true partial backup is allowed until lowerlevel controllers converge.
+							#the max number of nodes is not improved anyway.
+							improved = false
+						end
+
 					end
 
 					#a controller has converged only if also all lower level controllers have converged
@@ -210,10 +223,102 @@ ibpisolver.jl:
 			# 	log_time_nodes(controller.stats, current_time, length(controller.nodes), mem)
 			# end
 		end
+		return improved, n_backups
+	end
+
+#=
+	function eval_and_improve_iterative!(policy::IBPIPolicy, n_backups)
+		for level in 1:policy.maxlevel
+			improved_lower = false
+			if level == 1
+				tangent_b  = Dict{Int64, Array{Float64}}()
+				for controller in policy.controllers[1]
+					#experimental: if controller of level 0 has converged skip it to avoid losing time
+					if !controller.converged
+
+						println("Level 1, frame $(frametype(controller)): $(length(controller.nodes)) nodes")
+						evaluate!(controller)
+						@deb(controller, :data)
+						start_time = datetime2unix(now())
+
+						((improved, tangent_b), time, mem, gc)  = @timed partial_backup!(controller ; add_one = true)
+						@deb("Elapsed time for level $level: $(datetime2unix(now()) - start_time)",:stats)
+						if improved
+							@deb("Improved level 1", :flow)
+						else
+							@deb("Did not improve level 1", :flow)
+							if length(controller.nodes) < config.max_nodes[level]
+								escaped = escape_optima_standard!(controller, tangent_b; add_one = false)
+								improved == improved || escaped
+								#if the controller failed both improvement and escape mark it as converged.
+								controller.converged = !escaped
+							else
+								#if the max number of nodes has been reached it is marked as converged
+								controller.converged = true
+
+							end
+						end
+						log_time_nodes(controller.stats, datetime2unix(now()), length(controller.nodes), mem)
+
+					else
+						log_time_nodes(controller.stats, datetime2unix(now()), length(controller.nodes), 0)
+						println("Level 1, frame $(frametype(controller)): $(length(controller.nodes)) nodes has converged")
+					end
+				end
+			else
+				for controller in policy.controllers[level]
+					if !controller.converged
+						println("Level $level, frame $(frametype(controller)) : $(length(controller.nodes)) nodes")
+						evaluate!(controller, policy.controllers[level-1])
+
+						@deb(controller, :data)
+						start_time = datetime2unix(now())
+
+						((improved, tangent_b), time, mem, gc)  = @timed partial_backup!(controller, policy.controllers[level-1]; add_one = true)
+
+						@deb("Elapsed time for level $level: $(datetime2unix(now()) - start_time)", :stats)
+
+						if improved
+							@deb("Improved level $level", :flow)
+							@deb(controller, :data)
+						else
+							if level == policy.maxlevel
+								log_time_nodes(controller.stats, datetime2unix(now()), length(controller.nodes), mem)
+
+								save_policy(policy, 1, length(controller.nodes))
+							end
+							@deb("Did not improve level $level", :flow)
+							if length(controller.nodes) < config.max_nodes[level]
+								escaped = escape_optima_standard!(controller, policy.controllers[level-1], tangent_b ;add_one = false)
+								improved = improved || escaped
+							else
+								#by not setting converged directly to true partial backup is allowed until lowerlevel controllers converge.
+								#the max number of nodes is not improved anyway.
+								improved = false
+							end
+
+						end
+
+						#a controller has converged only if also all lower level controllers have converged
+						controller.converged = !improved && !improved_lower
+						#set up the variable for the higher level
+						improved_lower = improved
+						if controller.converged
+							println("Level $level, frame $(frametype(controller)) : $(length(controller.nodes)) nodes")
+						end
+					else
+						log_time_nodes(controller.stats, datetime2unix(now()), length(controller.nodes), 0)
+						println("Level $level, frame $(frametype(controller)): $(length(controller.nodes)) nodes has converged")
+					end
+			end
+		end
+
 		return improved
 	end
 
-	function ibpi!(policy::IBPIPolicy, repetition::Int64; start_duration = 0,  n_backups = 0)
+=#
+
+	function ibpi!(policy::IBPIPolicy, repetition::Int64; start_duration = 0)
 		#full backup part to speed up
 		for controller in policy.controllers[1]
 			evaluate!(controller)
@@ -249,14 +354,11 @@ ibpisolver.jl:
 		#start of the actual algorithm
 
 		iteration = 1
-		step = 1
-		if n_backups > 0
-			#this is in seconds!!!
-			timestep_duration = trunc(Int64, config.timeout / (n_backups))
-		end
+		improved = false
+		n_backups = 0
 		while true
 			@deb("Iteration $iteration", :flow)
-			improved = eval_and_improve!(policy, policy.maxlevel)
+			improved, n_backups = eval_and_improve!(policy, policy.maxlevel,repetition, n_backups)
 			iteration += 1
 			# if n_backups > 0 && datetime2unix(now()) - start_time >= timestep_duration * step
 			# 	@deb("Saving...", :flow)
@@ -265,7 +367,7 @@ ibpisolver.jl:
 			# end
 			if !improved
 				println("Algorithm stopped because it could not improve controllers anymore")
-				return true
+				break
 			elseif config.maxrep >= 0 && iteration >= config.maxrep
 				println("maxrep exceeded $iteration")
 				break
@@ -276,19 +378,23 @@ ibpisolver.jl:
 		end
 		#only needed when evaluation is cut short
 		#but it doesnt take that much time
-		for level in 1:policy.maxlevel
-			for controller in policy.controllers[level]
-				if level == 1
-					evaluate!(controller)
-				else
-					evaluate!(controller, policy.controllers[level-1])
+		if improved
+			for level in 1:policy.maxlevel
+				for controller in policy.controllers[level]
+					if level == 1
+						evaluate!(controller)
+					else
+						evaluate!(controller, policy.controllers[level-1])
+					end
 				end
 			end
 		end
+
+		save_policy(policy, repetition, n_backups+1)
 		return false
 	end
 
-	function save_policy(policy::IBPIPolicy, repetition::Int64, duration::Int64; converged = false)
+	function save_policy(policy::IBPIPolicy, rep::Int64, backup_n::Int64; converged = false)
 		#@save "savedcontrollers/$name.jld2" policy
 		for level in 1:policy.maxlevel
 			for controller in policy.controllers[level]
@@ -306,13 +412,13 @@ ibpisolver.jl:
 			mkdir("savedcontrollers/$(policy.name)/rep$rep")
 		end
 		if converged
-			serialize("savedcontrollers/$(policy.name)/rep$rep/$(policy.name)$(repetition)_conv.policy", policy)
+			serialize("savedcontrollers/$(policy.name)/rep$rep/$(policy.name)$(rep)_conv.policy", policy)
 		else
-			serialize("savedcontrollers/$(policy.name)/rep$rep/$(policy.name)$(repetition)_$duration.policy", policy)
+			serialize("savedcontrollers/$(policy.name)/rep$rep/$(policy.name)$(rep)_$backup_n.policy", policy)
 		end
 	end
 
-	function load_policy(name::String, repetition::Int64, duration::Int64; converged = false)
+	function load_policy(name::String, repetition::Int64, backup_n::Int64; converged = false)
 		#@load "savedcontrollers/$name.jld2" policy
 		if converged
 			if !isfile("savedcontrollers/$(name)/rep$repetition/$(name)$(repetition)_conv.policy")
@@ -320,10 +426,10 @@ ibpisolver.jl:
 			end
 			policy = deserialize("savedcontrollers/$(name)/rep$repetition/$(name)$(repetition)_conv.policy")
 		else
-			if !isfile("savedcontrollers/$(name)/rep$repetition/$(name)$(repetition)_$duration.policy")
+			if !isfile("savedcontrollers/$(name)/rep$repetition/$(name)$(repetition)_$backup_n.policy")
 				return nothing
 			end
-			policy = deserialize("savedcontrollers/$(name)/rep$repetition/$(name)$(repetition)_$duration.policy")
+			policy = deserialize("savedcontrollers/$(name)/rep$repetition/$(name)$(repetition)_$backup_n.policy")
 		end
 		return policy
 	end
@@ -505,13 +611,13 @@ function print_time_value_coordinates(policy_name::String, agent_j_index::Int64,
 
 end
 
-function print_stats_coordinates(policy_name::String, agent_j_index::Int64, solverreps::Int64, simreps::Int64, maxsimsteps::Int64, timestep::Int64, ntimesteps:: Int64)
+function print_stats_coordinates(policy_name::String, agent_j_index::Int64, solverreps::Int64, simreps::Int64, maxsimsteps::Int64,  n_backups:: Int64)
 	#time, node, mem, value
 	coords = Array{Tuple{Float64, Int64, Float64, Float64}}(undef, 0)
 	old_stats_end_index = 1
 
-	for ts in 1:ntimesteps
-		policy = load_policy(policy_name, solverreps, ts*timestep)
+	for backup_n in 1:n_backups
+		policy = load_policy(policy_name, solverreps, backup_n)
 		if policy == nothing
 			continue
 		end
@@ -521,9 +627,9 @@ function print_stats_coordinates(policy_name::String, agent_j_index::Int64, solv
 		end
 		avg_value = 0.0
 		for rep in 1:simreps
-			value, agent_i, agent_j, i = IBPIsimulate(policy.controllers[policy.maxlevel][1], policy.controllers[policy.maxlevel][1], maxsimsteps)
+			value, agent_i, agent_j, i = IBPIsimulate(policy.controllers[policy.maxlevel][1], policy.controllers[policy.maxlevel-1][agent_j_index], maxsimsteps)
 			avg_value += value
-			@deb("Rep $rep of $simreps for $(policy.name)_$(ts*timestep)", :progress)
+			@deb("Rep $rep of $simreps for $(policy.name)_$(backup_n), agent $agent_j_index", :progress)
 		end
 		avg_value /= simreps
 		nodes = length(controller_i.nodes)
