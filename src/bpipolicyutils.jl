@@ -1276,9 +1276,9 @@ IBPIPolicyUtils:
 			push!(controller.nodes, best_new_node)
 			@deb("Added node $(best_new_node.id) to improve $reachable_b", :flow)
 			@deb(best_new_node, :flow)
-			return true
+			return best_new_node
 		end
-		return false
+		return nothing
 	end
 
 	function belief_update(start_b::Array{Float64}, a::A, z::W, pomdp::POMDP) where{A, W}
