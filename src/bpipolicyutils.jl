@@ -1091,7 +1091,7 @@ IBPIPolicyUtils:
 			@deb("$(dual_status(lpmodel))")
 			@deb("Obj = $(objective_value(lpmodel))", :data)
 			delta = JuMP.objective_value(lpmodel)
-			if delta > config.min_improvement
+			if delta > config.minval
 				@deb("Node improved by $delta", :flow)
 				#means that node can be improved!
 				changed = true
@@ -1235,17 +1235,21 @@ IBPIPolicyUtils:
 					@deb("from belief $start_b action $a and obs $z -> $new_b")
 
 					if add_one
-						return add_escape_node!(new_b, controller)
+						escaped = escaped || add_escape_node!(new_b, controller)
+						@deb("Added node $(controller.nodes[end]) to improve node $id")
 					else
 						push!(reachable_beliefs, new_b)
 					end
 				end
 			end
+			if add_one && escaped
+				break
+			end
 		end
-		new_nodes = Array{Node{A, W}}(undef, 0)
+		new_nodes = Array{Node{A, W},1 }(undef, 0)
 		if !add_one
 			for reachable_b in reachable_beliefs
-				new_node =  add_escape_node!(reachable_b, controller, new_nodes)
+				new_node = add_escape_node!(reachable_b, controller, new_nodes)
 				if new_node != nothing
 					push!(new_nodes, new_node)
 				end
@@ -1257,10 +1261,10 @@ IBPIPolicyUtils:
 		#@deb("$reachable_b")
 		#stop_time(controller.stats, "escape")
 
-		return length(new_nodes) > 0
+		return length(new_nodes > 0)
 	end
 
-	function add_escape_node!(reachable_b::Array{Float64}, controller::Controller{A, W}, new_nodes::Array{Node{A, W}}) where {A, W}
+	function add_escape_node!(reachable_b::Array{Float64}, controller::Controller{A, W}, new_nodes::Array{Node{A, W}, 1}) where {A, W}
 		best_old_node, best_old_value = get_best_node(reachable_b, vcat(controller.nodes, new_nodes))
 		#generate node directly
 		best_new_node, best_new_value = generate_node_directly(controller, reachable_b, length(new_nodes))
@@ -1269,12 +1273,12 @@ IBPIPolicyUtils:
 			@deb("best old node:", :generatenode)
 			@deb(best_old_node, :generatenode)
 			checkNode(best_new_node, controller; normalize = config.normalize)
-			#push!(controller.nodes, best_new_node)
+			push!(controller.nodes, best_new_node)
 			@deb("Added node $(best_new_node.id) to improve $reachable_b", :flow)
 			@deb(best_new_node, :flow)
-			return best_new_node
+			return true
 		end
-		return nothing
+		return false
 	end
 
 	function belief_update(start_b::Array{Float64}, a::A, z::W, pomdp::POMDP) where{A, W}
@@ -1396,7 +1400,7 @@ function bpi!(policy::BPIPolicy)
 	evaluate!(controller)
 
 	full_backup_stochastic!(controller)
-
+	improved = false
 	iteration = 0
 	while iteration <= config.maxrep || config.maxrep < 0
 		println("Iteration $iteration")
@@ -1409,11 +1413,11 @@ function bpi!(policy::BPIPolicy)
 			escaped = escape_optima_standard!(controller, tangent_b; add_one = false)
 			if !escaped
 				println("Convergence!")
-				return
+				return true
 			end
 		end
 		iteration += 1
 	end
 	println("Maxrep exceeded")
-	return
+	return !improved
 end
