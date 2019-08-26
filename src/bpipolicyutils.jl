@@ -1229,35 +1229,42 @@ IBPIPolicyUtils:
 			#id = collect(keys(tangent_b))[1]
 			#start_b = tangent_b[id]
 			@deb("$id - >$start_b")
+			new_nodes = Array{Node{A, W},1 }(undef, 0)
 			for a in keys(nodes[id].actionProb)
 				for z in observations
 					new_b = belief_update(start_b, a, z, pomdp)
 					@deb("from belief $start_b action $a and obs $z -> $new_b")
 
 					if add_one
-						escaped = escaped || add_escape_node!(new_b, controller)
-						@deb("Added node $(controller.nodes[end]) to improve node $id")
+						new_node = add_escape_node!(new_b, controller, new_nodes)
+						if new_node != nothing
+							push!(new_nodes, new_node)
+						end
 					else
 						push!(reachable_beliefs, new_b)
 					end
 				end
 			end
-			if add_one && escaped
-				break
+			if add_one && length(new_nodes) > 0
+				for new_node in new_nodes
+					push!( controller.nodes, new_node)
+				end
+				return true
 			end
 		end
-		new_nodes = Array{Node{A, W},1 }(undef, 0)
 		if !add_one
+			new_nodes = Array{Node{A, W},1 }(undef, 0)
 			for reachable_b in reachable_beliefs
 				new_node = add_escape_node!(reachable_b, controller, new_nodes)
 				if new_node != nothing
 					push!(new_nodes, new_node)
 				end
 			end
+			for new_node in new_nodes
+				push!( controller.nodes, new_node)
+			end
 		end
-		for new_node in new_nodes
-			push!( controller.nodes, new_node)
-		end
+
 		#@deb("$reachable_b")
 		#stop_time(controller.stats, "escape")
 
@@ -1273,7 +1280,6 @@ IBPIPolicyUtils:
 			@deb("best old node:", :generatenode)
 			@deb(best_old_node, :generatenode)
 			checkNode(best_new_node, controller; normalize = config.normalize)
-			push!(controller.nodes, best_new_node)
 			@deb("Added node $(best_new_node.id) to improve $reachable_b", :flow)
 			@deb(best_new_node, :flow)
 			return best_new_node

@@ -734,40 +734,47 @@ function escape_optima_standard!(controller::InteractiveController{A, W}, contro
 	for (id, start_b) in tangent_b
 		#id = collect(keys(tangent_b))[1]
 		#start_b = tangent_b[id]
-		@deb(start_b)
 		@deb("$id - >$start_b", :belief)
+		@deb("Improving tangent point for node $id", :flow)
+		new_nodes = Array{Node{A, W},1 }(undef, 0)
 		for ai in keys(nodes[id].actionProb)
 			for zi in observations_i
 				new_b = belief_update(start_b, ai, zi, controller, controllers_j)
 				#node = generate_node_directly(controller, controller_j, new_b)
 				@deb("from belief $start_b action $ai and obs $zi -> $new_b", :belief)
 				if add_one
-					escaped = escaped || add_escape_node!(new_b, controller, controllers_j, temp_id_j)
-					##stop_time(controller.stats, "escape")
-
+					new_node = add_escape_node!(new_b, controller, controllers_j, temp_id_j, new_nodes)
+					if new_node != nothing
+						push!(new_nodes, new_node)
+					end
 				else
 					push!(reachable_beliefs, new_b)
 				end
 			end
 		end
-		#break here if you want to improve only the first tangent belief point
-		if add_one && escaped
+		#break here if you want to improve only the first improvable tangent belief point
+		if add_one && length(new_nodes) > 0
+			for new_node in new_nodes
+				@deb("Adding node $(new_node.id) to the controller", :escape)
+				push!( controller.nodes, new_node)
+			end
 			break
 		end
 	end
 	#by accumulating reachable beliefs into a set duplicates are eliminated = less computation
-	new_nodes = Array{Node{A, W},1 }(undef, 0)
 	if !add_one
+		new_nodes = Array{Node{A, W},1 }(undef, 0)
 		for reachable_b in reachable_beliefs
 			new_node = add_escape_node!(reachable_b, controller, controllers_j, temp_id_j, new_nodes)
 			if new_node != nothing
 				push!(new_nodes, new_node)
 			end
 		end
+		for new_node in new_nodes
+			push!( controller.nodes, new_node)
+		end
 	end
-	for new_node in new_nodes
-		push!( controller.nodes, new_node)
-	end
+
 	#@deb("$reachable_b")
 	#stop_time(controller.stats, "escape")
 	return length(new_nodes) > 0

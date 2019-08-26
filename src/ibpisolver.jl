@@ -145,20 +145,22 @@ ibpisolver.jl:
 					@deb(controller, :data)
 					start_time = datetime2unix(now())
 
-					((improved, tangent_b), time, mem, gc)  = @timed partial_backup!(controller ; add_one = true)
+					((improved, tangent_b), time, mem, gc)  = @timed partial_backup!(controller)
 					@deb("Elapsed time for level $level: $(datetime2unix(now()) - start_time)",:stats)
 					if improved
 						@deb("Improved level 1", :flow)
 						@deb(policy.controllers[1], :data)
 					else
 						@deb("Did not improve level 1", :flow)
-						if length(controller.nodes) < config.max_nodes[level]
-							escaped = escape_optima_standard!(controller, tangent_b; add_one = false)
+						if length(controller.nodes) < config.max_nodes[1]
+							@deb("Escaping local optima", :flow)
+							escaped = escape_optima_standard!(controller, tangent_b; add_one = true)
 							improved == improved || escaped
 							#if the controller failed both improvement and escape mark it as converged.
 							controller.converged = !escaped
 						else
 							#if the max number of nodes has been reached it is marked as converged
+							@deb("Max number of nodes reached", :flow)
 							controller.converged = true
 						end
 					end
@@ -183,7 +185,7 @@ ibpisolver.jl:
 					@deb(controller, :data)
 					start_time = datetime2unix(now())
 
-					((improved, tangent_b), time, mem, gc)  = @timed partial_backup!(controller, policy.controllers[level-1]; add_one = true)
+					((improved, tangent_b), time, mem, gc)  = @timed partial_backup!(controller, policy.controllers[level-1])
 
 					@deb("Elapsed time for level $level: $(datetime2unix(now()) - start_time)", :stats)
 
@@ -198,12 +200,13 @@ ibpisolver.jl:
 						end
 						@deb("Did not improve level $level", :flow)
 						if length(controller.nodes) < config.max_nodes[level]
-							escaped = escape_optima_standard!(controller, policy.controllers[level-1], tangent_b ;add_one = false)
+							escaped = escape_optima_standard!(controller, policy.controllers[level-1], tangent_b ;add_one = true)
 							improved = improved || escaped
 						else
 							#by not setting converged directly to true partial backup is allowed until lowerlevel controllers converge.
 							#the max number of nodes is not improved anyway.
-							improved = false
+							#improved here remains false
+							@deb("Max number of nodes reached", :flow)
 						end
 
 					end
@@ -211,7 +214,7 @@ ibpisolver.jl:
 					#a controller has converged only if also all lower level controllers have converged
 					controller.converged = !improved && !improved_lower
 					if controller.converged
-						println("Level $level, frame $(frametype(controller)) : $(length(controller.nodes)) nodes")
+						println("Level $level, frame $(frametype(controller)) converged : $(length(controller.nodes)) nodes")
 					end
 				else
 					log_time_nodes(controller.stats, datetime2unix(now()), length(controller.nodes), 0)
