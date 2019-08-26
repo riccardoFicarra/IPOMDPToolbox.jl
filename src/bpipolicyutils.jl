@@ -1261,7 +1261,7 @@ IBPIPolicyUtils:
 		#@deb("$reachable_b")
 		#stop_time(controller.stats, "escape")
 
-		return length(new_nodes > 0)
+		return length(new_nodes) > 0
 	end
 
 	function add_escape_node!(reachable_b::Array{Float64}, controller::Controller{A, W}, new_nodes::Array{Node{A, W}, 1}) where {A, W}
