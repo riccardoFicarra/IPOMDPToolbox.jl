@@ -8,10 +8,11 @@ mutable struct IBPIAgent
 	value::Float64
 	stats::agent_stats
 	visited::Array{Int64}
+	history::Array{Any, 2}
 end
 function IBPIAgent(controller::AbstractController, initial_belief::Array{Float64})
 	best_node, best_value = get_best_node(initial_belief, controller.nodes)
-	return IBPIAgent(controller, best_node, 0.0, agent_stats(), zeros(Int64, length(controller.nodes)))
+	return IBPIAgent(controller, best_node, 0.0, agent_stats(), zeros(Int64, length(controller.nodes)), Array{Any}(undef, 0, 5))
 end
 function best_action(agent::IBPIAgent)
 	return chooseWithProbability(agent.current_node.actionProb)
@@ -102,6 +103,7 @@ function IBPIsimulate(controller_i::InteractiveController{S, A, W}, controller_j
 	end
 	state = randn() > 0.5 ? :TL : :TR
 	value = 0.0
+	value_j = 0.0
 	if !trace
 		for i in 1:95
 			print(" ")
@@ -111,9 +113,9 @@ function IBPIsimulate(controller_i::InteractiveController{S, A, W}, controller_j
 	if scenario != nothing
 		maxsteps = size(scenario.script, 1)
 	end
-	#1 -> state 2-> action_i 3 -> obs_i 4 -> node
-	i_history = Array{Any}(undef, maxsteps, 4)
-	j_history = Array{Any}(undef, maxsteps, 4)
+	#1 -> state 2-> action_i 3 -> obs_i 4 -> node 5 -> value
+	agent_i.history = Array{Any}(undef, maxsteps, 5)
+	agent_j.history = Array{Any}(undef, maxsteps, 5)
 	for i in 1:maxsteps
 		if i % (maxsteps/100) == 0 && !trace
 			print("|")
@@ -124,6 +126,8 @@ function IBPIsimulate(controller_i::InteractiveController{S, A, W}, controller_j
 			println("$i -> state: $state -> ai: $ai, aj: $aj")
 		end
 		value =  IPOMDPs.discount(frame_i) * value + IPOMDPs.reward(frame_i, state, ai, aj)
+		value =  IPOMDPs.discount(frame_i) * value + IPOMDPs.reward(frame_i, state, ai, aj)
+
 		if trace
 			println("\tvalue this step: $(IPOMDPs.reward(frame_i, state, ai, aj))")
 		end
@@ -153,15 +157,17 @@ function IBPIsimulate(controller_i::InteractiveController{S, A, W}, controller_j
 		correlation[np_i, np_j] += 1
 		computestats!(agent_i.stats, ai, aj, state, s_prime, zi, zj)
 		computestats!(agent_j.stats, aj, ai, state, s_prime, zj, zi)
-		i_history[i,1] = state
-		i_history[i,2] = ai
-		i_history[i,3] = zi
-		i_history[i,4] = np_i
+		agent_i.history[i,1] = state
+		agent_i.history[i,2] = ai
+		agent_i.history[i,3] = zi
+		agent_i.history[i,5] = np_i
+		agent_i.history[i,4] = value
 
-		j_history[i,1] = state
-		j_history[i,2] = aj
-		j_history[i,3] = zj
-		j_history[i,4] = np_j
+		agent_i.history[i,1] = state
+		agent_i.history[i,2] = aj
+		agent_i.history[i,3] = zj
+		agent_i.history[i,4] = np_j
+		agent_i.history[i,5] = value
 
 		state = s_prime
 	end
@@ -171,7 +177,32 @@ function IBPIsimulate(controller_i::InteractiveController{S, A, W}, controller_j
 	return value, agent_i, agent_j, correlation
 end
 
+function get_avg_sim_value(controller_i::AbstractController, controller_j::AbstractController, maxsimsteps::Int64, simreps::Int64 )
+	avg_value = zeros(Float64, maxsimsteps)
+	for simrep in 1:simreps
+		@deb("rep $simrep", :simrep)
+		value, agent_i, agent_j = IBPIsimulate(controller_i, controller_j, maxsimsteps)
+		avg_value = avg_value .+ agent_i.history[:, 5]
+	end
+	avg_value = avg_value ./ simreps
+	@deb(avg_value, :simvalue)
 
+	return avg_value
+end
+function compute_all_avg_sim_values(policy_name::String, rep::Int64, backup_n::Int64, maxsimsteps::Int64, simreps::Int64)
+	policy = load_policy(policy_name, rep, backup_n)
+	#consider maxlevel controller_j
+	controller_j = policy.controllers[policy.maxlevel][1]
+	for i_level in 2:policy.maxlevel
+		controller_i = policy.controllers[i_level][1]
+		avg_value = get_avg_sim_value(controller_i, controller_j, maxsimsteps, simreps)
+		open("savedcontrollers/$(policy_name)/rep$rep/$(policy_name)_simvalue_level$i_level.policystats", "w") do f
+			for i in 1:length(avg_value)
+				write("($i,$(avg_value[i]))", f)
+			end
+		end
+	end
+end
 function analyze_correlation(correlation::Array{Int64, 2}, controller::InteractiveController{S, A, W}, controller_j:: AbstractController) where {S, A, W}
 	for nj in 1:length(controller_j.nodes)
 		maxCorr = maximum(correlation[:, nj])
@@ -235,7 +266,6 @@ function analyze_history(i_history::Array{Any, 2}, j_history::Array{Any, 2})
 	println("Average obs difference after J opens: $(open_diff[2]/open_count[2])")
 
 end
-
 function correct_result(state::Symbol, other::Symbol)
 	if state == :TL
 		return other == :GLS || other == :GLCL || other == :GLCR || other == :OR || other == :GL
