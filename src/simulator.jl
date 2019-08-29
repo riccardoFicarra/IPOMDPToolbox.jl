@@ -189,16 +189,35 @@ function get_avg_sim_value(controller_i::AbstractController, controller_j::Abstr
 
 	return avg_value
 end
-function compute_all_avg_sim_values(policy_name::String, rep::Int64, backup_n::Int64, maxsimsteps::Int64, simreps::Int64)
+function compute_sim_step_values(policy_name::String, rep::Int64, backup_n::Int64, maxsimsteps::Int64, simreps::Int64)
 	policy = load_policy(policy_name, rep, backup_n)
 	#consider maxlevel controller_j
+	@deb(policy.name, :simvalue)
+	controller_i = policy.controllers[policy.maxlevel][1]
+
+	for agent_j_index in  1:length(policy.controllers[policy.maxlevel-1])
+		controller_j = policy.controllers[policy.maxlevel-1][agent_j_index]
+		avg_value = get_avg_sim_value(controller_i, controller_j, maxsimsteps, simreps)
+		open("savedcontrollers/$(policy_name)/rep$rep/$(policy_name)_agent$(agent_j_index).simvalue", "w") do f
+			for i in 1:length(avg_value)
+				v = trunc(avg_value[i]; digits = 3)
+				write(f, "($i,$v)")
+			end
+		end
+	end
+end
+function compute_level_values(policy_name::String, rep::Int64, backup_n::Int64, maxsimsteps::Int64, simreps::Int64)
+	policy = load_policy(policy_name, rep, backup_n)
+	#consider maxlevel controller_j
+	@deb(policy.name, :simvalue)
 	controller_j = policy.controllers[policy.maxlevel][1]
 	for i_level in 2:policy.maxlevel
 		controller_i = policy.controllers[i_level][1]
 		avg_value = get_avg_sim_value(controller_i, controller_j, maxsimsteps, simreps)
-		open("savedcontrollers/$(policy_name)/rep$rep/$(policy_name)_simvalue_level$i_level.policystats", "w") do f
+		open("savedcontrollers/$(policy_name)/rep$rep/$(policy_name)_level$i_level.simvalue", "w") do f
 			for i in 1:length(avg_value)
-				write("($i,$(avg_value[i]))", f)
+				v = trunc(avg_value[i]; digits = 3)
+				write(f, "($i,$(v))")
 			end
 		end
 	end
@@ -354,4 +373,35 @@ function true_creak_scenario_2()
 				:rand :rand :rand
 			 ]
 	return Scenario("false_creak", script)
+end
+
+function late_agent_j()
+	script = [
+				:TR :GLS :GR;
+				:TR :GRS :GR;
+				:TL :GLCL :rand;
+				#i thinks j opened and the tiger moved
+				:TL :GLS :GL;
+				#coop should wait one extra turn, while comp should open
+				:TL :GLS :GL;
+				:rand :rand :rand;
+				:rand :rand :rand;
+				:rand :rand :rand
+			 ]
+	return Scenario("false_creak", script)
+end
+
+
+function collect_scenario_stats(controller_i::AbstractController, controller_j::AbstractController, scenario::Scenario, maxsimsteps::Int64, simreps::Int64)
+	occ = Dict{Vector{Symbol}, Int64}(undef, 0)
+	for simrep in simreps
+		value, agent_i, agent_j = IBPISimulate(controller_i, controller_j, maxsimsteps)
+		agent_i_actions = agent_i.history[:, 2]
+		if !haskey(occ, agent_i_actions)
+			occ[agent_i_actions] = 0
+		else
+			occ[agent_i_actions] += 1
+		end
+	end
+	return sort(collect(occ), by=x->x[2])
 end

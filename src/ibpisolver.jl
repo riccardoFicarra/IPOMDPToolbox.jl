@@ -664,7 +664,10 @@ function print_stats_coordinates(policy_name::String, agent_j_index::Int64, solv
 		for coord in coords
 			write(f, "($(coord[2]), $(coord[4]))")
 		end
-	end
+		last_coord = coords[end]
+		write(f, "\nfinalcontroller_stats\n")
+		write(f, "$(last_coord[1]) $(last_coord[2]) $(last_coord[3]) $(last_coord[4])")
 
+	end
 
 end
