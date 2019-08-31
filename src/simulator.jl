@@ -79,7 +79,7 @@ end
 
 
 
-function IBPIsimulate(controller_i::InteractiveController{S, A, W}, controller_j::AbstractController, maxsteps::Int64; trace=false, scenario = nothing) where {S, A, W}
+function IBPIsimulate(controller_i::InteractiveController{S, A, W}, controller_j::AbstractController, maxsteps::Int64; trace=false, scenario = nothing, reward = :discounted) where {S, A, W}
 	correlation = zeros(Int64, length(controller_i.nodes), length(controller_j.nodes))
 
 
@@ -104,12 +104,12 @@ function IBPIsimulate(controller_i::InteractiveController{S, A, W}, controller_j
 	state = randn() > 0.5 ? :TL : :TR
 	value = 0.0
 	value_j = 0.0
-	if !trace
-		for i in 1:95
-			print(" ")
-		end
-		println("end v")
-	end
+	# if !trace
+	# 	for i in 1:95
+	# 		print(" ")
+	# 	end
+	# 	println("end v")
+	# end
 	if scenario != nothing
 		maxsteps = size(scenario.script, 1)
 	end
@@ -117,17 +117,15 @@ function IBPIsimulate(controller_i::InteractiveController{S, A, W}, controller_j
 	agent_i.history = Array{Any}(undef, maxsteps, 5)
 	agent_j.history = Array{Any}(undef, maxsteps, 5)
 	for i in 1:maxsteps
-		if i % (maxsteps/100) == 0 && !trace
-			print("|")
-		end
+		# if i % (maxsteps/100) == 0 && !trace
+		# 	print("|")
+		# end
 		ai = best_action(agent_i)
 		aj = best_action(agent_j)
 		if trace
 			println("$i -> state: $state -> ai: $ai, aj: $aj")
 		end
 		value =  IPOMDPs.discount(frame_i) * value + IPOMDPs.reward(frame_i, state, ai, aj)
-		value =  IPOMDPs.discount(frame_i) * value + IPOMDPs.reward(frame_i, state, ai, aj)
-
 		if trace
 			println("\tvalue this step: $(IPOMDPs.reward(frame_i, state, ai, aj))")
 		end
@@ -160,18 +158,18 @@ function IBPIsimulate(controller_i::InteractiveController{S, A, W}, controller_j
 		agent_i.history[i,1] = state
 		agent_i.history[i,2] = ai
 		agent_i.history[i,3] = zi
-		agent_i.history[i,5] = np_i
-		agent_i.history[i,4] = value
-
-		agent_i.history[i,1] = state
-		agent_i.history[i,2] = aj
-		agent_i.history[i,3] = zj
-		agent_i.history[i,4] = np_j
+		agent_i.history[i,4] = np_i
 		agent_i.history[i,5] = value
+
+		agent_j.history[i,1] = state
+		agent_j.history[i,2] = aj
+		agent_j.history[i,3] = zj
+		agent_j.history[i,4] = np_j
+		agent_j.history[i,5] = 0.0
 
 		state = s_prime
 	end
-	println()
+	# println()
 	#analyze_history(i_history, j_history)
 	#analyze_correlation(correlation, controller_i, controller_j)
 	return value, agent_i, agent_j, correlation
@@ -206,22 +204,7 @@ function compute_sim_step_values(policy_name::String, rep::Int64, backup_n::Int6
 		end
 	end
 end
-function compute_level_values(policy_name::String, rep::Int64, backup_n::Int64, maxsimsteps::Int64, simreps::Int64)
-	policy = load_policy(policy_name, rep, backup_n)
-	#consider maxlevel controller_j
-	@deb(policy.name, :simvalue)
-	controller_j = policy.controllers[policy.maxlevel][1]
-	for i_level in 2:policy.maxlevel
-		controller_i = policy.controllers[i_level][1]
-		avg_value = get_avg_sim_value(controller_i, controller_j, maxsimsteps, simreps)
-		open("savedcontrollers/$(policy_name)/rep$rep/$(policy_name)_level$i_level.simvalue", "w") do f
-			for i in 1:length(avg_value)
-				v = trunc(avg_value[i]; digits = 3)
-				write(f, "($i,$(v))")
-			end
-		end
-	end
-end
+
 function analyze_correlation(correlation::Array{Int64, 2}, controller::InteractiveController{S, A, W}, controller_j:: AbstractController) where {S, A, W}
 	for nj in 1:length(controller_j.nodes)
 		maxCorr = maximum(correlation[:, nj])
