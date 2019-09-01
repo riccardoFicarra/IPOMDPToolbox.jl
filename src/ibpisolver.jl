@@ -611,12 +611,12 @@ function print_time_value_coordinates(policy_name::String, agent_j_index::Int64,
 
 end
 
-function print_stats_coordinates(policy_name::String, agent_j_index::Int64, solverreps::Int64, simreps::Int64, maxsimsteps::Int64,  n_backups:: Int64)
+function print_stats_coordinates(policy_name::String, agent_j_index::Int64, solverreps::Int64, simreps::Int64, maxsimsteps::Int64,  n_backups:: Int64, backup_skip::Int64)
 	#time, node, mem, value
 	coords = Array{Tuple{Float64, Int64, Float64, Float64}}(undef, 0)
 	old_stats_end_index = 1
 
-	for backup_n in 1:n_backups
+	for backup_n in 1:backup_skip:n_backups
 		policy = load_policy(policy_name, solverreps, backup_n)
 		if policy == nothing
 			continue
@@ -661,6 +661,9 @@ function print_stats_coordinates(policy_name::String, agent_j_index::Int64, solv
 		for coord in coords
 			write(f, "($(coord[2]), $(coord[4]))")
 		end
+		last_coord = coords[end]
+		write(f, "\nfinalcontroller_stats\n")
+		write(f, "$(last_coord[1]) $(last_coord[2]) $(last_coord[3]) $(last_coord[4])")
 	end
 
 
