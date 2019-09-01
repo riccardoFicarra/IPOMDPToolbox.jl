@@ -377,3 +377,17 @@ function true_creak_scenario_2()
 			 ]
 	return Scenario("false_creak", script)
 end
+
+function collect_scenario_stats(controller_i::AbstractController, controller_j::AbstractController, scenario::Scenario, maxsimsteps::Int64, simreps::Int64)
+	occ = Dict{Vector{Symbol}, Int64}(undef, 0)
+	for simrep in simreps
+		value, agent_i, agent_j = IBPISimulate(controller_i, controller_j, maxsimsteps)
+		agent_i_actions = agent_i.history[:, 2]
+		if !haskey(occ, agent_i_actions)
+			occ[agent_i_actions] = 0
+		else
+			occ[agent_i_actions] += 1
+		end
+	end
+	return sort(collect(occ), by=x->x[2])
+end
