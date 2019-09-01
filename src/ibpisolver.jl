@@ -561,3 +561,41 @@ function print_stats_coordinates(policy_name::String, agent_j_index::Int64, solv
 
 
 end
+
+function print_stats_level_value(policy_name::String, agent_j_index::Int64, solverreps::Int64, simreps::Int64, maxsimsteps::Int64,  n_backups:: Int64)
+	#time, node, mem, value
+	old_stats_end_index = 1
+	for i_level in 2:5
+		coords = Array{Tuple{Float64, Int64, Float64, Float64}}(undef, 0)
+		for backup_n in 1:n_backups
+			policy = load_policy(policy_name, solverreps, backup_n)
+			if policy == nothing
+				break
+			end
+			controller_i = policy.controllers[i_level][1]
+			controller_j = policy.controllers[policy.maxlevel][agent_j_index]
+
+			avg_value = 0.0
+			for rep in 1:simreps
+				value, agent_i, agent_j, i = IBPIsimulate(controller_i, controller_j, maxsimsteps)
+				avg_value += value
+				@deb("Rep $rep of $simreps for $(policy.name)_b$(backup_n), level $i_level", :progress)
+			end
+			avg_value /= simreps
+
+			nodes = length(controller_i.nodes)
+			@deb("$nodes", :levelvalue)
+			time = 0.0
+			mem =  0.0
+			old_stats_end_index = length(controller_i.stats.data)
+			push!(coords, (time, nodes, mem, trunc(avg_value; digits=3)))
+		end
+		open("savedcontrollers/$(policy_name)/rep$solverreps/$(policy_name)_level$(i_level).simvalue", "w") do f
+
+			write(f, "\nnodes, avg_val\n")
+			for coord in coords
+				write(f, "($(coord[2]), $(coord[4]))")
+			end
+		end
+	end
+end
