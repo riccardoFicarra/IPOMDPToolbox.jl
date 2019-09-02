@@ -104,20 +104,21 @@ function IBPIsimulate(controller_i::InteractiveController{S, A, W}, controller_j
 	state = randn() > 0.5 ? :TL : :TR
 	value = 0.0
 	value_j = 0.0
-	if !trace
+	if scenario != nothing
+		maxsteps = size(scenario.script, 1)
+	end
+	if !trace && maxsteps >= 100
 		for i in 1:95
 			print(" ")
 		end
 		println("end v")
 	end
-	if scenario != nothing
-		maxsteps = size(scenario.script, 1)
-	end
+
 	#1 -> state 2-> action_i 3 -> obs_i 4 -> node 5 -> value
 	agent_i.history = Array{Any}(undef, maxsteps, 5)
 	agent_j.history = Array{Any}(undef, maxsteps, 5)
 	for i in 1:maxsteps
-		if i % (maxsteps/100) == 0 && !trace
+		if !trace && maxsteps >= 100 && i % (maxsteps/100) == 0
 			print("|")
 		end
 		ai = best_action(agent_i)
@@ -125,7 +126,6 @@ function IBPIsimulate(controller_i::InteractiveController{S, A, W}, controller_j
 		if trace
 			println("$i -> state: $state -> ai: $ai, aj: $aj")
 		end
-		value =  IPOMDPs.discount(frame_i) * value + IPOMDPs.reward(frame_i, state, ai, aj)
 		value =  IPOMDPs.discount(frame_i) * value + IPOMDPs.reward(frame_i, state, ai, aj)
 
 		if trace
@@ -160,14 +160,14 @@ function IBPIsimulate(controller_i::InteractiveController{S, A, W}, controller_j
 		agent_i.history[i,1] = state
 		agent_i.history[i,2] = ai
 		agent_i.history[i,3] = zi
-		agent_i.history[i,5] = np_i
-		agent_i.history[i,4] = value
-
-		agent_i.history[i,1] = state
-		agent_i.history[i,2] = aj
-		agent_i.history[i,3] = zj
-		agent_i.history[i,4] = np_j
+		agent_i.history[i,4] = np_i
 		agent_i.history[i,5] = value
+
+		agent_j.history[i,1] = state
+		agent_j.history[i,2] = aj
+		agent_j.history[i,3] = zj
+		agent_j.history[i,4] = np_j
+		agent_j.history[i,5] = value
 
 		state = s_prime
 	end
@@ -379,10 +379,11 @@ function true_creak_scenario_2()
 end
 
 function collect_scenario_stats(controller_i::AbstractController, controller_j::AbstractController, scenario::Scenario, maxsimsteps::Int64, simreps::Int64)
-	occ = Dict{Vector{Symbol}, Int64}(undef, 0)
+	occ = Dict{Vector{Symbol}, Int64}()
 	for simrep in simreps
-		value, agent_i, agent_j = IBPISimulate(controller_i, controller_j, maxsimsteps)
+		value, agent_i, agent_j = IBPIsimulate(controller_i, controller_j, maxsimsteps; scenario = scenario)
 		agent_i_actions = agent_i.history[:, 2]
+		@deb(agent_i_actions, :scenario)
 		if !haskey(occ, agent_i_actions)
 			occ[agent_i_actions] = 0
 		else
@@ -390,4 +391,25 @@ function collect_scenario_stats(controller_i::AbstractController, controller_j::
 		end
 	end
 	return sort(collect(occ), by=x->x[2])
+end
+
+function save_scenario_stats(policy::IBPIPolicy, scenario::Scenario, agent_j_index::Int64, maxsimsteps::Int64, simreps::Int64)
+	controller_i = policy.controllers[policy.maxlevel][1]
+	controller_j = policy.controllers[policy.maxlevel-1][agent_j_index]
+
+	sorted_responses = collect_scenario_stats(controller_i, controller_j, scenario, maxsimsteps, simreps)
+	path = "savedstats/scenario/$(scenario.name)"
+	if(!isdir(path))
+		mkdir(path)
+	end
+	path *= policy.name
+	if(!isdir(path))
+		mkdir(path)
+	end
+	#open("$path/scenario_agent$agent_j_index.scenariostats") do f
+		for resp in sorted_responses
+			println(resp)
+		end
+	#end
+
 end
