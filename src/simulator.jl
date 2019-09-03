@@ -101,7 +101,12 @@ function IBPIsimulate(controller_i::InteractiveController{S, A, W}, controller_j
 		println("Starting node for J:")
 		println(agent_j.current_node)
 	end
-	state = randn() > 0.5 ? :TL : :TR
+	if scenario != nothing
+		state = scenario.script[1][1]
+	else
+		state = randn() > 0.5 ? :TL : :TR
+
+	end
 	value = 0.0
 	value_j = 0.0
 	if scenario != nothing
@@ -132,7 +137,11 @@ function IBPIsimulate(controller_i::InteractiveController{S, A, W}, controller_j
 			println("\tvalue this step: $(IPOMDPs.reward(frame_i, state, ai, aj))")
 		end
 		if scenario != nothing
-			s_prime = compute_s_prime(state, ai, aj, frame_i; script = scenario.script[i,1])
+			if i != maxsteps
+				s_prime = compute_s_prime(state, ai, aj, frame_i; script = scenario.script[i+1,1])
+			else
+				s_prime = compute_s_prime(state, ai, aj, frame_i)
+			end
 
 			zi = compute_observation(s_prime, ai, aj, frame_i; script = scenario.script[i,2])
 			zj = compute_observation(s_prime, aj, ai, frame_j; script = scenario.script[i,3])
@@ -171,7 +180,7 @@ function IBPIsimulate(controller_i::InteractiveController{S, A, W}, controller_j
 
 		state = s_prime
 	end
-	println()
+	#println()
 	#analyze_history(i_history, j_history)
 	#analyze_correlation(correlation, controller_i, controller_j)
 	return value, agent_i, agent_j, correlation
@@ -305,7 +314,7 @@ struct Scenario
 	#State, zi, zj
 	script::Array{Symbol, 2}
 end
-
+#TODO return scenarios with swapped script, so it is more sane when they are used (script[action, timestep])
 function standard_scenario()
 	script = [
 				:TR :GRS :GR;
@@ -315,101 +324,194 @@ function standard_scenario()
 				:TL :GLS :GL;
 				:TL :rand :rand
 			 ]
-	return Scenario("standard", script)
+	return Scenario("1_standard", script)
 end
 
-function false_creak_scenario_1()
+function immediate_false_creak()
 	script = [
 				:TR :GRCL :GR;
-				:TR :GRS :GL;
 				:TR :GRS :GR;
-				:TR :rand :rand;
+				:TR :GRS :GR;
 				:TL :GLS :GL;
 				:TL :GLS :GL;
 				:TL :rand :rand
 			 ]
-	return Scenario("false_creak", script)
+	return Scenario("2_immediate_false_creak", script)
 end
-
-function false_creak_scenario_2()
+function opposite_side_creak_after_one()
 	script = [
 				:TR :GRS :GR;
 				:TR :GRCL :GL;
 				:TR :GRS :GR;
-				:TR :rand :rand;
+				:TR :GRS :GR;
 				:TL :GLS :GL;
 				:TL :GLS :GL;
 				:TL :rand :rand;
-				:rand :rand :rand;
-				:rand :rand :rand;
+
 			 ]
-	return Scenario("false_creak", script)
+	return Scenario("3a_opposite_side_creak_after_one", script)
 end
 
-function true_creak_scenario_1()
+function same_side_creak_after()
 	script = [
 				:TR :GRS :GR;
-				:TR :GRS :GL;
-				:TR :rand :GR;
+				:TR :GRCR :GL;
 				:TR :GRS :GR;
-				:TR :GRCL :rand;
 				:TR :GRS :GR;
-				:TR :rand :rand;
-				:rand :rand :rand;
-				:rand :rand :rand;
-				:rand :rand :rand
-			 ]
-	return Scenario("false_creak", script)
-end
-
-function true_creak_scenario_2()
-	script = [
-				:TR :GRS :GR;
-				:TR :GRS :GL;
-				:TR :rand :GR;
-				:TR :GRS :GR;
-				:TR :GRCL :rand;
+				:TL :GLS :GL;
 				:TL :GLS :GL;
 				:TL :rand :rand;
-				:rand :rand :rand;
-				:rand :rand :rand;
-				:rand :rand :rand
+
 			 ]
-	return Scenario("false_creak", script)
+	return Scenario("3b_same_side_creak_after_one", script)
 end
 
+
+
+function opposite_creak_opposite_growl_after_one()
+	script = [
+				:TR :GRS :GR;
+				:TR :GLCL :GL;
+				:TR :GRS :GR;
+				:TR :GRS :GR;
+				:TR :GRS :GR;
+				:TL :GLS :GL;
+				:TL :rand :rand;
+
+			 ]
+	return Scenario("3c_opposite_creak_opposite_growl_after_one", script)
+end
+function true_creak()
+	script = [
+				:TR :GRS :GR;
+				:TR :GLS :GR;
+				:TR :GLCL :rand;
+				:TL :GLS :GL;
+				:TL :GLS :GL;
+				:TL :rand :rand;
+
+			 ]
+	return Scenario("4_true_creak", script)
+end
+function late_agent_j_scenario()
+	script = [
+				:TR :GLS :GR;
+				:TR :GRS :GR;
+				:TL :GLCL :rand;
+				:TL :GLS :GL;
+				:TR :GLS :GL;
+				:TL :GLS :rand;
+				:TL :rand :rand;
+			 ]
+	return Scenario("5_late_agent_j", script)
+end
+function all_scenarios()
+	return [standard_scenario(), immediate_false_creak(),  opposite_side_creak_after_one(), same_side_creak_after(),opposite_creak_opposite_growl_after_one(),true_creak(), late_agent_j_scenario()]
+end
 function collect_scenario_stats(controller_i::AbstractController, controller_j::AbstractController, scenario::Scenario, maxsimsteps::Int64, simreps::Int64)
-	occ = Dict{Vector{Symbol}, Int64}()
-	for simrep in simreps
+	occ = Dict{Vector{Tuple{Symbol, Symbol}}, Int64}()
+
+	for simrep in 1:simreps
 		value, agent_i, agent_j = IBPIsimulate(controller_i, controller_j, maxsimsteps; scenario = scenario)
 		agent_i_actions = agent_i.history[:, 2]
-		@deb(agent_i_actions, :scenario)
-		if !haskey(occ, agent_i_actions)
-			occ[agent_i_actions] = 0
+		agent_j_actions = agent_j.history[:, 2]
+		joint_actions = Vector{Tuple{Symbol, Symbol}}(undef, length(agent_i_actions))
+		for i in 1:length(joint_actions)
+			joint_actions[i] = (agent_i_actions[i], agent_j_actions[i])
+		end
+		if !haskey(occ, joint_actions)
+			occ[joint_actions] = 1
 		else
-			occ[agent_i_actions] += 1
+			occ[joint_actions] += 1
 		end
 	end
-	return sort(collect(occ), by=x->x[2])
+	sorted =  sort(collect(occ), by=x->x[2]; rev=true)
+	@deb(sorted, :scenario)
+	return sorted
 end
 
-function save_scenario_stats(policy::IBPIPolicy, scenario::Scenario, agent_j_index::Int64, maxsimsteps::Int64, simreps::Int64)
+function save_scenario_stats(policy::IBPIPolicy, scenario::Scenario, agent_j_index::Int64, maxsimsteps::Int64, simreps::Int64; mode= "w")
 	controller_i = policy.controllers[policy.maxlevel][1]
 	controller_j = policy.controllers[policy.maxlevel-1][agent_j_index]
 
 	sorted_responses = collect_scenario_stats(controller_i, controller_j, scenario, maxsimsteps, simreps)
+	@deb(sorted_responses, :scenario)
 	path = "savedstats/scenario/$(scenario.name)"
 	if(!isdir(path))
 		mkdir(path)
 	end
-	path *= policy.name
-	if(!isdir(path))
-		mkdir(path)
-	end
-	#open("$path/scenario_agent$agent_j_index.scenariostats") do f
-		for resp in sorted_responses
-			println(resp)
+	# path *= "/$(policy.name)"
+	# if(!isdir(path))
+	# 	mkdir(path)
+	# end
+	open("$path/$(scenario.name).scenariostats", mode) do f
+		if mode == "w"
+
+			#steps line
+			line = "Step &"
+			for step in 1:size(scenario.script, 1)
+				line *= "$step &"
+			end
+			line *= "\\%\\\\\n"
+			@deb(line, :scenario)
+
+			write(f, line)
+			#state line
+			line = "State &"
+			for state in scenario.script[:, 1]
+				if state == :rand
+					state = :Any
+				end
+				line *= "$state &"
+			end
+			line *= "\\\\\n"
+			@deb(line, :scenario)
+
+			write(f, line)
+			#obs_i line
+			line = "Obs_i &"
+			for obs in scenario.script[:, 2]
+				if obs == :rand
+					obs = :Any
+				end
+				line *= "$obs &"
+			end
+			line *= "\\\\\n"
+			@deb(line, :scenario)
+
+			write(f, line)
+
+			#obs_i line
+			line = "Obs_j &"
+			for obs in scenario.script[:, 3]
+				if obs == :rand
+					obs = :Any
+				end
+				line *= "$obs &"
+			end
+			line *= "\\\\\n"
+			@deb(line, :scenario)
+
+			write(f, line)
 		end
-	#end
+
+		header = true
+		for resp in sorted_responses
+			if header
+				line = policy.name * " &"
+				header = false
+			else
+				line = "&"
+			end
+
+			perc = trunc(resp[2]/simreps; digits = 3)
+			for a in resp[1]
+				line *=  "$(a[1]), $(a[2]) &"
+			end
+			line *= "$(perc) \\\\\n"
+			@deb(line, :scenario)
+			write(f, line)
+		end
+	end
 
 end
